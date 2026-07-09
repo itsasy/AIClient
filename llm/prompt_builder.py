@@ -1,65 +1,4 @@
 class PromptBuilder:
-    _registry = {
-        "code_generation": """
-{base}
-
-Genera código para:
-
-{payload.get('task', '')}
-
-Lenguaje:
-
-{payload.get('language', 'python')}
-
-Entrega únicamente una solución lista para usar.
-""",
-        "code_analysis": """
-{base}
-
-Analiza este código.
-
-Código:
-
-{payload.get('code', '')}
-
-Busca:
-
-- bugs
-- seguridad
-- SOLID
-- rendimiento
-- refactor
-""",
-        "project_analysis": """
-{base}
-
-Analiza este proyecto completo.
-
-Proyecto:
-
-{payload}
-
-Evalúa:
-
-- arquitectura
-- modularidad
-- dependencias
-- organización
-- deuda técnica
-- oportunidades de mejora
-
-No inventes información.
-Analiza únicamente lo que aparece en el snapshot.
-""",
-        "readme": """
-{base}
-
-Genera un README profesional usando esta información:
-
-{payload}
-""",
-    }
-
     @staticmethod
     def build(task, context, skill_name=None, skill_result=None):
         context_text = PromptBuilder._format_context(context)
@@ -81,8 +20,74 @@ Contexto:
         skill_type = skill_result.get("type")
         payload = skill_result.get("payload", {})
 
-        if skill_type in PromptBuilder._registry:
-            return PromptBuilder._registry[skill_type].format(base=base, payload=payload)
+        if skill_type == "code_generation":
+            task_text = payload.get("task", "")
+            language = payload.get("language", "python")
+            return f"""
+{base}
+
+Genera código para:
+
+{task_text}
+
+Lenguaje:
+
+{language}
+
+Entrega únicamente una solución lista para usar.
+"""
+
+        if skill_type == "code_analysis":
+            code_text = payload.get("code", "")
+            return f"""
+{base}
+
+Analiza este código.
+
+Código:
+
+{code_text}
+
+Busca:
+
+- bugs
+- seguridad
+- SOLID
+- rendimiento
+- refactor
+"""
+
+        if skill_type == "project_analysis":
+            return f"""
+{base}
+
+Analiza este proyecto completo.
+
+Proyecto:
+
+{payload}
+
+Evalúa:
+
+- arquitectura
+- modularidad
+- dependencias
+- organización
+- deuda técnica
+- oportunidades de mejora
+
+No inventes información.
+Analiza únicamente lo que aparece en el snapshot.
+"""
+
+        if skill_type == "readme":
+            return f"""
+{base}
+
+Genera un README profesional usando esta información:
+
+{payload}
+"""
 
         return base
 
