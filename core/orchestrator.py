@@ -1,13 +1,15 @@
-import logging
-
+from core.context_builder import ContextBuilder
+from core.memory import ConversationMemory
 from llm.router import LLMRouter
-
-logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
 
-    def process(self, task):
+    def __init__(self):
+        self.context_builder = ContextBuilder()
+        self.memory = ConversationMemory()
+
+    def process(self, task: str):
 
         skill_name, params = LLMRouter.detect_skill(task)
 
