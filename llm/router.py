@@ -43,55 +43,24 @@ class LLMRouter:
         return GeminiProvider()
 
     @staticmethod
-    def generate(task: str, context: str, skill_name=None, skill_params=None):
+    def generate(task: str, context: str = "", skill_name=None, skill_params=None):
         provider = LLMRouter._provider()
 
-        if skill_name:
-            skill_result = LLMRouter.skill_manager.execute(skill_name, **(skill_params or {}))
-
-            prompt = f"""
-Eres un asistente experto.
-
-Consulta del usuario:
-
-{task}
-
-=======================
-
-Contexto:
-
-{context}
-
-=======================
-
-Skill ejecutada:
-
-{skill_name}
-
-Resultado:
-
+        if skill_name and skill_params is not None:
+            skill_result = LLMRouter.skill_manager.execute(skill_name, **skill_params)
+            prompt = f"""Skill activada: {skill_name}
+Resultado de skill:
 {skill_result}
 
-=======================
+Consulta original: {task}
 
-Utiliza el resultado de la skill como base principal.
-No inventes información.
-"""
-            return provider.generate(prompt)
+Contexto: {context}
 
-        prompt = f"""
-Eres un asistente experto.
+Responde usando la skill como base principal."""
+        else:
+            prompt = f"""Consulta: {task}
 
-Consulta:
-
-{task}
-
-=======================
-
-Contexto:
-
-{context}
-"""
+Contexto: {context}"""
 
         return provider.generate(prompt)
 

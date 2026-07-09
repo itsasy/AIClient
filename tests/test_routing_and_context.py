@@ -40,6 +40,15 @@ class RouterAndContextTests(unittest.TestCase):
                 builder.build("git status")
         mock_snapshot.assert_not_called()
 
+    def test_router_accepts_default_context(self):
+        with patch("llm.router.LLMRouter._provider") as provider_mock:
+            provider_instance = provider_mock.return_value
+            provider_instance.generate.return_value = "ok"
+
+            result = LLMRouter.generate(task="hola")
+
+        self.assertEqual(result, "ok")
+
 
 if __name__ == "__main__":
     unittest.main()
