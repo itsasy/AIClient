@@ -1,6 +1,10 @@
+import logging
+
 from core.context_builder import ContextBuilder
 from core.memory import ConversationMemory
 from llm.router import LLMRouter
+
+logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -9,23 +13,20 @@ class Orchestrator:
         self.memory = ConversationMemory()
 
     def process(self, task: str):
-        # 1. Detectar la intención usando SOLO la consulta original
         skill_name, params = LLMRouter.detect_skill(task)
+        logger.info("Procesando tarea con skill=%s: %s", skill_name, task)
 
-        # 2. Construir contexto una única vez
-        context = (
-            self.memory.get_context()
-            + self.context_builder.build(task)
-        )
+        full_context = self.memory.get_context()
+        project_context = self.context_builder.build(task)
+        if project_context and project_context not in full_context:
+            full_context += project_context
 
-        # 3. Enviar todo al router
         response = LLMRouter.generate(
             task=task,
-            context=context,
+            context=full_context,
             skill_name=skill_name,
             skill_params=params,
         )
 
         self.memory.add(task, response)
-
         return response

@@ -1,5 +1,9 @@
+import logging
+
 from core.config import Config
 from obsidian.search import ObsidianSearch
+
+logger = logging.getLogger(__name__)
 
 
 class ContextBuilder:
@@ -38,7 +42,10 @@ class ContextBuilder:
             sections.append(obsidian)
 
         sections.append(f"=== CONSULTA ===\n{query}")
-        return "\n\n".join(sections)
+        result = "\n\n".join(section for section in sections if section)
+        if not result:
+            logger.debug("No se generó contexto para: %s", query)
+        return result
 
     def build_project_snapshot(self) -> str:
         root = Config.PROJECT_ROOT
