@@ -13,12 +13,32 @@ class RouterAndContextTests(unittest.TestCase):
         self.assertEqual(skill_name, "analyze")
         self.assertIn("code_snippet", params)
 
+    def test_detects_readme_and_project_requests(self):
+        readme_skill, _ = LLMRouter.detect_skill("crea un README para este proyecto")
+        project_skill, _ = LLMRouter.detect_skill("analiza este proyecto")
+        code_skill, _ = LLMRouter.detect_skill("genera una función en Python")
+
+        self.assertEqual(readme_skill, "readme")
+        self.assertEqual(project_skill, "analyze_project")
+        self.assertEqual(code_skill, "code")
+
+    def test_does_not_trigger_readme_for_unrelated_queries(self):
+        skill_name, _ = LLMRouter.detect_skill("git status")
+        self.assertIsNone(skill_name)
+
     def test_context_builder_includes_project_snapshot(self):
         builder = ContextBuilder()
         with patch("obsidian.search.ObsidianSearch.search", return_value=[]):
             context = builder.build("analiza este proyecto")
         self.assertIn("pyproject.toml", context)
         self.assertIn("README.md", context)
+
+    def test_context_builder_skips_project_snapshot_for_trivial_queries(self):
+        builder = ContextBuilder()
+        with patch.object(builder, "build_project_snapshot", return_value="snapshot") as mock_snapshot:
+            with patch("obsidian.search.ObsidianSearch.search", return_value=[]):
+                builder.build("git status")
+        mock_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,3 @@
-import os
-from pathlib import Path
-
 from core.config import Config
 from obsidian.search import ObsidianSearch
 
@@ -10,18 +7,37 @@ class ContextBuilder:
         self.obsidian = ObsidianSearch()
 
     def build(self, query: str) -> str:
-        project_context = self.build_project_snapshot()
-        obsidian_context = self.obsidian.build_context(query)
+        q = (query or "").lower()
 
-        sections = [
-            "=== CONTEXTO DEL PROYECTO ===",
-            project_context.strip(),
-        ]
+        requires_project = any(
+            word in q
+            for word in (
+                "proyecto",
+                "arquitectura",
+                "estructura",
+                "repo",
+                "readme",
+                "docker",
+                "laravel",
+                "nestjs",
+                "spring",
+                "directorio",
+                "carpeta",
+            )
+        )
 
-        if obsidian_context.strip():
-            sections.extend(["=== CONOCIMIENTO LOCAL (OBSIDIAN) ===", obsidian_context.strip()])
+        sections = []
 
-        sections.append(f"=== CONSULTA ACTUAL ===\n{query}\n")
+        if requires_project:
+            sections.append("=== CONTEXTO DEL PROYECTO ===")
+            sections.append(self.build_project_snapshot())
+
+        obsidian = self.obsidian.build_context(query)
+        if obsidian:
+            sections.append("=== SEGUNDO CEREBRO ===")
+            sections.append(obsidian)
+
+        sections.append(f"=== CONSULTA ===\n{query}")
         return "\n\n".join(sections)
 
     def build_project_snapshot(self) -> str:

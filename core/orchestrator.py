@@ -9,7 +9,23 @@ class Orchestrator:
         self.memory = ConversationMemory()
 
     def process(self, task: str):
-        context = self.memory.get_context() + self.context_builder.build(task)
-        response = LLMRouter.generate(context)
+        # 1. Detectar la intención usando SOLO la consulta original
+        skill_name, params = LLMRouter.detect_skill(task)
+
+        # 2. Construir contexto una única vez
+        context = (
+            self.memory.get_context()
+            + self.context_builder.build(task)
+        )
+
+        # 3. Enviar todo al router
+        response = LLMRouter.generate(
+            task=task,
+            context=context,
+            skill_name=skill_name,
+            skill_params=params,
+        )
+
         self.memory.add(task, response)
+
         return response
