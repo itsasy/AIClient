@@ -1,0 +1,3 @@
+#!/bin/bash
+cd /home/alexis/Workspace/AIClient
+uv run cli/ai.py "$@"

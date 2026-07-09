@@ -1,0 +1,17 @@
+[project]
+name = "aiclient"
+version = "0.1.0"
+description = "Cliente IA Personal - Fase 1"
+requires-python = ">=3.11"
+dependencies = [
+    "requests",
+    "python-dotenv",
+    "google-genai>=2.10.0",
+]
+
+[dependency-groups]
+dev = [
+    "black",
+    "ruff",
+    "ipykernel",
+]

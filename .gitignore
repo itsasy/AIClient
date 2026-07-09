@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+*.log
+.history.json
+.DS_Store
+.vscode/
+.pytest_cache/
+.env
+*.swp
