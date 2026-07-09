@@ -8,12 +8,10 @@ class AnalyzeCodeSkill(Skill):
     description = "Analiza código"
 
     def execute(self, code_snippet="", language="python", **kwargs):
-
         return {
-
-            "analysis": "code",
-
-            "language": language,
-
-            "code": code_snippet
+            "type": "code_analysis",
+            "payload": {
+                "code": code_snippet,
+                "language": language,
+            },
         }

@@ -1,3 +1,4 @@
+from core.project_inspector import ProjectInspector
 from skills.base import Skill
 
 
@@ -7,9 +8,13 @@ class ProjectAnalyzerSkill(Skill):
 
     description = "Analiza un proyecto completo"
 
-    def execute(self, project_snapshot="", **kwargs):
+    def __init__(self):
+        self.inspector = ProjectInspector()
+
+    def execute(self, **kwargs):
+        snapshot = self.inspector.inspect()
 
         return {
-            "analysis": "project",
-            "snapshot": project_snapshot
+            "type": "project_analysis",
+            "payload": snapshot,
         }

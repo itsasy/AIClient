@@ -10,17 +10,22 @@ class Orchestrator:
         self.memory = ConversationMemory()
 
     def process(self, task: str):
-
         skill_name, params = LLMRouter.detect_skill(task)
 
-        context = (
-            self.memory.get_context()
-            + self.context_builder.build(task)
-        )
+        context_payload = self.context_builder.build(task)
+        memory_context = self.memory.get_context()
+
+        if isinstance(memory_context, dict):
+            context_payload = {**memory_context, **context_payload}
+        else:
+            context_payload = {
+                "memory": memory_context,
+                **context_payload,
+            }
 
         response = LLMRouter.generate(
             task=task,
-            context=context,
+            context=context_payload,
             skill_name=skill_name,
             skill_params=params
         )

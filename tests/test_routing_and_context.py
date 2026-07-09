@@ -17,8 +17,8 @@ class RouterAndContextTests(unittest.TestCase):
         skill_name, params = LLMRouter.detect_skill(
             "Analiza problemas comunes en mi código actual"
         )
-        self.assertEqual(skill_name, "analyze")
-        self.assertIn("code_snippet", params)
+        self.assertEqual(skill_name, "analyze_project")
+        self.assertEqual(params, {})
 
     def test_detects_readme_and_project_requests(self):
         readme_skill, _ = LLMRouter.detect_skill("crea un README para este proyecto")

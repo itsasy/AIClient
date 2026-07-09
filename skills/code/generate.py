@@ -8,10 +8,10 @@ class GenerateCodeSkill(Skill):
     description = "Generador de código"
 
     def execute(self, task="", language="python", **kwargs):
-
         return {
-
-            "task": task,
-
-            "language": language
+            "type": "code_generation",
+            "payload": {
+                "task": task,
+                "language": language,
+            },
         }

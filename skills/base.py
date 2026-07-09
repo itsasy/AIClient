@@ -1,13 +1,19 @@
 from abc import ABC, abstractmethod
-from typing import Dict
+
 
 class Skill(ABC):
+
     name: str
     description: str
-    
+
     @abstractmethod
-    def execute(self, **kwargs) -> str:
+    def execute(self, **kwargs):
+        """
+        Siempre devuelve un diccionario.
+
+        {
+            "type": "...",
+            "payload": ...
+        }
+        """
         pass
-    
-    def get_prompt(self, task: str) -> str:
-        return f"[Skill: {self.name}] {task}"

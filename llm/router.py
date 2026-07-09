@@ -20,31 +20,16 @@ class LLMRouter:
         q = query.lower()
 
         if re.search(r"\b(crea|genera|haz)\b.*\b(readme|documentación|documentacion)\b", q):
-            return "readme", {
-                "project_name": query
-            }
+            return "readme", {"project_name": query}
 
-        if re.search(
-            r"\b(analiza|revisa|evalúa|inspecciona)\b.*\b(proyecto|repo|arquitectura|estructura)\b",
-            q
-        ):
+        if re.search(r"\b(analiza|revisa|evalúa|inspecciona|problemas)\b", q) and re.search(r"\b(mi|este|actual|actualmente|proyecto|repo|arquitectura|estructura)\b", q):
             return "analyze_project", {}
 
-        if re.search(
-            r"\b(analiza|revisa)\b.*\b(código|codigo|función|funcion|clase|archivo)\b",
-            q
-        ):
-            return "analyze", {
-                "code_snippet": query
-            }
+        if re.search(r"\b(analiza|revisa)\b.*\b(código|codigo|función|funcion|clase|archivo|módulo|modulo)\b", q):
+            return "analyze", {"code_snippet": query}
 
-        if re.search(
-            r"\b(crea|genera|implementa|escribe)\b.*\b(función|funcion|clase|script|endpoint|proyecto)\b",
-            q
-        ):
-            return "code", {
-                "task": query
-            }
+        if re.search(r"\b(crea|genera|implementa|escribe)\b.*\b(función|funcion|clase|script|endpoint|proyecto)\b", q):
+            return "code", {"task": query}
 
         return None, None
 
@@ -57,22 +42,11 @@ class LLMRouter:
 
     @staticmethod
     def generate(task,
-                 context,
+                 context="",
                  skill_name=None,
                  skill_params=None):
-
         provider = LLMRouter._provider()
-
-        skill_result = None
-
-        if skill_name:
-
-            logger.info("Ejecutando skill %s", skill_name)
-
-            skill_result = LLMRouter.skill_manager.execute(
-                skill_name,
-                **(skill_params or {})
-            )
+        skill_result = LLMRouter._execute_skill(skill_name, skill_params)
 
         prompt = PromptBuilder.build(
             task=task,
@@ -82,5 +56,12 @@ class LLMRouter:
         )
 
         logger.debug(prompt)
-
         return provider.generate(prompt)
+
+    @staticmethod
+    def _execute_skill(skill_name, skill_params=None):
+        if not skill_name:
+            return None
+
+        logger.info("Ejecutando skill %s", skill_name)
+        return LLMRouter.skill_manager.execute(skill_name, **(skill_params or {}))
