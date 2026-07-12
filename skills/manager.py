@@ -6,9 +6,7 @@ from skills.tools.shell import ShellTool
 
 
 class SkillManager:
-
     def __init__(self):
-
         self.skills = {
             "readme": GenerateReadmeSkill(),
             "code": GenerateCodeSkill(),
@@ -17,11 +15,14 @@ class SkillManager:
             "shell": ShellTool(),
         }
 
-    def execute(self, skill_name, **kwargs):
-
+    def execute(self, skill_name: str, **kwargs):
         skill = self.skills.get(skill_name)
 
         if skill is None:
-            raise ValueError(f"Skill '{skill_name}' no encontrada")
+            available = ", ".join(self.skills.keys())
+            raise ValueError(
+                f"Skill '{skill_name}' no encontrada. "
+                f"Disponibles: {available}"
+            )
 
         return skill.execute(**kwargs)
