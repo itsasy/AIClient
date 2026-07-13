@@ -1,8 +1,6 @@
 import logging
 import re
 
-from llm.gemini import GeminiProvider
-from llm.nim import NIMProvider
 from llm.prompt_builder import PromptBuilder
 from llm.provider_manager import ProviderManager
 from skills.manager import SkillManager
@@ -12,15 +10,7 @@ logger = logging.getLogger(__name__)
 
 class LLMRouter:
     skill_manager = SkillManager()
-
-    @staticmethod
-    def _provider() -> ProviderManager:
-        return ProviderManager(
-            providers=[
-                GeminiProvider(),
-                NIMProvider(),
-            ]
-        )
+    provider_manager = ProviderManager()
 
     @staticmethod
     def detect_skill(query: str):
@@ -29,6 +19,7 @@ class LLMRouter:
 
         q = query.lower().strip()
 
+        # README
         if re.search(
             r"\b(crea|crear|genera|generar|haz)\b.*"
             r"\b(readme|documentación|documentacion)\b",
@@ -38,9 +29,13 @@ class LLMRouter:
                 "request": query,
             }
 
+        # Análisis explícito de código
         if re.search(
             r"\b(analiza|analizar|revisa|revisar)\b.*"
-            r"\b(código|codigo|función|funcion|clase|archivo|módulo|modulo)\b",
+            r"\b("
+            r"código|codigo|función|funcion|"
+            r"clase|archivo|módulo|modulo"
+            r")\b",
             q,
         ):
             explicit_code_markers = (
@@ -59,25 +54,40 @@ class LLMRouter:
                     "code_snippet": query,
                 }
 
+        # Análisis del proyecto actual
         project_intent = re.search(
-            r"\b(analiza|analizar|revisa|revisar|evalúa|evaluar|"
-            r"inspecciona|inspeccionar|problemas|errores|deuda)\b",
+            r"\b("
+            r"analiza|analizar|revisa|revisar|"
+            r"evalúa|evaluar|inspecciona|inspeccionar|"
+            r"problemas|errores|deuda"
+            r")\b",
             q,
         )
 
         project_reference = re.search(
-            r"\b(proyecto|repo|repositorio|arquitectura|estructura|"
-            r"código actual|codigo actual|mi código|mi codigo|"
-            r"actualmente|sistema actual)\b",
+            r"\b("
+            r"proyecto|repo|repositorio|"
+            r"arquitectura|estructura|"
+            r"código actual|codigo actual|"
+            r"mi código|mi codigo|"
+            r"actualmente|sistema actual"
+            r")\b",
             q,
         )
 
         if project_intent and project_reference:
             return "analyze_project", {}
 
+        # Generación de código o proyectos
         if re.search(
-            r"\b(crea|crear|genera|generar|implementa|implementar|escribe)\b.*"
-            r"\b(función|funcion|clase|script|endpoint|código|codigo|proyecto)\b",
+            r"\b("
+            r"crea|crear|genera|generar|"
+            r"implementa|implementar|escribe"
+            r")\b.*"
+            r"\b("
+            r"función|funcion|clase|script|"
+            r"endpoint|código|codigo|proyecto"
+            r")\b",
             q,
         ):
             return "code", {
@@ -86,14 +96,17 @@ class LLMRouter:
 
         return None, None
 
-    @staticmethod
+    @classmethod
     def generate(
+        cls,
         task: str,
         context=None,
         skill_name=None,
         skill_params=None,
+        provider_name: str | None = None,
+        **kwargs,
     ) -> str:
-        skill_result = LLMRouter._execute_skill(
+        skill_result = cls._execute_skill(
             skill_name,
             skill_params,
         )
@@ -106,18 +119,18 @@ class LLMRouter:
         )
 
         logger.debug(
-            "Prompt generado:\n%s",
-            prompt,
+            "Prompt generado para la tarea."
         )
 
-        provider_manager = LLMRouter._provider()
-
-        return provider_manager.generate(
-            prompt,
+        return cls.provider_manager.generate(
+            prompt=prompt,
+            provider_name=provider_name,
+            **kwargs,
         )
 
-    @staticmethod
+    @classmethod
     def _execute_skill(
+        cls,
         skill_name,
         skill_params=None,
     ):
@@ -129,7 +142,7 @@ class LLMRouter:
             skill_name,
         )
 
-        return LLMRouter.skill_manager.execute(
+        return cls.skill_manager.execute(
             skill_name,
             **(skill_params or {}),
         )

@@ -2,32 +2,53 @@ import logging
 import os
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-except ImportError:  # pragma: no cover - entorno sin dependency
-    def load_dotenv(*args, **kwargs):
-        return False
+from dotenv import load_dotenv
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_CANDIDATES = [PROJECT_ROOT / ".env", PROJECT_ROOT / "config" / ".env"]
 
-for env_path in ENV_CANDIDATES:
-    if env_path.exists():
-        load_dotenv(dotenv_path=env_path)
-        break
+load_dotenv(PROJECT_ROOT / ".env")
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-class Config:
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-    NIM_API_KEY = os.getenv("NIM_API_KEY")
-    NIM_BASE_URL = os.getenv(
-        "NIM_BASE_URL",
-        "https://integrate.api.nvidia.com/v1",
+class Config:
+    PROJECT_ROOT = PROJECT_ROOT
+
+    # Gemini
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL = os.getenv(
+        "GEMINI_MODEL",
+        "gemini-2.5-flash",
     )
 
+    # NVIDIA NIM
+    NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
+    NVIDIA_BASE_URL = os.getenv(
+        "NVIDIA_BASE_URL",
+        "https://integrate.api.nvidia.com/v1",
+    )
+    NVIDIA_MODEL = os.getenv(
+        "NVIDIA_MODEL",
+        "meta/llama-3.1-70b-instruct",
+    )
+
+    # Provider priority
+    DEFAULT_PROVIDER = os.getenv(
+        "DEFAULT_PROVIDER",
+        "gemini",
+    ).strip().lower()
+
+    FALLBACK_PROVIDERS = [
+        provider.strip().lower()
+        for provider in os.getenv(
+            "FALLBACK_PROVIDERS",
+            "nim",
+        ).split(",")
+        if provider.strip()
+    ]
+
+    # Obsidian
     OBSIDIAN_VAULT_PATH = Path(
         os.getenv(
             "OBSIDIAN_VAULT_PATH",
@@ -35,18 +56,18 @@ class Config:
         )
     ).expanduser()
 
-    PROJECT_ROOT = PROJECT_ROOT
-
     @classmethod
-    def validate(cls):
+    def validate(cls) -> None:
         if not cls.GEMINI_API_KEY:
             logger.warning(
-                "GEMINI_API_KEY no configurada"
+                "GEMINI_API_KEY no configurada. "
+                "Gemini será omitido si se intenta utilizar."
             )
 
-        if not cls.NIM_API_KEY:
+        if not cls.NVIDIA_API_KEY:
             logger.warning(
-                "NIM_API_KEY no configurada"
+                "NVIDIA_API_KEY no configurada. "
+                "NVIDIA NIM será omitido si se intenta utilizar."
             )
 
         if not cls.OBSIDIAN_VAULT_PATH.exists():
@@ -55,15 +76,11 @@ class Config:
                 cls.OBSIDIAN_VAULT_PATH,
             )
         else:
-            file_count = len(
-                list(
-                    cls.OBSIDIAN_VAULT_PATH.glob(
-                        "**/*.md"
-                    )
-                )
+            markdown_files = list(
+                cls.OBSIDIAN_VAULT_PATH.glob("**/*.md")
             )
 
             logger.info(
                 "Obsidian encontrado (%s archivos .md)",
-                file_count,
+                len(markdown_files),
             )

@@ -1,119 +1,114 @@
-import requests
+import logging
+
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    AuthenticationError,
+    OpenAI,
+    RateLimitError,
+)
 
 from core.config import Config
 from llm.base import LLMProvider
 from llm.exceptions import (
-    LLMProviderError,
-    LLMProviderUnavailableError,
+    ProviderAuthenticationError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
 )
 
+logger = logging.getLogger(__name__)
 
-class NIMProvider(LLMProvider):
+
+class NVIDIAProvider(LLMProvider):
     name = "nim"
 
-    MODEL = "meta/llama-3.1-70b-instruct"
-    TIMEOUT = 60
-
     def __init__(self):
-        self.api_key = Config.NIM_API_KEY
-        self.base_url = Config.NIM_BASE_URL.rstrip("/")
+        if not Config.NVIDIA_API_KEY:
+            raise ProviderAuthenticationError(
+                "NVIDIA_API_KEY no está configurada."
+            )
 
-    def is_available(self) -> bool:
-        return bool(
-            self.api_key
-            and self.base_url
+        self.client = OpenAI(
+            api_key=Config.NVIDIA_API_KEY,
+            base_url=Config.NVIDIA_BASE_URL,
         )
+
+        self.model = Config.NVIDIA_MODEL
 
     def generate(self, prompt: str, **kwargs) -> str:
         if not prompt or not prompt.strip():
-            raise LLMProviderError(
-                "El prompt está vacío."
+            raise ProviderError(
+                "El prompt no puede estar vacío."
             )
-
-        if not self.is_available():
-            raise LLMProviderError(
-                "NVIDIA NIM no está configurado."
-            )
-
-        model = kwargs.get("model", self.MODEL)
-
-        payload = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
-            "temperature": kwargs.get(
-                "temperature",
-                0.2,
-            ),
-            "max_tokens": kwargs.get(
-                "max_tokens",
-                4096,
-            ),
-        }
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
 
         try:
-            response = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=self.TIMEOUT,
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt,
+                    }
+                ],
+                temperature=kwargs.get(
+                    "temperature",
+                    0.2,
+                ),
             )
 
-            if response.status_code >= 500:
-                raise LLMProviderUnavailableError(
-                    "NVIDIA NIM no está disponible temporalmente."
+            if not response.choices:
+                raise ProviderError(
+                    "NVIDIA NIM devolvió una respuesta sin opciones."
                 )
 
-            if response.status_code >= 400:
-                raise LLMProviderError(
-                    "NVIDIA NIM rechazó la solicitud: "
-                    f"HTTP {response.status_code} - "
-                    f"{response.text[:500]}"
-                )
-
-            data = response.json()
-
-            choices = data.get("choices", [])
-
-            if not choices:
-                raise LLMProviderError(
-                    "NVIDIA NIM no devolvió respuestas."
-                )
-
-            message = choices[0].get(
-                "message",
-                {},
-            )
-
-            content = message.get("content")
+            content = response.choices[0].message.content
 
             if not content:
-                raise LLMProviderError(
+                raise ProviderError(
                     "NVIDIA NIM devolvió una respuesta vacía."
                 )
 
             return content
 
-        except requests.Timeout as exc:
-            raise LLMProviderUnavailableError(
-                "NVIDIA NIM excedió el tiempo de espera."
+        except AuthenticationError as exc:
+            raise ProviderAuthenticationError(
+                f"Error de autenticación en NVIDIA NIM: {exc}"
             ) from exc
 
-        except requests.ConnectionError as exc:
-            raise LLMProviderUnavailableError(
-                "No se pudo conectar con NVIDIA NIM."
+        except RateLimitError as exc:
+            raise ProviderRateLimitError(
+                f"NVIDIA NIM alcanzó el límite de uso: {exc}"
             ) from exc
 
-        except requests.RequestException as exc:
-            raise LLMProviderError(
-                f"Error de comunicación con NVIDIA NIM: {exc}"
+        except APIConnectionError as exc:
+            raise ProviderUnavailableError(
+                f"No se pudo conectar con NVIDIA NIM: {exc}"
+            ) from exc
+
+        except APIStatusError as exc:
+            if exc.status_code >= 500:
+                raise ProviderUnavailableError(
+                    f"NVIDIA NIM no está disponible: {exc}"
+                ) from exc
+
+            raise ProviderError(
+                f"Error de NVIDIA NIM: {exc}"
+            ) from exc
+
+        except (
+            ProviderAuthenticationError,
+            ProviderRateLimitError,
+            ProviderUnavailableError,
+            ProviderError,
+        ):
+            raise
+
+        except Exception as exc:
+            logger.exception(
+                "Error inesperado en NVIDIA NIM."
+            )
+
+            raise ProviderError(
+                f"Error inesperado en NVIDIA NIM: {exc}"
             ) from exc

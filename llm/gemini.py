@@ -1,59 +1,96 @@
+import logging
+
 from google import genai
 from google.genai import errors
 
 from core.config import Config
 from llm.base import LLMProvider
 from llm.exceptions import (
-    LLMProviderError,
-    LLMProviderUnavailableError,
+    ProviderAuthenticationError,
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GeminiProvider(LLMProvider):
     name = "gemini"
-    MODEL = "gemini-2.5-flash"
 
     def __init__(self):
-        self.client = None
-
-        if self.is_available():
-            self.client = genai.Client(
-                api_key=Config.GEMINI_API_KEY,
+        if not Config.GEMINI_API_KEY:
+            raise ProviderAuthenticationError(
+                "GEMINI_API_KEY no está configurada."
             )
 
-    def is_available(self) -> bool:
-        return bool(Config.GEMINI_API_KEY)
+        self.client = genai.Client(
+            api_key=Config.GEMINI_API_KEY,
+        )
+
+        self.model = Config.GEMINI_MODEL
 
     def generate(self, prompt: str, **kwargs) -> str:
         if not prompt or not prompt.strip():
-            raise LLMProviderError(
-                "El prompt está vacío."
-            )
-
-        if self.client is None:
-            raise LLMProviderError(
-                "Gemini no está configurado."
+            raise ProviderError(
+                "El prompt no puede estar vacío."
             )
 
         try:
             response = self.client.models.generate_content(
-                model=self.MODEL,
+                model=self.model,
                 contents=[prompt],
             )
 
-            if not response or not response.text:
-                raise LLMProviderError(
-                    "Gemini no devolvió contenido."
+            text = getattr(response, "text", None)
+
+            if not text:
+                raise ProviderError(
+                    "Gemini devolvió una respuesta vacía."
                 )
 
-            return response.text
+            return text
 
-        except errors.ServerError as exc:
-            raise LLMProviderUnavailableError(
-                "Gemini no está disponible temporalmente."
+        except errors.ClientError as exc:
+            status_code = getattr(exc, "code", None)
+
+            if status_code in {401, 403}:
+                raise ProviderAuthenticationError(
+                    f"Error de autenticación en Gemini: {exc}"
+                ) from exc
+
+            if status_code == 429:
+                raise ProviderRateLimitError(
+                    f"Gemini alcanzó el límite de uso: {exc}"
+                ) from exc
+
+            raise ProviderError(
+                f"Error de cliente en Gemini: {exc}"
             ) from exc
 
+        except errors.ServerError as exc:
+            raise ProviderUnavailableError(
+                f"Gemini no está disponible temporalmente: {exc}"
+            ) from exc
+
+        except (
+            ProviderAuthenticationError,
+            ProviderRateLimitError,
+            ProviderUnavailableError,
+            ProviderError,
+        ):
+            raise
+
         except errors.APIError as exc:
-            raise LLMProviderError(
+            raise ProviderError(
                 f"Error de API de Gemini: {exc}"
+            ) from exc
+
+        except Exception as exc:
+            logger.exception(
+                "Error inesperado en Gemini."
+            )
+
+            raise ProviderError(
+                f"Error inesperado en Gemini: {exc}"
             ) from exc
