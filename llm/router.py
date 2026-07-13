@@ -1,4 +1,5 @@
 import logging
+import re
 
 from llm.intent_analyzer import IntentAnalyzer
 from llm.prompt_builder import PromptBuilder
@@ -16,16 +17,11 @@ class LLMRouter:
     @staticmethod
     def detect_skill(query: str):
         """
-        Se mantiene por compatibilidad con el resto del proyecto.
-        Toda la lógica de intención reside en IntentAnalyzer.
+        Se mantiene por compatibilidad.
+        La lógica principal está en IntentAnalyzer.
         """
-
         result = IntentAnalyzer.analyze(query)
-
-        return (
-            result.skill_name,
-            result.skill_params,
-        )
+        return result.skill_name, result.skill_params
 
     @classmethod
     def generate(
@@ -37,10 +33,7 @@ class LLMRouter:
         provider_name: str | None = None,
         **kwargs,
     ) -> str:
-        skill_result = cls._execute_skill(
-            skill_name,
-            skill_params,
-        )
+        skill_result = cls._execute_skill(skill_name, skill_params)
 
         selected_provider = ProviderSelector.select(
             task=task,
@@ -56,9 +49,10 @@ class LLMRouter:
         )
 
         logger.info(
-            "Routing LLM | skill=%s | provider_preferido=%s",
+            "Routing LLM | skill=%s | provider=%s | task_length=%d",
             skill_name or "general",
             selected_provider,
+            len(task),
         )
 
         return cls.provider_manager.generate(
@@ -76,10 +70,7 @@ class LLMRouter:
         if not skill_name:
             return None
 
-        logger.info(
-            "Ejecutando skill: %s",
-            skill_name,
-        )
+        logger.info("Ejecutando skill: %s", skill_name)
 
         return cls.skill_manager.execute(
             skill_name,

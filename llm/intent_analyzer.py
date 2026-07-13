@@ -24,106 +24,32 @@ class IntentAnalyzer:
 
         q = query.lower().strip()
 
-        #
-        # README
-        #
-
-        if re.search(
-            r"\b(crea|crear|genera|generar|haz)\b.*"
-            r"\b(readme|documentación|documentacion)\b",
-            q,
-        ):
+        # Análisis explícito de código
+        if re.search(r"\b(analiza|revisa)\b.*\b(código|codigo|función|clase)\b", q):
             return IntentResult(
-                "readme",
-                {
-                    "request": query,
-                },
+                "analyze",
+                {"code_snippet": query},
             )
 
-        #
-        # Análisis de código
-        #
-
-        if re.search(
-            r"\b(analiza|analizar|revisa|revisar)\b.*"
-            r"\b("
-            r"código|codigo|función|funcion|"
-            r"clase|archivo|módulo|modulo"
-            r")\b",
-            q,
-        ):
-            explicit_code_markers = (
-                "def ",
-                "class ",
-                "import ",
-                "return ",
-                "```",
-            )
-
-            if any(
-                marker in q
-                for marker in explicit_code_markers
-            ):
-                return IntentResult(
-                    "analyze",
-                    {
-                        "code_snippet": query,
-                    },
-                )
-
-        #
-        # Proyecto actual
-        #
-
-        project_intent = re.search(
-            r"\b("
-            r"analiza|analizar|revisa|revisar|"
-            r"evalúa|evaluar|inspecciona|inspeccionar|"
-            r"problemas|errores|deuda"
-            r")\b",
-            q,
-        )
-
-        project_reference = re.search(
-            r"\b("
-            r"proyecto|repo|repositorio|"
-            r"arquitectura|estructura|"
-            r"código actual|codigo actual|"
-            r"mi código|mi codigo|"
-            r"actualmente|sistema actual"
-            r")\b",
-            q,
-        )
-
-        if project_intent and project_reference:
+        # Análisis del proyecto
+        if re.search(r"\b(analiza|revisa|problemas|errores)\b", q) and re.search(r"\b(proyecto|repo|actual|actualmente)\b", q):
             return IntentResult(
                 "analyze_project",
                 {},
             )
 
-        #
-        # Generación de código
-        #
-
-        if re.search(
-            r"\b("
-            r"crea|crear|genera|generar|"
-            r"implementa|implementar|escribe"
-            r")\b.*"
-            r"\b("
-            r"función|funcion|clase|script|"
-            r"endpoint|código|codigo|proyecto"
-            r")\b",
-            q,
-        ):
+        # Generación
+        if re.search(r"\b(crea|genera)\b", q) and re.search(r"\b(función|clase|proyecto)\b", q):
             return IntentResult(
                 "code",
-                {
-                    "task": query,
-                },
+                {"task": query},
             )
 
-        return IntentResult(
-            None,
-            None,
-        )
+        # README
+        if re.search(r"\b(crea|genera)\b.*\b(readme)\b", q):
+            return IntentResult(
+                "readme",
+                {"request": query},
+            )
+
+        return IntentResult(None, None)
