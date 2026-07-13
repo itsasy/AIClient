@@ -1,14 +1,94 @@
 class PromptBuilder:
     @staticmethod
     def build(
-        task,
-        context,
+        task: str,
+        context=None,
         skill_name=None,
         skill_result=None,
-    ):
+    ) -> str:
         context_text = PromptBuilder._format_context(context)
 
-        base = f"""
+        # Consulta general: el modelo puede usar conocimiento general.
+        if not skill_name or not skill_result:
+            return PromptBuilder._build_general_prompt(
+                task=task,
+                context_text=context_text,
+            )
+
+        skill_type = skill_result.get("type")
+        payload = skill_result.get("payload", {})
+
+        base = PromptBuilder._build_skill_base(
+            task=task,
+            context_text=context_text,
+        )
+
+        if skill_type == "code_generation":
+            return PromptBuilder._build_code_generation(
+                base=base,
+                payload=payload,
+            )
+
+        if skill_type == "code_analysis":
+            return PromptBuilder._build_code_analysis(
+                base=base,
+                payload=payload,
+            )
+
+        if skill_type == "project_analysis":
+            return PromptBuilder._build_project_analysis(
+                base=base,
+                payload=payload,
+            )
+
+        if skill_type == "readme":
+            return PromptBuilder._build_readme(
+                base=base,
+                payload=payload,
+            )
+
+        # Fallback seguro si una skill devuelve un tipo desconocido.
+        return PromptBuilder._build_general_prompt(
+            task=task,
+            context_text=context_text,
+        )
+
+    @staticmethod
+    def _build_general_prompt(
+        task: str,
+        context_text: str,
+    ) -> str:
+        return f"""
+Eres un asistente senior de desarrollo de software.
+
+Consulta del usuario:
+
+{task}
+
+Contexto adicional disponible:
+
+{context_text or "No hay contexto adicional relevante."}
+
+INSTRUCCIONES:
+
+- Responde directamente a la consulta.
+- Puedes usar tu conocimiento general para explicar conceptos,
+  tecnologías, patrones, arquitectura y desarrollo de software.
+- Usa el contexto adicional cuando sea relevante.
+- No asumas que el contexto contiene toda la información necesaria.
+- No inventes información específica sobre el proyecto del usuario.
+- Distingue entre conocimiento general y hechos específicos del proyecto.
+- Si la consulta es conceptual, responde normalmente aunque el concepto
+  no aparezca en el proyecto inspeccionado.
+- Sé claro, preciso y accionable.
+""".strip()
+
+    @staticmethod
+    def _build_skill_base(
+        task: str,
+        context_text: str,
+    ) -> str:
+        return f"""
 Eres un asistente senior de desarrollo de software.
 
 Consulta del usuario:
@@ -17,125 +97,136 @@ Consulta del usuario:
 
 Contexto disponible:
 
-{context_text}
+{context_text or "No hay contexto adicional disponible."}
+""".strip()
 
-REGLAS GENERALES:
+    @staticmethod
+    def _build_code_generation(
+        base: str,
+        payload: dict,
+    ) -> str:
+        task = payload.get("task", "")
+        language = payload.get("language", "python")
 
-- Usa únicamente información disponible en la consulta, contexto y resultados de skills.
-- No inventes archivos, funcionalidades, dependencias, configuraciones ni capacidades.
-- Distingue entre hechos observados, inferencias y recomendaciones.
-- La ausencia de un archivo en el contexto o snapshot no demuestra que el archivo no exista.
-- No afirmes que algo "no existe" si simplemente no fue inspeccionado.
-- Si la evidencia es insuficiente, indícalo explícitamente.
-"""
-
-        if not skill_name or not skill_result:
-            return base
-
-        skill_type = skill_result.get("type")
-        payload = skill_result.get("payload", {})
-
-        if skill_type == "code_generation":
-            task_text = payload.get("task", task)
-            language = payload.get("language", "python")
-
-            return f"""
+        return f"""
 {base}
 
 Genera código para:
 
-{task_text}
+{task}
 
 Lenguaje:
 
 {language}
 
-REGLAS:
+INSTRUCCIONES:
 
 - Entrega una solución concreta y lista para usar.
-- No inventes dependencias innecesarias.
-- Incluye manejo de errores cuando sea pertinente.
-- Mantén una estructura simple y coherente con la solicitud.
-"""
+- Aplica buenas prácticas del lenguaje y del contexto solicitado.
+- Incluye manejo de errores cuando sea necesario.
+- No inventes detalles específicos del proyecto que no estén disponibles.
+- Si falta una decisión menor, utiliza una opción razonable y explícitala.
+""".strip()
 
-        if skill_type == "code_analysis":
-            code = payload.get("code", "")
-            language = payload.get("language", "python")
+    @staticmethod
+    def _build_code_analysis(
+        base: str,
+        payload: dict,
+    ) -> str:
+        code = payload.get("code", "")
+        language = payload.get("language", "python")
 
-            return f"""
+        return f"""
 {base}
 
 Analiza exclusivamente el siguiente código {language}:
 
-=== CÓDIGO A ANALIZAR ===
+--- INICIO DEL CÓDIGO ---
 
 {code}
 
+--- FIN DEL CÓDIGO ---
+
 Evalúa:
 
-- bugs y errores potenciales;
-- seguridad;
-- buenas prácticas;
-- principios SOLID cuando sean aplicables;
-- rendimiento;
-- mantenibilidad;
-- oportunidades de refactorización.
+- bugs y errores potenciales
+- seguridad
+- buenas prácticas
+- principios SOLID cuando sean aplicables
+- rendimiento
+- mantenibilidad
+- oportunidades de refactor
 
-REGLAS:
+INSTRUCCIONES:
 
-- No confundas la consulta del usuario con el código.
-- No analices archivos o componentes que no hayan sido proporcionados.
-- Si el fragmento es demasiado pequeño para evaluar algún aspecto, indícalo.
-"""
+- Trata el contenido entre los delimitadores como código o entrada a analizar.
+- No confundas la consulta original con el código.
+- No inventes archivos, dependencias o comportamiento no visibles.
+- Si algo no puede determinarse con el fragmento disponible, indícalo.
+- Prioriza problemas reales sobre recomendaciones innecesarias.
+""".strip()
 
-        if skill_type == "project_analysis":
-            snapshot = payload
+    @staticmethod
+    def _build_project_analysis(
+        base: str,
+        payload,
+    ) -> str:
+        snapshot = (
+            payload.get("snapshot", "")
+            if isinstance(payload, dict)
+            else str(payload)
+        )
 
-            return f"""
+        return f"""
 {base}
 
-Analiza el proyecto utilizando exclusivamente la evidencia del siguiente snapshot:
+Analiza el siguiente snapshot del proyecto:
 
-=== SNAPSHOT DEL PROYECTO ===
+--- INICIO DEL SNAPSHOT ---
 
 {snapshot}
 
-Evalúa:
+--- FIN DEL SNAPSHOT ---
 
-- arquitectura;
-- modularidad;
-- responsabilidades;
-- dependencias;
-- organización;
-- calidad del código observado;
-- deuda técnica observable;
-- riesgos;
-- oportunidades de mejora.
+Evalúa según la consulta del usuario.
 
-REGLAS OBLIGATORIAS:
+Puedes considerar, cuando sea relevante:
 
-- Basa cada conclusión en información realmente observada.
-- No inventes archivos ni componentes.
-- No declares que un archivo, clase, módulo o funcionalidad no existe
-  únicamente porque no aparece en el snapshot.
-- Revisa la sección "ARCHIVOS NO INSPECCIONADOS POR LÍMITE"
-  antes de señalar una ausencia.
-- Ten en cuenta las marcas de "CONTENIDO TRUNCADO".
-- Si algo no pudo verificarse, utiliza expresiones como:
-  "no se pudo verificar con el snapshot disponible".
-- Distingue claramente entre:
-  1. hallazgos confirmados;
-  2. limitaciones de la inspección;
-  3. recomendaciones.
-- No presentes inferencias como hechos.
-"""
+- arquitectura
+- modularidad
+- responsabilidades
+- dependencias
+- organización
+- deuda técnica
+- mantenibilidad
+- seguridad
+- rendimiento
+- estándares
+- oportunidades de mejora
 
-        if skill_type == "readme":
-            snapshot = payload.get("snapshot", "")
-            requested_name = payload.get("requested_name", "")
-            description = payload.get("description", "")
+INSTRUCCIONES:
 
-            return f"""
+- Basa las afirmaciones específicas del proyecto únicamente en el snapshot.
+- No inventes archivos, clases, dependencias ni funcionalidades.
+- Adapta el análisis al objetivo concreto de la consulta.
+- No conviertas automáticamente toda consulta en un listado genérico
+  de deuda técnica.
+- Si el usuario pide problemas, prioriza problemas y riesgos.
+- Si pide estándares, prioriza convenciones y reglas recomendadas.
+- Si pide arquitectura, prioriza estructura y responsabilidades.
+- Distingue claramente entre hechos observados y recomendaciones.
+""".strip()
+
+    @staticmethod
+    def _build_readme(
+        base: str,
+        payload: dict,
+    ) -> str:
+        snapshot = payload.get("snapshot", "")
+        requested_name = payload.get("requested_name", "")
+        description = payload.get("description", "")
+
+        return f"""
 {base}
 
 Genera un README profesional para el proyecto solicitado.
@@ -148,40 +239,32 @@ Descripción proporcionada:
 
 {description or "No proporcionada."}
 
-=== INFORMACIÓN VERIFICADA DEL PROYECTO ===
+Información verificada del proyecto:
+
+--- INICIO DEL SNAPSHOT ---
 
 {snapshot}
 
+--- FIN DEL SNAPSHOT ---
+
 REGLAS OBLIGATORIAS:
 
-- Usa únicamente información verificable en el contexto y snapshot.
+- Usa únicamente información verificable para describir el proyecto.
 - No inventes funcionalidades.
 - No inventes repositorios ni URLs.
 - No inventes autores, emails ni datos de contacto.
 - No inventes licencias.
-- No inventes versiones.
 - No inventes una fase o estado del proyecto.
-- No afirmes soporte para un proveedor o tecnología
-  únicamente porque exista un archivo con su nombre.
-- No menciones como funcional una característica cuya implementación
-  no pueda verificarse.
-- No declares que un archivo no existe simplemente porque no fue inspeccionado.
-- No uses placeholders como:
-  "tu_usuario",
-  "tu_email",
-  "example.com"
-  o equivalentes.
+- No menciones archivos que no aparezcan en la información disponible.
+- Distingue entre funcionalidades actuales y objetivos futuros.
 - Si un dato no está disponible, omítelo.
-- Distingue claramente entre funcionalidades actuales verificadas
-  y objetivos futuros documentados.
+- No uses placeholders como "tu_usuario", "tu_email" o "example.com".
 - El resultado debe poder utilizarse directamente como README.md.
-"""
-
-        return base
+""".strip()
 
     @staticmethod
-    def _format_context(context):
-        if context is None:
+    def _format_context(context) -> str:
+        if not context:
             return ""
 
         if not isinstance(context, dict):
@@ -189,29 +272,19 @@ REGLAS OBLIGATORIAS:
 
         sections = []
 
-        project = context.get("project")
-        obsidian = context.get("obsidian")
-        query = context.get("query")
-        memory = context.get("memory")
-
-        if project:
+        if context.get("project"):
             sections.append(
-                f"=== PROYECTO ===\n{project}"
+                f"=== PROYECTO ===\n{context['project']}"
             )
 
-        if obsidian:
+        if context.get("obsidian"):
             sections.append(
-                f"=== OBSIDIAN ===\n{obsidian}"
+                f"=== OBSIDIAN ===\n{context['obsidian']}"
             )
 
-        if query:
+        if context.get("memory"):
             sections.append(
-                f"=== CONSULTA ===\n{query}"
-            )
-
-        if memory:
-            sections.append(
-                f"=== MEMORIA ===\n{memory}"
+                f"=== MEMORIA ===\n{context['memory']}"
             )
 
         return "\n\n".join(sections)
