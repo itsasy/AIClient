@@ -1,6 +1,6 @@
 import logging
 
-from core.intent_analyzer import IntentAnalyzer
+from llm.intent_analyzer import IntentAnalyzer
 from llm.prompt_builder import PromptBuilder
 from llm.provider_manager import ProviderManager
 from skills.manager import SkillManager
