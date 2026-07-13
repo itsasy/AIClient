@@ -2,6 +2,7 @@ import logging
 
 from google import genai
 from google.genai import errors
+from google.genai.types import GenerateContentConfig
 
 from core.config import Config
 from llm.base import LLMProvider
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 class GeminiProvider(LLMProvider):
     name = "gemini"
 
+    SYSTEM_PROMPT = (
+        "You are a senior software architect and AI coding assistant."
+    )
+
     def __init__(self):
         if not Config.GEMINI_API_KEY:
             raise ProviderAuthenticationError(
@@ -30,7 +35,11 @@ class GeminiProvider(LLMProvider):
 
         self.model = Config.GEMINI_MODEL
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(
+        self,
+        prompt: str,
+        **kwargs,
+    ) -> str:
         if not prompt or not prompt.strip():
             raise ProviderError(
                 "El prompt no puede estar vacío."
@@ -39,22 +48,73 @@ class GeminiProvider(LLMProvider):
         try:
             response = self.client.models.generate_content(
                 model=self.model,
-                contents=[prompt],
+                contents=prompt,
+                config=GenerateContentConfig(
+                    system_instruction=self.SYSTEM_PROMPT,
+                    temperature=kwargs.get(
+                        "temperature",
+                        0.2,
+                    ),
+                    max_output_tokens=kwargs.get(
+                        "max_tokens",
+                        4096,
+                    ),
+                ),
             )
 
-            text = getattr(response, "text", None)
+            text = getattr(
+                response,
+                "text",
+                None,
+            )
 
-            if not text:
-                raise ProviderError(
-                    "Gemini devolvió una respuesta vacía."
-                )
+            if text:
+                return text.strip()
 
-            return text
+            candidates = getattr(
+                response,
+                "candidates",
+                None,
+            )
+
+            if candidates:
+                try:
+                    parts = (
+                        candidates[0]
+                        .content
+                        .parts
+                    )
+
+                    text = "".join(
+                        getattr(
+                            part,
+                            "text",
+                            "",
+                        )
+                        for part in parts
+                    ).strip()
+
+                    if text:
+                        return text
+
+                except Exception:
+                    pass
+
+            raise ProviderError(
+                "Gemini devolvió una respuesta vacía."
+            )
 
         except errors.ClientError as exc:
-            status_code = getattr(exc, "code", None)
+            status_code = getattr(
+                exc,
+                "code",
+                None,
+            )
 
-            if status_code in {401, 403}:
+            if status_code in (
+                401,
+                403,
+            ):
                 raise ProviderAuthenticationError(
                     f"Error de autenticación en Gemini: {exc}"
                 ) from exc
@@ -88,7 +148,8 @@ class GeminiProvider(LLMProvider):
 
         except Exception as exc:
             logger.exception(
-                "Error inesperado en Gemini."
+                "Error inesperado usando Gemini (%s).",
+                self.model,
             )
 
             raise ProviderError(
