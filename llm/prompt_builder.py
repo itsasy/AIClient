@@ -1,11 +1,11 @@
 class PromptBuilder:
     @staticmethod
     def build(
-        task: str,
-        context=None,
+        task,
+        context,
         skill_name=None,
         skill_result=None,
-    ) -> str:
+    ):
         context_text = PromptBuilder._format_context(context)
 
         base = f"""
@@ -18,25 +18,25 @@ Consulta del usuario:
 Contexto disponible:
 
 {context_text}
-""".strip()
+
+REGLAS GENERALES:
+
+- Usa únicamente información disponible en la consulta, contexto y resultados de skills.
+- No inventes archivos, funcionalidades, dependencias, configuraciones ni capacidades.
+- Distingue entre hechos observados, inferencias y recomendaciones.
+- La ausencia de un archivo en el contexto o snapshot no demuestra que el archivo no exista.
+- No afirmes que algo "no existe" si simplemente no fue inspeccionado.
+- Si la evidencia es insuficiente, indícalo explícitamente.
+"""
 
         if not skill_name or not skill_result:
             return base
-
-        if not isinstance(skill_result, dict):
-            return f"""
-{base}
-
-Resultado de la skill:
-
-{skill_result}
-""".strip()
 
         skill_type = skill_result.get("type")
         payload = skill_result.get("payload", {})
 
         if skill_type == "code_generation":
-            task_to_generate = payload.get("task", "")
+            task_text = payload.get("task", task)
             language = payload.get("language", "python")
 
             return f"""
@@ -44,15 +44,19 @@ Resultado de la skill:
 
 Genera código para:
 
-{task_to_generate}
+{task_text}
 
 Lenguaje:
 
 {language}
 
-Entrega una solución concreta, limpia y lista para usar.
-No inventes requisitos que no aparezcan en la solicitud.
-""".strip()
+REGLAS:
+
+- Entrega una solución concreta y lista para usar.
+- No inventes dependencias innecesarias.
+- Incluye manejo de errores cuando sea pertinente.
+- Mantén una estructura simple y coherente con la solicitud.
+"""
 
         if skill_type == "code_analysis":
             code = payload.get("code", "")
@@ -61,69 +65,74 @@ No inventes requisitos que no aparezcan en la solicitud.
             return f"""
 {base}
 
-Analiza el siguiente código.
+Analiza exclusivamente el siguiente código {language}:
 
-Lenguaje:
-
-{language}
-
-Código:
+=== CÓDIGO A ANALIZAR ===
 
 {code}
 
 Evalúa:
 
-- bugs y errores potenciales
-- seguridad
-- buenas prácticas
-- principios SOLID cuando correspondan
-- rendimiento
-- mantenibilidad
-- oportunidades de refactorización
+- bugs y errores potenciales;
+- seguridad;
+- buenas prácticas;
+- principios SOLID cuando sean aplicables;
+- rendimiento;
+- mantenibilidad;
+- oportunidades de refactorización.
 
-Distingue claramente entre problemas reales y mejoras opcionales.
-No inventes código que no haya sido proporcionado.
-""".strip()
+REGLAS:
+
+- No confundas la consulta del usuario con el código.
+- No analices archivos o componentes que no hayan sido proporcionados.
+- Si el fragmento es demasiado pequeño para evaluar algún aspecto, indícalo.
+"""
 
         if skill_type == "project_analysis":
-            snapshot = payload if isinstance(payload, str) else str(payload)
+            snapshot = payload
 
             return f"""
 {base}
 
-Analiza el proyecto actual utilizando la evidencia inspeccionada.
+Analiza el proyecto utilizando exclusivamente la evidencia del siguiente snapshot:
 
-Snapshot del proyecto:
+=== SNAPSHOT DEL PROYECTO ===
 
 {snapshot}
 
 Evalúa:
 
-- arquitectura
-- modularidad
-- dependencias
-- organización
-- calidad del código
-- posibles bugs
-- seguridad
-- deuda técnica
-- oportunidades de mejora
+- arquitectura;
+- modularidad;
+- responsabilidades;
+- dependencias;
+- organización;
+- calidad del código observado;
+- deuda técnica observable;
+- riesgos;
+- oportunidades de mejora.
 
-REGLAS:
+REGLAS OBLIGATORIAS:
 
-- Analiza únicamente la información disponible.
-- No afirmes haber inspeccionado archivos que no aparecen en el snapshot.
-- Distingue entre problemas confirmados, riesgos potenciales y recomendaciones.
-- Cita los archivos concretos cuando la evidencia permita identificar su origen.
-- No solicites al usuario que pegue código que ya aparece en el snapshot.
-""".strip()
+- Basa cada conclusión en información realmente observada.
+- No inventes archivos ni componentes.
+- No declares que un archivo, clase, módulo o funcionalidad no existe
+  únicamente porque no aparece en el snapshot.
+- Revisa la sección "ARCHIVOS NO INSPECCIONADOS POR LÍMITE"
+  antes de señalar una ausencia.
+- Ten en cuenta las marcas de "CONTENIDO TRUNCADO".
+- Si algo no pudo verificarse, utiliza expresiones como:
+  "no se pudo verificar con el snapshot disponible".
+- Distingue claramente entre:
+  1. hallazgos confirmados;
+  2. limitaciones de la inspección;
+  3. recomendaciones.
+- No presentes inferencias como hechos.
+"""
 
         if skill_type == "readme":
             snapshot = payload.get("snapshot", "")
-            request = payload.get(
-                "request",
-                payload.get("requested_name", ""),
-            )
+            requested_name = payload.get("requested_name", "")
             description = payload.get("description", "")
 
             return f"""
@@ -133,13 +142,13 @@ Genera un README profesional para el proyecto solicitado.
 
 Solicitud:
 
-{request}
+{requested_name}
 
 Descripción proporcionada:
 
 {description or "No proporcionada."}
 
-Información verificada del proyecto:
+=== INFORMACIÓN VERIFICADA DEL PROYECTO ===
 
 {snapshot}
 
@@ -150,20 +159,30 @@ REGLAS OBLIGATORIAS:
 - No inventes repositorios ni URLs.
 - No inventes autores, emails ni datos de contacto.
 - No inventes licencias.
+- No inventes versiones.
 - No inventes una fase o estado del proyecto.
-- No menciones archivos que no aparezcan en la información disponible.
-- Distingue claramente entre funcionalidades actuales y objetivos futuros.
-- Si un dato no está disponible, simplemente omítelo.
-- No uses placeholders como "tu_usuario", "tu_email" o "example.com".
+- No afirmes soporte para un proveedor o tecnología
+  únicamente porque exista un archivo con su nombre.
+- No menciones como funcional una característica cuya implementación
+  no pueda verificarse.
+- No declares que un archivo no existe simplemente porque no fue inspeccionado.
+- No uses placeholders como:
+  "tu_usuario",
+  "tu_email",
+  "example.com"
+  o equivalentes.
+- Si un dato no está disponible, omítelo.
+- Distingue claramente entre funcionalidades actuales verificadas
+  y objetivos futuros documentados.
 - El resultado debe poder utilizarse directamente como README.md.
-""".strip()
+"""
 
         return base
 
     @staticmethod
-    def _format_context(context) -> str:
-        if not context:
-            return "No hay contexto adicional disponible."
+    def _format_context(context):
+        if context is None:
+            return ""
 
         if not isinstance(context, dict):
             return str(context)
@@ -171,30 +190,28 @@ REGLAS OBLIGATORIAS:
         sections = []
 
         project = context.get("project")
+        obsidian = context.get("obsidian")
+        query = context.get("query")
+        memory = context.get("memory")
+
         if project:
             sections.append(
                 f"=== PROYECTO ===\n{project}"
             )
 
-        obsidian = context.get("obsidian")
         if obsidian:
             sections.append(
-                f"=== CONOCIMIENTO LOCAL / OBSIDIAN ===\n{obsidian}"
+                f"=== OBSIDIAN ===\n{obsidian}"
             )
 
-        memory = context.get("memory")
-        if memory:
-            sections.append(
-                f"=== MEMORIA DE CONVERSACIÓN ===\n{memory}"
-            )
-
-        query = context.get("query")
         if query:
             sections.append(
-                f"=== CONSULTA ACTUAL ===\n{query}"
+                f"=== CONSULTA ===\n{query}"
             )
 
-        if not sections:
-            return str(context)
+        if memory:
+            sections.append(
+                f"=== MEMORIA ===\n{memory}"
+            )
 
         return "\n\n".join(sections)
