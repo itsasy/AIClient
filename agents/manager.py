@@ -51,6 +51,8 @@ class AgentManager:
         self,
         task: str,
         context: dict | None = None,
+        skill_name: str | None = None,
+        skill_params: dict | None = None,
     ) -> str:
         agent = self.select_agent(task)
 
@@ -59,7 +61,15 @@ class AgentManager:
             agent.name,
         )
 
+        logger.info(
+            "Contexto de ejecución | agent=%s | skill=%s",
+            agent.name,
+            skill_name or "general",
+        )
+
         return agent.process(
             task=task,
             context=context or {},
+            skill_name=skill_name,
+            skill_params=skill_params,
         )

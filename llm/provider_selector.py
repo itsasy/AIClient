@@ -9,22 +9,26 @@ logger = logging.getLogger(__name__)
 
 class ProviderSelector:
     """
-    Selecciona el proveedor LLM preferido según
-    la naturaleza de la solicitud.
+    Selecciona el proveedor LLM preferido según la skill detectada.
 
-    La selección no garantiza que el proveedor
-    termine ejecutándose: ProviderManager mantiene
-    la responsabilidad del fallback.
+    ProviderSelector únicamente determina el proveedor preferido.
+    ProviderManager sigue siendo responsable de ejecutar el provider
+    y aplicar fallback cuando sea necesario.
     """
 
     CODE_SKILLS = {
+        "analyze",
         "analyze_code",
-        "analyze_project",
+        "code",
         "create_project",
     }
 
     ARCHITECTURE_SKILLS = {
         "analyze_project",
+    }
+
+    DOCUMENTATION_SKILLS = {
+        "readme",
     }
 
     @classmethod
@@ -80,5 +84,12 @@ class ProviderSelector:
 
         if normalized_skill in cls.CODE_SKILLS:
             return Config.CODE_PROVIDER
+
+        if normalized_skill in cls.DOCUMENTATION_SKILLS:
+            return getattr(
+                Config,
+                "DOCUMENTATION_PROVIDER",
+                Config.DEFAULT_PROVIDER,
+            )
 
         return Config.DEFAULT_PROVIDER
