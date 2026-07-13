@@ -1,16 +1,19 @@
 import logging
 import re
 
-from llm.gemini import GeminiProvider
 from llm.prompt_builder import PromptBuilder
 from skills.manager import SkillManager
-
 
 logger = logging.getLogger(__name__)
 
 
 class LLMRouter:
     skill_manager = SkillManager()
+
+    @staticmethod
+    def _provider():
+        from llm.gemini import GeminiProvider
+        return GeminiProvider()
 
     @staticmethod
     def detect_skill(query: str):
@@ -98,7 +101,7 @@ class LLMRouter:
 
         logger.debug("Prompt generado:\n%s", prompt)
 
-        provider = GeminiProvider()
+        provider = LLMRouter._provider()
         return provider.generate(prompt)
 
     @staticmethod
