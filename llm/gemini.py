@@ -20,7 +20,8 @@ class GeminiProvider(LLMProvider):
     name = "gemini"
 
     SYSTEM_PROMPT = (
-        "You are a senior software architect and AI coding assistant."
+        "You are a senior software architect "
+        "and AI coding assistant."
     )
 
     def __init__(self):
@@ -44,6 +45,11 @@ class GeminiProvider(LLMProvider):
             raise ProviderError(
                 "El prompt no puede estar vacío."
             )
+
+        logger.info(
+            "Enviando solicitud a Gemini | Modelo: %s",
+            self.model,
+        )
 
         try:
             response = self.client.models.generate_content(
@@ -98,7 +104,11 @@ class GeminiProvider(LLMProvider):
                         return text
 
                 except Exception:
-                    pass
+                    logger.debug(
+                        "No se pudo extraer texto "
+                        "desde candidates de Gemini.",
+                        exc_info=True,
+                    )
 
             raise ProviderError(
                 "Gemini devolvió una respuesta vacía."
@@ -116,12 +126,14 @@ class GeminiProvider(LLMProvider):
                 403,
             ):
                 raise ProviderAuthenticationError(
-                    f"Error de autenticación en Gemini: {exc}"
+                    f"Error de autenticación "
+                    f"en Gemini: {exc}"
                 ) from exc
 
             if status_code == 429:
                 raise ProviderRateLimitError(
-                    f"Gemini alcanzó el límite de uso: {exc}"
+                    f"Gemini alcanzó el límite "
+                    f"de uso: {exc}"
                 ) from exc
 
             raise ProviderError(
@@ -130,7 +142,8 @@ class GeminiProvider(LLMProvider):
 
         except errors.ServerError as exc:
             raise ProviderUnavailableError(
-                f"Gemini no está disponible temporalmente: {exc}"
+                "Gemini no está disponible "
+                f"temporalmente: {exc}"
             ) from exc
 
         except (

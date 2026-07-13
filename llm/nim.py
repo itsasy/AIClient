@@ -36,60 +36,91 @@ class NVIDIAProvider(LLMProvider):
 
         self.model = Config.NVIDIA_MODEL
 
-    def generate(self, prompt: str, **kwargs) -> str:
+    def generate(
+        self,
+        prompt: str,
+        **kwargs,
+    ) -> str:
         if not prompt or not prompt.strip():
             raise ProviderError(
                 "El prompt no puede estar vacío."
             )
 
+        logger.info(
+            "Enviando solicitud a NVIDIA NIM "
+            "| Modelo: %s | Endpoint: %s",
+            self.model,
+            Config.NVIDIA_BASE_URL,
+        )
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt,
-                    }
-                ],
-                temperature=kwargs.get(
-                    "temperature",
-                    0.2,
-                ),
+            response = (
+                self.client
+                .chat
+                .completions
+                .create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        }
+                    ],
+                    temperature=kwargs.get(
+                        "temperature",
+                        0.2,
+                    ),
+                    max_tokens=kwargs.get(
+                        "max_tokens",
+                        4096,
+                    ),
+                )
             )
 
             if not response.choices:
                 raise ProviderError(
-                    "NVIDIA NIM devolvió una respuesta sin opciones."
+                    "NVIDIA NIM devolvió "
+                    "una respuesta sin opciones."
                 )
 
-            content = response.choices[0].message.content
+            content = (
+                response
+                .choices[0]
+                .message
+                .content
+            )
 
             if not content:
                 raise ProviderError(
-                    "NVIDIA NIM devolvió una respuesta vacía."
+                    "NVIDIA NIM devolvió "
+                    "una respuesta vacía."
                 )
 
-            return content
+            return content.strip()
 
         except AuthenticationError as exc:
             raise ProviderAuthenticationError(
-                f"Error de autenticación en NVIDIA NIM: {exc}"
+                "Error de autenticación "
+                f"en NVIDIA NIM: {exc}"
             ) from exc
 
         except RateLimitError as exc:
             raise ProviderRateLimitError(
-                f"NVIDIA NIM alcanzó el límite de uso: {exc}"
+                "NVIDIA NIM alcanzó "
+                f"el límite de uso: {exc}"
             ) from exc
 
         except APIConnectionError as exc:
             raise ProviderUnavailableError(
-                f"No se pudo conectar con NVIDIA NIM: {exc}"
+                "No se pudo conectar "
+                f"con NVIDIA NIM: {exc}"
             ) from exc
 
         except APIStatusError as exc:
             if exc.status_code >= 500:
                 raise ProviderUnavailableError(
-                    f"NVIDIA NIM no está disponible: {exc}"
+                    "NVIDIA NIM no está "
+                    f"disponible: {exc}"
                 ) from exc
 
             raise ProviderError(
@@ -110,5 +141,6 @@ class NVIDIAProvider(LLMProvider):
             )
 
             raise ProviderError(
-                f"Error inesperado en NVIDIA NIM: {exc}"
+                "Error inesperado "
+                f"en NVIDIA NIM: {exc}"
             ) from exc
