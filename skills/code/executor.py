@@ -33,4 +33,4 @@ class CodeExecutorSkill(Skill):
                     }
                 }
         except Exception as e:
-            return {"type": "execution_result", "payload": {"ok": False, "output": str(e)}}}
+            return {"type": "execution_result", "payload": {"ok": False, "output": str(e)}}
