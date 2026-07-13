@@ -12,9 +12,15 @@ class ArchitectAgent(Agent):
         task: str,
         context: dict | None = None,
     ) -> str:
+        skill_name, skill_params = LLMRouter.detect_skill(task)
+
+        if not self.supports_skill(skill_name):
+            skill_name = "analyze_project"
+            skill_params = {}
+
         return LLMRouter.generate(
             task=task,
             context=context or {},
-            skill_name="analyze_project",
-            skill_params={},
+            skill_name=skill_name,
+            skill_params=skill_params,
         )

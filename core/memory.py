@@ -41,9 +41,9 @@ class ConversationMemory:
             encoding="utf-8",
         )
 
-    def get_context(self) -> dict:
+    def get_context(self) -> str:
         if not self.history:
-            return {"memory": ""}
+            return ""
 
         lines = []
 
@@ -54,6 +54,4 @@ class ConversationMemory:
                 f"AI: {item['ai']}"
             )
 
-        return {
-            "memory": "\n\n".join(lines),
-        }
+        return "\n\n".join(lines)

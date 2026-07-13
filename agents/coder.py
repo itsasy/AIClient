@@ -14,6 +14,10 @@ class CoderAgent(Agent):
     ) -> str:
         skill_name, skill_params = LLMRouter.detect_skill(task)
 
+        if not self.supports_skill(skill_name):
+            skill_name = None
+            skill_params = None
+
         return LLMRouter.generate(
             task=task,
             context=context or {},

@@ -10,16 +10,16 @@ class Orchestrator:
         self.agent_manager = AgentManager()
 
     def process(self, task: str) -> str:
-        context_payload = self.context_builder.build(task)
+        context = self.context_builder.build(task)
 
-        memory_context = self.memory.get_context()
+        memory = self.memory.get_context()
 
-        if memory_context:
-            context_payload["memory"] = memory_context
+        if memory:
+            context["memory"] = memory
 
         response = self.agent_manager.delegate(
             task=task,
-            context=context_payload,
+            context=context,
         )
 
         self.memory.add(task, response)
