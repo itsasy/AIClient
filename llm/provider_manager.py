@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 from collections.abc import Callable
 
@@ -69,16 +71,6 @@ class ProviderManager:
 
                 provider = self._create_provider(name)
 
-                logger.info(
-                    "Provider seleccionado: %s | Modelo: %s",
-                    name,
-                    getattr(
-                        provider,
-                        "model",
-                        "desconocido",
-                    ),
-                )
-
                 response = provider.generate(
                     prompt,
                     **kwargs,
@@ -108,10 +100,6 @@ class ProviderManager:
                     name,
                 )
 
-        logger.error(
-            "Todos los providers disponibles fallaron."
-        )
-
         raise AllProvidersFailedError(errors)
 
     def _create_provider(
@@ -139,16 +127,12 @@ class ProviderManager:
         chain = [primary]
 
         for fallback in Config.FALLBACK_PROVIDERS:
-            normalized_fallback = (
-                fallback.strip().lower()
-            )
+            normalized_fallback = fallback.strip().lower()
 
             if (
                 normalized_fallback
                 and normalized_fallback not in chain
             ):
-                chain.append(
-                    normalized_fallback
-                )
+                chain.append(normalized_fallback)
 
         return chain

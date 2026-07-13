@@ -3,6 +3,7 @@ import logging
 from llm.intent_analyzer import IntentAnalyzer
 from llm.prompt_builder import PromptBuilder
 from llm.provider_manager import ProviderManager
+from llm.provider_selector import ProviderSelector
 from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
@@ -16,7 +17,7 @@ class LLMRouter:
     def detect_skill(query: str):
         """
         Se mantiene por compatibilidad con el resto del proyecto.
-        Toda la lógica fue extraída a IntentAnalyzer.
+        Toda la lógica de intención reside en IntentAnalyzer.
         """
 
         result = IntentAnalyzer.analyze(query)
@@ -41,6 +42,12 @@ class LLMRouter:
             skill_params,
         )
 
+        selected_provider = ProviderSelector.select(
+            task=task,
+            skill_name=skill_name,
+            requested_provider=provider_name,
+        )
+
         prompt = PromptBuilder.build(
             task=task,
             context=context or {},
@@ -48,13 +55,15 @@ class LLMRouter:
             skill_result=skill_result,
         )
 
-        logger.debug(
-            "Prompt generado para la tarea."
+        logger.info(
+            "Routing LLM | skill=%s | provider_preferido=%s",
+            skill_name or "general",
+            selected_provider,
         )
 
         return cls.provider_manager.generate(
             prompt=prompt,
-            provider_name=provider_name,
+            provider_name=selected_provider,
             **kwargs,
         )
 
