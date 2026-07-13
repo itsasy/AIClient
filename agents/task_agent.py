@@ -1,14 +1,18 @@
 from agents.base import Agent
+from llm.router import LLMRouter
+
 
 class TaskAgent(Agent):
-
     name = "task"
+    role = "Asistente general"
+    skills = ()
 
-    role = "Ejecutor"
-
-    def process(self, task, context):
-
-        return {
-            "task": task,
-            "context": context
-        }
+    def process(
+        self,
+        task: str,
+        context: dict | None = None,
+    ) -> str:
+        return LLMRouter.generate(
+            task=task,
+            context=context or {},
+        )

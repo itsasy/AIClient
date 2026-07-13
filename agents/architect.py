@@ -1,18 +1,20 @@
 from agents.base import Agent
 from llm.router import LLMRouter
 
-class ArchitectAgent(Agent):
-    name = "Architect"
-    role = "Define arquitectura y estándares"
-    skills = ["analyze_project"]
-    
-    def process(self, task: str) -> str:
-        prompt = f"""Eres un Arquitecto de Software Senior.
-Tarea: {task}
 
-Proporciona:
-1. Arquitectura recomendada
-2. Estructura de carpetas
-3. Patrones a usar
-4. Decisiones técnicas clave"""
-        return LLMRouter.generate(prompt)
+class ArchitectAgent(Agent):
+    name = "architect"
+    role = "Arquitecto de Software Senior"
+    skills = ("analyze_project",)
+
+    def process(
+        self,
+        task: str,
+        context: dict | None = None,
+    ) -> str:
+        return LLMRouter.generate(
+            task=task,
+            context=context or {},
+            skill_name="analyze_project",
+            skill_params={},
+        )
