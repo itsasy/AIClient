@@ -1,3 +1,6 @@
+from textwrap import dedent
+
+
 class PromptBuilder:
     @staticmethod
     def build(
@@ -8,15 +11,17 @@ class PromptBuilder:
     ) -> str:
         context_text = PromptBuilder._format_context(context)
 
-        base = f"""
-Eres un asistente senior de desarrollo de software.
+        base = dedent(
+            f"""
+            Eres un asistente senior de desarrollo de software.
 
-CONSULTA DEL USUARIO:
-{task}
+            CONSULTA DEL USUARIO:
+            {task}
 
-CONTEXTO DISPONIBLE:
-{context_text}
-""".strip()
+            CONTEXTO DISPONIBLE:
+            {context_text}
+            """
+        ).strip()
 
         if not skill_name or not skill_result:
             return base
@@ -25,101 +30,105 @@ CONTEXTO DISPONIBLE:
         payload = skill_result.get("payload", {})
 
         if skill_type == "code_generation":
-            return f"""
-{base}
+            return dedent(
+                f"""
+                {base}
 
-TAREA:
-Genera una solución para:
+                TAREA:
+                Genera una solución para:
 
-{payload.get("task", task)}
+                {payload.get("task", task)}
 
-Lenguaje preferido:
-{payload.get("language", "python")}
+                Lenguaje preferido:
+                {payload.get("language", "python")}
 
-Entrega una solución concreta, moderna y lista para usar.
-No inventes requisitos que no hayan sido proporcionados.
-""".strip()
+                Entrega una solución concreta, moderna y lista para usar.
+                No inventes requisitos que no hayan sido proporcionados.
+                """
+            ).strip()
 
         if skill_type == "code_analysis":
-            return f"""
-{base}
+            return dedent(
+                f"""
+                {base}
 
-TAREA:
-Analiza exclusivamente el siguiente código:
+                TAREA:
+                Analiza exclusivamente el siguiente código:
 
-{payload.get("code", "")}
+                {payload.get("code", "")}
 
-Evalúa:
+                Evalúa:
 
-- bugs
-- seguridad
-- buenas prácticas
-- SOLID
-- rendimiento
-- oportunidades de refactorización
+                - bugs
+                - seguridad
+                - buenas prácticas
+                - SOLID
+                - rendimiento
+                - oportunidades de refactorización
 
-No confundas la consulta del usuario con código fuente.
-""".strip()
+                No confundas la consulta del usuario con código fuente.
+                """
+            ).strip()
 
         if skill_type == "project_analysis":
-            return f"""
-{base}
+            return dedent(
+                f"""
+                {base}
 
-TAREA:
-Analiza el proyecto actual usando el siguiente snapshot:
+                TAREA:
+                Analiza el proyecto actual usando el siguiente snapshot:
 
-{payload}
+                {payload}
 
-Evalúa:
+                Evalúa:
 
-- arquitectura
-- estructura
-- modularidad
-- responsabilidades
-- dependencias
-- deuda técnica
-- problemas potenciales
-- oportunidades de mejora
+                - arquitectura
+                - estructura
+                - modularidad
+                - responsabilidades
+                - dependencias
+                - deuda técnica
+                - problemas potenciales
+                - oportunidades de mejora
 
-No solicites al usuario que copie archivos que ya aparecen en el snapshot.
-No inventes contenido de archivos que no haya sido inspeccionado.
-Distingue claramente entre hechos observados y recomendaciones.
-""".strip()
+                No solicites al usuario que copie archivos que ya aparecen en el snapshot.
+                No inventes contenido de archivos que no haya sido inspeccionado.
+                Distingue claramente entre hechos observados y recomendaciones.
+                """
+            ).strip()
 
         if skill_type == "readme":
-            return f"""
-{base}
+            snapshot = payload.get("snapshot", "")
+            requested_name = payload.get("request", "")
+            description = payload.get("description", "")
 
-TAREA:
-Genera un README profesional para el proyecto.
+            return dedent(
+                f"""
+                {base}
 
-Información:
+                Genera un README profesional para el proyecto solicitado.
 
-{payload}
-""".strip()
+                Solicitud:
+                {requested_name}
 
-        return base
+                Descripción proporcionada:
+                {description or "No proporcionada."}
 
-    @staticmethod
-    def _format_context(context) -> str:
-        if not isinstance(context, dict):
-            return str(context or "")
+                Información verificada del proyecto:
+                {snapshot}
 
-        sections = []
+                REGLAS OBLIGATORIAS:
 
-        if context.get("project"):
-            sections.append(
-                f"=== PROYECTO ===\n{context['project']}"
-            )
-
-        if context.get("obsidian"):
-            sections.append(
-                f"=== OBSIDIAN ===\n{context['obsidian']}"
-            )
-
-        if context.get("memory"):
-            sections.append(
-                f"=== MEMORIA RECIENTE ===\n{context['memory']}"
-            )
-
-        return "\n\n".join(sections)
+                - Usa únicamente información verificable en el contexto y snapshot.
+                - No inventes funcionalidades.
+                - No inventes repositorios ni URLs.
+                - No inventes autores, emails ni datos de contacto.
+                - No inventes licencias.
+                - No inventes una fase o estado del proyecto.
+                - No menciones archivos que no aparezcan en la información disponible.
+                - Distingue claramente entre funcionalidades actuales y objetivos futuros.
+                - Si un dato no está disponible, simplemente omítelo.
+                - No uses placeholders como "tu_usuario", "tu_email" o "example.com".
+                - El resultado debe poder utilizarse directamente como README.md.
+                """
+            ).strip()

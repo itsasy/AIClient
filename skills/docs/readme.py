@@ -1,14 +1,27 @@
+from core.project_inspector import ProjectInspector
 from skills.base import Skill
 
+
 class GenerateReadmeSkill(Skill):
-    name = "generate_readme"
-    description = "Genera README.md profesional"
-    
-    def execute(self, project_name: str = "", description: str = "", **kwargs):
+    name = "readme"
+    description = "Genera un README profesional basado en el proyecto real"
+
+    def __init__(self):
+        self.inspector = ProjectInspector()
+
+    def execute(
+        self,
+        request: str = "",
+        description: str = "",
+        **kwargs,
+    ):
+        snapshot = self.inspector.inspect()
+
         return {
             "type": "readme",
             "payload": {
-                "project_name": project_name,
+                "request": request,
                 "description": description,
+                "snapshot": snapshot,
             },
         }

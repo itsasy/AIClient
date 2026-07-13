@@ -26,7 +26,7 @@ class LLMRouter:
             q,
         ):
             return "readme", {
-                "project_name": query,
+                "request": query,
             }
 
         # Análisis de código explícito

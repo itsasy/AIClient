@@ -245,77 +245,6 @@ if __name__ == "__main__":
 
 
 ====================================================================================================
-ARCHIVO: cli\main.py
-====================================================================================================
-
-#!/usr/bin/env python3
-import sys
-import argparse
-from pathlib import Path
-
-# Añadir el directorio raíz al PYTHONPATH
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from core.config import Config
-from core.context_builder import ContextBuilder
-from llm.gemini import GeminiProvider
-from llm.nim import NIMProvider
-
-def main():
-    Config.validate()
-    
-    parser = argparse.ArgumentParser(description="AIClient - Fase 1")
-    parser.add_argument("query", nargs="*", help="Pregunta o prompt")
-    parser.add_argument("--model", choices=["gemini", "nim"], default="gemini",
-                       help="Modelo a usar (gemini o nim)")
-    parser.add_argument("--chat", action="store_true", help="Modo chat interactivo")
-    args = parser.parse_args()
-    
-    query = " ".join(args.query)
-    
-    if not query and not args.chat:
-        print("🤖 AIClient Fase 1")
-        print("Uso:")
-        print('  uv run cli/main.py "tu pregunta aquí"')
-        print("  uv run cli/main.py --chat")
-        return
-    
-    context_builder = ContextBuilder()
-    
-    if args.chat:
-        print("🤖 Modo Chat Interactivo (escribe 'exit' para salir)\n")
-        while True:
-            try:
-                user_input = input("Tú: ")
-                if user_input.lower() in ["exit", "salir", "quit"]:
-                    break
-                context = context_builder.build(user_input)
-                response = get_llm_response(args.model, context)
-                print(f"\nAI: {response}\n")
-            except KeyboardInterrupt:
-                break
-    else:
-        print(f"🔍 Procesando: {query}\n")
-        context = context_builder.build(query)
-        response = get_llm_response(args.model, context)
-        print(f"\n🤖 Respuesta:\n{response}\n")
-
-def get_llm_response(model_choice: str, prompt: str):
-    try:
-        if model_choice == "gemini":
-            llm = GeminiProvider()
-        else:
-            llm = NIMProvider()
-        return llm.generate(prompt)
-    except Exception as e:
-        return f"❌ Error al llamar al LLM: {str(e)}"
-
-if __name__ == "__main__":
-    main()
-
-
-
-====================================================================================================
 ARCHIVO: core\__init__.py
 ====================================================================================================
 
@@ -371,38 +300,8 @@ class Config:
 ARCHIVO: core\context_builder.py
 ====================================================================================================
 
-import logging
-
 from core.project_inspector import ProjectInspector
 from obsidian.search import ObsidianSearch
-
-logger = logging.getLogger(__name__)
-
-
-class ContextPayload(dict):
-    def __contains__(self, item):
-        if dict.__contains__(self, item):
-            return True
-        for value in self.values():
-            if isinstance(value, str) and item in value:
-                return True
-        return False
-
-    def __str__(self):
-        return self._as_text(self)
-
-    @staticmethod
-    def _as_text(context):
-        sections = []
-        if context.get("project"):
-            sections.append(f"=== PROYECTO ===\n{context['project']}")
-        if context.get("obsidian"):
-            sections.append(f"=== OBSIDIAN ===\n{context['obsidian']}")
-        if context.get("query"):
-            sections.append(f"=== CONSULTA ===\n{context['query']}")
-        if context.get("memory"):
-            sections.append(f"=== MEMORIA ===\n{context['memory']}")
-        return "\n\n".join(sections)
 
 
 class ContextBuilder:
@@ -410,20 +309,14 @@ class ContextBuilder:
         self.obsidian = ObsidianSearch()
         self.inspector = ProjectInspector()
 
-    def build(self, query):
-        project = self.inspector.inspect()
-        obsidian = self.obsidian.build_context(query)
-
-        return ContextPayload({
-            "project": project,
-            "obsidian": obsidian,
+    def build(self, query: str) -> dict:
+        return {
+            "project": self.inspector.inspect(),
+            "obsidian": self.obsidian.build_context(query),
             "query": query,
-        })
+        }
 
-    def build_project_snapshot(self):
-        return self.inspector.inspect()
-
-    def build_project_snapshot(self):
+    def build_project_snapshot(self) -> str:
         return self.inspector.inspect()
 
 
@@ -438,53 +331,49 @@ from core.config import Config
 
 
 class ConversationMemory:
-
     def __init__(self):
         self.file = Config.PROJECT_ROOT / ".history.json"
         self.history = self._load()
 
-    def _load(self):
-        if self.file.exists():
-            try:
-                return json.loads(
-                    self.file.read_text(encoding="utf-8")
-                )
-            except Exception:
-                return []
+    def _load(self) -> list:
+        if not self.file.exists():
+            return []
 
-        return []
+        try:
+            return json.loads(
+                self.file.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError):
+            return []
 
-    def add(self, user: str, ai: str):
-
-        self.history.append({
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "user": user,
-            "ai": ai[:800]
-        })
+    def add(self, user: str, ai: str) -> None:
+        self.history.append(
+            {
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "user": user,
+                "ai": ai[:800],
+            }
+        )
 
         self._save()
 
-    def _save(self):
+    def _save(self) -> None:
         self.file.write_text(
             json.dumps(
                 self.history[-20:],
                 indent=2,
-                ensure_ascii=False
+                ensure_ascii=False,
             ),
-            encoding="utf-8"
+            encoding="utf-8",
         )
 
-    def get_context(self):
-
+    def get_context(self) -> dict:
         if not self.history:
-            return {
-                "memory": ""
-            }
+            return {"memory": ""}
 
         lines = []
 
         for item in self.history[-4:]:
-
             lines.append(
                 f"{item['time']}\n"
                 f"Usuario: {item['user']}\n"
@@ -492,7 +381,7 @@ class ConversationMemory:
             )
 
         return {
-            "memory": "\n\n".join(lines)
+            "memory": "\n\n".join(lines),
         }
 
 
@@ -506,30 +395,21 @@ from llm.router import LLMRouter
 
 
 class Orchestrator:
-
     def __init__(self):
         self.context_builder = ContextBuilder()
         self.memory = ConversationMemory()
 
-    def process(self, task: str):
-        skill_name, params = LLMRouter.detect_skill(task)
+    def process(self, task: str) -> str:
+        skill_name, skill_params = LLMRouter.detect_skill(task)
 
-        context_payload = self.context_builder.build(task)
-        memory_context = self.memory.get_context()
-
-        if isinstance(memory_context, dict):
-            context_payload = {**memory_context, **context_payload}
-        else:
-            context_payload = {
-                "memory": memory_context,
-                **context_payload,
-            }
+        context = self.context_builder.build(task)
+        context.update(self.memory.get_context())
 
         response = LLMRouter.generate(
             task=task,
-            context=context_payload,
+            context=context,
             skill_name=skill_name,
-            skill_params=params
+            skill_params=skill_params,
         )
 
         self.memory.add(task, response)
@@ -681,19 +561,23 @@ ARCHIVO: llm\prompt_builder.py
 
 class PromptBuilder:
     @staticmethod
-    def build(task, context, skill_name=None, skill_result=None):
+    def build(
+        task: str,
+        context,
+        skill_name=None,
+        skill_result=None,
+    ) -> str:
         context_text = PromptBuilder._format_context(context)
+
         base = f"""
-Eres un asistente senior de desarrollo.
+Eres un asistente senior de desarrollo de software.
 
-Consulta:
-
+CONSULTA DEL USUARIO:
 {task}
 
-Contexto:
-
+CONTEXTO DISPONIBLE:
 {context_text}
-"""
+""".strip()
 
         if not skill_name or not skill_result:
             return base
@@ -702,90 +586,104 @@ Contexto:
         payload = skill_result.get("payload", {})
 
         if skill_type == "code_generation":
-            task_text = payload.get("task", "")
-            language = payload.get("language", "python")
             return f"""
 {base}
 
-Genera código para:
+TAREA:
+Genera una solución para:
 
-{task_text}
+{payload.get("task", task)}
 
-Lenguaje:
+Lenguaje preferido:
+{payload.get("language", "python")}
 
-{language}
-
-Entrega únicamente una solución lista para usar.
-"""
+Entrega una solución concreta, moderna y lista para usar.
+No inventes requisitos que no hayan sido proporcionados.
+""".strip()
 
         if skill_type == "code_analysis":
-            code_text = payload.get("code", "")
             return f"""
 {base}
 
-Analiza este código.
+TAREA:
+Analiza exclusivamente el siguiente código:
 
-Código:
+{payload.get("code", "")}
 
-{code_text}
-
-Busca:
+Evalúa:
 
 - bugs
 - seguridad
+- buenas prácticas
 - SOLID
 - rendimiento
-- refactor
-"""
+- oportunidades de refactorización
+
+No confundas la consulta del usuario con código fuente.
+""".strip()
 
         if skill_type == "project_analysis":
             return f"""
 {base}
 
-Analiza este proyecto completo.
-
-Proyecto:
+TAREA:
+Analiza el proyecto actual usando el siguiente snapshot:
 
 {payload}
 
 Evalúa:
 
 - arquitectura
+- estructura
 - modularidad
+- responsabilidades
 - dependencias
-- organización
 - deuda técnica
+- problemas potenciales
 - oportunidades de mejora
 
-No inventes información.
-Analiza únicamente lo que aparece en el snapshot.
-"""
+No solicites al usuario que copie archivos que ya aparecen en el snapshot.
+No inventes contenido de archivos que no haya sido inspeccionado.
+Distingue claramente entre hechos observados y recomendaciones.
+""".strip()
 
         if skill_type == "readme":
             return f"""
 {base}
 
-Genera un README profesional usando esta información:
+TAREA:
+Genera un README profesional para el proyecto.
+
+Información:
 
 {payload}
-"""
+""".strip()
 
         return base
 
     @staticmethod
-    def _format_context(context):
-        if isinstance(context, dict):
-            sections = []
-            if context.get("project"):
-                sections.append(f"=== PROYECTO ===\n{context['project']}")
-            if context.get("obsidian"):
-                sections.append(f"=== OBSIDIAN ===\n{context['obsidian']}")
-            if context.get("query"):
-                sections.append(f"=== CONSULTA ===\n{context['query']}")
-            if context.get("memory"):
-                sections.append(f"=== MEMORIA ===\n{context['memory']}")
-            return "\n\n".join(sections)
-        return str(context)
+    def _format_context(context) -> str:
+        if not isinstance(context, dict):
+            return str(context or "")
+
+        sections = []
+
+        if context.get("project"):
+            sections.append(
+                f"=== PROYECTO ===\n{context['project']}"
+            )
+
+        if context.get("obsidian"):
+            sections.append(
+                f"=== OBSIDIAN ===\n{context['obsidian']}"
+            )
+
+        if context.get("memory"):
+            sections.append(
+                f"=== MEMORIA RECIENTE ===\n{context['memory']}"
+            )
+
+        return "\n\n".join(sections)
 
 
 ====================================================================================================
@@ -795,64 +693,104 @@ ARCHIVO: llm\router.py
 import logging
 import re
 
+from llm.gemini import GeminiProvider
 from llm.prompt_builder import PromptBuilder
 from skills.manager import SkillManager
+
 
 logger = logging.getLogger(__name__)
 
 
 class LLMRouter:
-
     skill_manager = SkillManager()
 
     @staticmethod
     def detect_skill(query: str):
-
         if not query:
             return None, None
 
-        q = query.lower()
+        q = query.lower().strip()
 
-        if re.search(r"\b(crea|genera|haz)\b.*\b(readme|documentación|documentacion)\b", q):
-            return "readme", {"project_name": query}
+        # README
+        if re.search(
+            r"\b(crea|crear|genera|generar|haz)\b.*"
+            r"\b(readme|documentación|documentacion)\b",
+            q,
+        ):
+            return "readme", {
+                "project_name": query,
+            }
 
-        if re.search(r"\b(analiza|revisa|evalúa|inspecciona|problemas)\b", q) and re.search(r"\b(mi|este|actual|actualmente|proyecto|repo|arquitectura|estructura|código|codigo)\b", q):
-            if re.search(r"\b(problemas|errores|deuda|arquitectura|estructura|proyecto|repo|actual|actualmente)\b", q) and not re.search(r"\b(función|funcion|clase|archivo|módulo|modulo|script|endpoint)\b", q):
-                return "analyze_project", {}
+        # Análisis de código explícito
+        if re.search(
+            r"\b(analiza|analizar|revisa|revisar)\b.*"
+            r"\b(código|codigo|función|funcion|clase|archivo|módulo|modulo)\b",
+            q,
+        ):
+            explicit_code_markers = (
+                "def ",
+                "class ",
+                "import ",
+                "return ",
+                "```",
+            )
 
-        if re.search(r"\b(analiza|revisa)\b.*\b(código|codigo|función|funcion|clase|archivo|módulo|modulo)\b", q):
-            if re.search(r"\b(este|mi|actual|actualmente|proyecto|repo)\b", q) and not re.search(r"\b(def |class |import |return |if |for |while |try:|except |snippet|archivo|función|funcion|clase|módulo|modulo)\b", q) and "analiza este código" in q:
-                return None, None
-            return "analyze", {"code_snippet": query}
+            if any(marker in q for marker in explicit_code_markers):
+                return "analyze", {
+                    "code_snippet": query,
+                }
 
-        if re.search(r"\b(crea|genera|implementa|escribe)\b.*\b(función|funcion|clase|script|endpoint|proyecto)\b", q):
-            return "code", {"task": query}
+        # Análisis del proyecto actual
+        project_intent = re.search(
+            r"\b(analiza|analizar|revisa|revisar|evalúa|evaluar|"
+            r"inspecciona|inspeccionar|problemas|errores|deuda)\b",
+            q,
+        )
+
+        project_reference = re.search(
+            r"\b(proyecto|repo|repositorio|arquitectura|estructura|"
+            r"código actual|codigo actual|mi código|mi codigo|"
+            r"actualmente|sistema actual)\b",
+            q,
+        )
+
+        if project_intent and project_reference:
+            return "analyze_project", {}
+
+        # Generación de código o proyectos
+        if re.search(
+            r"\b(crea|crear|genera|generar|implementa|implementar|escribe)\b.*"
+            r"\b(función|funcion|clase|script|endpoint|código|codigo|proyecto)\b",
+            q,
+        ):
+            return "code", {
+                "task": query,
+            }
 
         return None, None
 
     @staticmethod
-    def _provider():
-
-        from llm.gemini import GeminiProvider
-
-        return GeminiProvider()
-
-    @staticmethod
-    def generate(task,
-                 context="",
-                 skill_name=None,
-                 skill_params=None):
-        provider = LLMRouter._provider()
-        skill_result = LLMRouter._execute_skill(skill_name, skill_params)
+    def generate(
+        task: str,
+        context=None,
+        skill_name=None,
+        skill_params=None,
+    ) -> str:
+        skill_result = LLMRouter._execute_skill(
+            skill_name,
+            skill_params,
+        )
 
         prompt = PromptBuilder.build(
             task=task,
-            context=context,
+            context=context or {},
             skill_name=skill_name,
-            skill_result=skill_result
+            skill_result=skill_result,
         )
 
-        logger.debug(prompt)
+        logger.debug("Prompt generado:\n%s", prompt)
+
+        provider = GeminiProvider()
         return provider.generate(prompt)
 
     @staticmethod
@@ -860,8 +798,12 @@ class LLMRouter:
         if not skill_name:
             return None
 
-        logger.info("Ejecutando skill %s", skill_name)
-        return LLMRouter.skill_manager.execute(skill_name, **(skill_params or {}))
+        logger.info("Ejecutando skill: %s", skill_name)
+
+        return LLMRouter.skill_manager.execute(
+            skill_name,
+            **(skill_params or {}),
+        )
 
 
 ====================================================================================================
@@ -968,23 +910,15 @@ ARCHIVO: skills\base.py
 ====================================================================================================
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 
 class Skill(ABC):
-
     name: str
     description: str
 
     @abstractmethod
-    def execute(self, **kwargs):
-        """
-        Siempre devuelve un diccionario.
-
-        {
-            "type": "...",
-            "payload": ...
-        }
-        """
+    def execute(self, **kwargs) -> dict[str, Any]:
         pass
 
 
@@ -1000,9 +934,7 @@ from skills.tools.shell import ShellTool
 
 
 class SkillManager:
-
     def __init__(self):
-
         self.skills = {
             "readme": GenerateReadmeSkill(),
             "code": GenerateCodeSkill(),
@@ -1011,12 +943,15 @@ class SkillManager:
             "shell": ShellTool(),
         }
 
-    def execute(self, skill_name, **kwargs):
-
+    def execute(self, skill_name: str, **kwargs):
         skill = self.skills.get(skill_name)
 
         if skill is None:
-            raise ValueError(f"Skill '{skill_name}' no encontrada")
+            available = ", ".join(self.skills.keys())
+            raise ValueError(
+                f"Skill '{skill_name}' no encontrada. "
+                f"Disponibles: {available}"
+            )
 
         return skill.execute(**kwargs)
 
