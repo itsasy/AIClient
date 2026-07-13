@@ -16,10 +16,8 @@ class LLMRouter:
 
     @staticmethod
     def detect_skill(query: str):
-        """
-        Se mantiene por compatibilidad.
-        La lógica principal está en IntentAnalyzer.
-        """
+        if not query:
+            return None, None
         result = IntentAnalyzer.analyze(query)
         return result.skill_name, result.skill_params
 
@@ -49,7 +47,7 @@ class LLMRouter:
         )
 
         logger.info(
-            "Routing LLM | skill=%s | provider=%s | task_length=%d",
+            "Routing | skill=%s | provider=%s | len=%d",
             skill_name or "general",
             selected_provider,
             len(task),
@@ -62,17 +60,8 @@ class LLMRouter:
         )
 
     @classmethod
-    def _execute_skill(
-        cls,
-        skill_name,
-        skill_params=None,
-    ):
+    def _execute_skill(cls, skill_name, skill_params=None):
         if not skill_name:
             return None
-
-        logger.info("Ejecutando skill: %s", skill_name)
-
-        return cls.skill_manager.execute(
-            skill_name,
-            **(skill_params or {}),
-        )
+        logger.info("Skill: %s", skill_name)
+        return cls.skill_manager.execute(skill_name, **(skill_params or {}))

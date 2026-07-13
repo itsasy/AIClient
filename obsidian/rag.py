@@ -1,19 +1,17 @@
 from obsidian.search import ObsidianSearch
-import re
 
 class SimpleRAG:
     def __init__(self):
         self.search = ObsidianSearch()
     
-    def get_relevant_context(self, query: str, max_tokens: int = 2000) -> str:
-        results = self.search.search(query, max_results=4)
+    def get_relevant_context(self, query: str, max_results: int = 5) -> str:
+        results = self.search.search(query, max_results=max_results)
         
-        context = "=== CONOCIMIENTO RELEVANTE DE TU SEGUNDO CEREBRO ===\n\n"
-        total = 0
+        if not results:
+            return ""
+        
+        context = "=== CONOCIMIENTO RELEVANTE ===\n\n"
         for r in results:
-            snippet = r['content'][:600]
-            context += f"📄 {r['path']}\n{snippet}\n\n"
-            total += len(snippet)
-            if total > max_tokens:
-                break
+            context += f"📄 {r['path']}\n{r['content'][:700]}\n\n"
+        
         return context
