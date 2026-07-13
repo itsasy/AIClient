@@ -1,3 +1,6 @@
+from core.context_retriever import ContextRetriever
+
+
 class PromptBuilder:
     @staticmethod
     def build(
@@ -6,6 +9,10 @@ class PromptBuilder:
         skill_name=None,
         skill_result=None,
     ) -> str:
+        # Todas las construcciones de prompt trabajan sobre un
+        # contexto previamente filtrado/normalizado.
+        context = ContextRetriever.retrieve(context)
+
         context_text = PromptBuilder._format_context(context)
 
         # Consulta general: el modelo puede usar conocimiento general.
@@ -285,6 +292,16 @@ REGLAS OBLIGATORIAS:
         if context.get("memory"):
             sections.append(
                 f"=== MEMORIA ===\n{context['memory']}"
+            )
+
+        if context.get("files"):
+            sections.append(
+                f"=== ARCHIVOS RELEVANTES ===\n{context['files']}"
+            )
+
+        if context.get("architecture"):
+            sections.append(
+                f"=== ARQUITECTURA ===\n{context['architecture']}"
             )
 
         return "\n\n".join(sections)

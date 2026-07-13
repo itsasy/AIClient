@@ -14,6 +14,8 @@ class ContextBuilder:
         "readme",
         "deuda técnica",
         "deuda tecnica",
+        "analiza este proyecto",
+        "analiza mi proyecto",
     )
 
     def __init__(self):
@@ -26,7 +28,7 @@ class ContextBuilder:
         }
 
         if self._requires_project_context(query):
-            context["project"] = self.inspector.inspect()
+            context["project"] = (self.inspector.inspect_snapshot())
 
         obsidian_context = self.obsidian.build_context(query)
 
@@ -36,9 +38,12 @@ class ContextBuilder:
         return context
 
     def build_project_snapshot(self) -> str:
-        return self.inspector.inspect()
+        return self.inspector.inspect_snapshot()
 
-    def _requires_project_context(self, query: str) -> bool:
+    def _requires_project_context(
+        self,
+        query: str,
+    ) -> bool:
         q = (query or "").lower()
 
         return any(

@@ -1,6 +1,6 @@
 import logging
-import re
 
+from core.intent_analyzer import IntentAnalyzer
 from llm.prompt_builder import PromptBuilder
 from llm.provider_manager import ProviderManager
 from skills.manager import SkillManager
@@ -14,87 +14,17 @@ class LLMRouter:
 
     @staticmethod
     def detect_skill(query: str):
-        if not query:
-            return None, None
+        """
+        Se mantiene por compatibilidad con el resto del proyecto.
+        Toda la lógica fue extraída a IntentAnalyzer.
+        """
 
-        q = query.lower().strip()
+        result = IntentAnalyzer.analyze(query)
 
-        # README
-        if re.search(
-            r"\b(crea|crear|genera|generar|haz)\b.*"
-            r"\b(readme|documentación|documentacion)\b",
-            q,
-        ):
-            return "readme", {
-                "request": query,
-            }
-
-        # Análisis explícito de código
-        if re.search(
-            r"\b(analiza|analizar|revisa|revisar)\b.*"
-            r"\b("
-            r"código|codigo|función|funcion|"
-            r"clase|archivo|módulo|modulo"
-            r")\b",
-            q,
-        ):
-            explicit_code_markers = (
-                "def ",
-                "class ",
-                "import ",
-                "return ",
-                "```",
-            )
-
-            if any(
-                marker in q
-                for marker in explicit_code_markers
-            ):
-                return "analyze", {
-                    "code_snippet": query,
-                }
-
-        # Análisis del proyecto actual
-        project_intent = re.search(
-            r"\b("
-            r"analiza|analizar|revisa|revisar|"
-            r"evalúa|evaluar|inspecciona|inspeccionar|"
-            r"problemas|errores|deuda"
-            r")\b",
-            q,
+        return (
+            result.skill_name,
+            result.skill_params,
         )
-
-        project_reference = re.search(
-            r"\b("
-            r"proyecto|repo|repositorio|"
-            r"arquitectura|estructura|"
-            r"código actual|codigo actual|"
-            r"mi código|mi codigo|"
-            r"actualmente|sistema actual"
-            r")\b",
-            q,
-        )
-
-        if project_intent and project_reference:
-            return "analyze_project", {}
-
-        # Generación de código o proyectos
-        if re.search(
-            r"\b("
-            r"crea|crear|genera|generar|"
-            r"implementa|implementar|escribe"
-            r")\b.*"
-            r"\b("
-            r"función|funcion|clase|script|"
-            r"endpoint|código|codigo|proyecto"
-            r")\b",
-            q,
-        ):
-            return "code", {
-                "task": query,
-            }
-
-        return None, None
 
     @classmethod
     def generate(

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from core.config import Config
+from core.project_snapshot import ProjectSnapshot
 
 
 class ProjectInspector:
@@ -36,88 +37,56 @@ class ProjectInspector:
     )
 
     def inspect(self) -> str:
+        """
+        Compatibilidad con el resto del proyecto.
+
+        Continúa devolviendo un string mientras el resto
+        del sistema migra a ProjectSnapshot.
+        """
+
+        snapshot = self.inspect_snapshot()
+
+        return snapshot.to_prompt()
+
+    def inspect_snapshot(self) -> ProjectSnapshot:
+        """
+        Nuevo método.
+
+        Devuelve un modelo estructurado del proyecto.
+        """
+
         root = Config.PROJECT_ROOT
 
+        snapshot = ProjectSnapshot(
+            root=root.name,
+        )
+
         if not root.exists():
-            return "No se pudo localizar la raíz del proyecto."
+            return snapshot
 
         all_files = self._collect_all_files(root)
-        inspected_files = all_files[:self.MAX_SOURCE_FILES]
-        omitted_files = all_files[self.MAX_SOURCE_FILES:]
 
-        lines = [
-            f"Proyecto: {root.name}",
-            f"Ruta: {root}",
-            "",
-            "=== ALCANCE DE LA INSPECCIÓN ===",
-            (
-                f"Se inspeccionaron {len(inspected_files)} de "
-                f"{len(all_files)} archivos elegibles."
-            ),
-            (
-                "IMPORTANTE: este snapshot es parcial. "
-                "Un archivo no incluido o no inspeccionado no debe "
-                "considerarse inexistente."
-            ),
-            "",
-            "=== ARCHIVOS INSPECCIONADOS ===",
-        ]
-
-        if inspected_files:
-            for path in inspected_files:
-                lines.append(f"- {path.relative_to(root)}")
-        else:
-            lines.append("- Ninguno")
-
-        lines.extend(
-            [
-                "",
-                "=== ARCHIVOS NO INSPECCIONADOS POR LÍMITE ===",
-            ]
-        )
-
-        if omitted_files:
-            for path in omitted_files:
-                lines.append(f"- {path.relative_to(root)}")
-        else:
-            lines.append("- Ninguno")
-
-        lines.extend(
-            [
-                "",
-                "=== CONTENIDO INSPECCIONADO ===",
-            ]
-        )
-
-        for path in inspected_files:
-            relative_path = path.relative_to(root)
+        for path in all_files[: self.MAX_SOURCE_FILES]:
 
             try:
                 full_content = path.read_text(
                     encoding="utf-8",
                     errors="ignore",
                 )
-            except OSError as exc:
-                lines.append(
-                    f"\n===== {relative_path} =====\n"
-                    f"No se pudo leer el archivo: {exc}"
-                )
+            except OSError:
                 continue
 
-            content = full_content[:self.MAX_FILE_CHARS]
+            snapshot.add_file(
+                path=str(path.relative_to(root)),
+                content=full_content[: self.MAX_FILE_CHARS],
+            )
 
-            lines.append(f"\n===== {relative_path} =====")
-            lines.append(content)
+        return snapshot
 
-            if len(full_content) > self.MAX_FILE_CHARS:
-                lines.append(
-                    "\n[CONTENIDO TRUNCADO: "
-                    f"se muestran los primeros {self.MAX_FILE_CHARS} caracteres]"
-                )
-
-        return "\n".join(lines)
-
-    def _collect_all_files(self, root: Path) -> list[Path]:
+    def _collect_all_files(
+        self,
+        root: Path,
+    ) -> list[Path]:
         files: list[Path] = []
 
         for filename in self.PRIORITY_FILES:
@@ -127,16 +96,25 @@ class ProjectInspector:
                 files.append(path)
 
         for directory_name in self.SOURCE_DIRS:
+
             directory = root / directory_name
 
-            if not directory.exists() or not directory.is_dir():
+            if not directory.exists():
                 continue
 
-            for path in sorted(directory.rglob("*")):
+            if not directory.is_dir():
+                continue
+
+            for path in sorted(
+                directory.rglob("*")
+            ):
+
                 if not path.is_file():
                     continue
 
-                relative_parts = path.relative_to(root).parts
+                relative_parts = (
+                    path.relative_to(root).parts
+                )
 
                 if any(
                     part in self.EXCLUDED_DIRS
@@ -144,7 +122,10 @@ class ProjectInspector:
                 ):
                     continue
 
-                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
+                if (
+                    path.suffix.lower()
+                    not in self.INCLUDED_EXTENSIONS
+                ):
                     continue
 
                 if path not in files:
