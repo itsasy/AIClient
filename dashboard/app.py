@@ -5,12 +5,12 @@ app = Flask(__name__)
 orchestrator = Orchestrator()
 
 
-@app.route("/ask", methods=["POST"])
+@app.route("/api/ask", methods=["POST"])
 def ask():
     data = request.json
-    query = data.get("query")
+    query = data.get("query", "")
     response = orchestrator.process(query)
-    return jsonify({"response": response})
+    return jsonify({"response": response, "status": "success"})
 
 
 if __name__ == "__main__":
