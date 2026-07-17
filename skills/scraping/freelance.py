@@ -5,9 +5,11 @@ from bs4 import BeautifulSoup
 
 class FreelanceScraperSkill(Skill):
     name = "scrape_freelance"
-    description = "Extrae y analiza trabajos de LinkedIn, Workana, etc."
+    description = "Analiza trabajos en Workana, LinkedIn, etc."
 
-    def execute(self, url: str, platform: str = "linkedin", **kwargs):
+    def execute(
+        self, url: str, platform: str = "linkedin", mode: str = "freelance", **kwargs
+    ):
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
             response = requests.get(url, headers=headers, timeout=10)
@@ -16,10 +18,9 @@ class FreelanceScraperSkill(Skill):
             title = soup.find("title").text if soup.find("title") else "Sin título"
             description = soup.find("meta", attrs={"name": "description"})
             description = (
-                description["content"] if description else soup.get_text()[:800]
+                description["content"] if description else soup.get_text()[:1200]
             )
 
-            # Análisis de dolor del cliente
             pain_points = self._analyze_pain(description)
 
             return {
@@ -27,6 +28,7 @@ class FreelanceScraperSkill(Skill):
                 "payload": {
                     "ok": True,
                     "platform": platform,
+                    "mode": mode,  # "freelance" o "job"
                     "title": title,
                     "description": description[:1000],
                     "pain_points": pain_points,
@@ -48,6 +50,7 @@ class FreelanceScraperSkill(Skill):
             "ayuda",
             "solucionar",
             "urgente",
+            "requerimiento",
         ]
         pains = [word for word in pain_keywords if word in text.lower()]
         return pains or ["No se identificaron dolores claros"]
