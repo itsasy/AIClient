@@ -13,6 +13,6 @@ class RAG:
 
         context = "=== CONOCIMIENTO RELEVANTE (RAG) ===\n\n"
         for r in results:
-            context += f"📄 {r['path']}\n{r['content'][:900]}\n{'─' * 80}\n\n"
+            context += f"📄 {r['path']}\n{r['content'][:1000]}\n{'─' * 80}\n\n"
 
         return context
