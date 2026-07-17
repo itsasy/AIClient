@@ -1,6 +1,5 @@
 from core.config import Config
 import json
-from pathlib import Path
 
 
 class StandardsLearner:
@@ -27,4 +26,7 @@ class StandardsLearner:
         )
 
     def get(self, key: str):
-        return self.standards.get(key, "No definido")
+        return self.standards.get(key, "No definido aún")
+
+    def list_standards(self):
+        return self.standards
