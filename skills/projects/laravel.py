@@ -1,13 +1,14 @@
 from skills.base import Skill
 from skills.tools.shell import ShellTool
 
+
 class LaravelProjectSkill(Skill):
     name = "laravel_project"
     description = "Crea proyecto Laravel completo con Docker"
 
     def execute(self, name: str = "mi_proyecto", **kwargs):
         shell = ShellTool()
-        
+
         commands = [
             f"laravel new {name} --pest",
             f"cd {name} && php artisan make:auth",
@@ -25,6 +26,5 @@ class LaravelProjectSkill(Skill):
                 "framework": "laravel",
                 "name": name,
                 "commands_executed": results,
-            }
+            },
         }
-EOF
