@@ -6,6 +6,7 @@ from agents.base import Agent
 from agents.coder import CoderAgent
 from agents.task_agent import TaskAgent
 from agents.multi_turn import MultiTurnAgent
+from agents.executor import ExecutorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ class AgentManager:
             "coder": CoderAgent(),
             "task": TaskAgent(),
             "multi_turn": MultiTurnAgent(),
+            "executor": ExecutorAgent(),
         }
 
     def select_agent(self, task: str) -> Agent:
