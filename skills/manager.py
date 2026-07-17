@@ -1,10 +1,12 @@
 from skills.code.analyze import AnalyzeCodeSkill
 from skills.code.generate import GenerateCodeSkill
 from skills.code.executor import CodeExecutorSkill
+from skills.code.sandbox import CodeSandboxSkill
 from skills.code.project_analyzer import ProjectAnalyzerSkill
 from skills.docs.readme import GenerateReadmeSkill
 from skills.tools.shell import ShellTool
 from skills.tools.docker import DockerTool
+
 
 class SkillManager:
     def __init__(self):
@@ -16,6 +18,7 @@ class SkillManager:
             "shell": ShellTool(),
             "execute_code": CodeExecutorSkill(),
             "docker": DockerTool(),
+            "sandbox": CodeSandboxSkill(),
         }
 
     def execute(self, skill_name: str, **kwargs):
@@ -24,8 +27,7 @@ class SkillManager:
         if skill is None:
             available = ", ".join(self.skills.keys())
             raise ValueError(
-                f"Skill '{skill_name}' no encontrada. "
-                f"Disponibles: {available}"
+                f"Skill '{skill_name}' no encontrada. " f"Disponibles: {available}"
             )
 
         return skill.execute(**kwargs)
