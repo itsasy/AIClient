@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from core.config import Config
 from core.context_retriever import ContextRetriever
 
@@ -8,6 +9,7 @@ class PromptBuilder:
 
     @staticmethod
     def _load_template(name: str) -> str:
+        """Carga una plantilla desde la carpeta prompts/"""
         path = PromptBuilder.PROMPTS_DIR / f"{name}.txt"
         if not path.exists():
             raise FileNotFoundError(f"Plantilla no encontrada: {path}")
@@ -15,9 +17,23 @@ class PromptBuilder:
 
     @staticmethod
     def build(task: str, context=None, skill_name=None, skill_result=None) -> str:
+        # 1. Recuperar y filtrar contexto
         context = ContextRetriever.retrieve(context)
+
+        # 2. Inyectar estándares aprendidos (auto-aprendizaje)
+        from core.learner import ContinuousLearner
+
+        learner = ContinuousLearner()
+        standards = learner.get_context()
+        if standards:
+            if context is None:
+                context = {}
+            context["standards"] = standards
+
+        # 3. Formatear contexto para el prompt
         context_text = PromptBuilder._format_context(context)
 
+        # 4. Seleccionar plantilla según el tipo de skill
         if not skill_name or not skill_result:
             return PromptBuilder._build_general_prompt(task, context_text)
 
@@ -33,6 +49,7 @@ class PromptBuilder:
         if skill_type == "readme":
             return PromptBuilder._build_readme(task, context_text, payload)
 
+        # Fallback seguro
         return PromptBuilder._build_general_prompt(task, context_text)
 
     @staticmethod
@@ -88,12 +105,14 @@ class PromptBuilder:
 
     @staticmethod
     def _format_context(context) -> str:
+        """Convierte el diccionario de contexto en texto plano formateado."""
         if not context:
             return ""
         if not isinstance(context, dict):
             return str(context)
 
         sections = []
+
         if context.get("project"):
             sections.append(f"=== PROYECTO ===\n{context['project']}")
         if context.get("obsidian"):
@@ -104,4 +123,7 @@ class PromptBuilder:
             sections.append(f"=== ARCHIVOS RELEVANTES ===\n{context['files']}")
         if context.get("architecture"):
             sections.append(f"=== ARQUITECTURA ===\n{context['architecture']}")
+        if context.get("standards"):
+            sections.append(f"=== ESTÁNDARES APRENDIDOS ===\n{context['standards']}")
+
         return "\n\n".join(sections)

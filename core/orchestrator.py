@@ -4,6 +4,7 @@ from agents.manager import AgentManager
 from core.context_builder import ContextBuilder
 from core.memory import ConversationMemory
 from llm.intent_analyzer import IntentAnalyzer
+from core.learner import ContinuousLearner
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class Orchestrator:
         self.context_builder = ContextBuilder()
         self.memory = ConversationMemory()
         self.agent_manager = AgentManager()
+        self.learner = ContinuousLearner()
 
     def process(self, task: str) -> str:
         """
@@ -49,6 +51,9 @@ class Orchestrator:
         memory = self.memory.get_context()
         if memory:
             context["memory"] = memory
+
+        if self.learner.extract_and_learn(task, response):
+            logger.info("El sistema ha aprendido una nueva preferencia del usuario.")
 
         response = self.agent_manager.delegate(
             task=task,
