@@ -3,29 +3,47 @@ import subprocess
 
 from skills.base import Skill
 
+
 class ShellTool(Skill):
     name = "shell"
     description = "Ejecuta comandos seguros"
 
     SAFE_PREFIXES = [
-        "git status", "git log", "git branch", "git diff",
-        "ls", "tree ", "pwd", "echo ", "cat ", "find ", "grep ",
-        "composer ", "php ", "artisan ", "laravel new", "npm ", "yarn ",
-        "docker compose", "docker run", "docker exec",
+        "git status",
+        "git log",
+        "git branch",
+        "git diff",
+        "ls",
+        "tree ",
+        "pwd",
+        "echo ",
+        "cat ",
+        "find ",
+        "grep ",
+        "composer ",
+        "php ",
+        "artisan ",
+        "laravel new",
+        "npm ",
+        "yarn ",
+        "docker compose",
+        "docker run",
+        "docker exec",
     ]
 
     def execute(self, command: str, **kwargs):
         command = command.strip()
         normalized = command.lower()
 
+        # Verificar si el comando está permitido (por prefijo)
         if not any(normalized.startswith(p.lower()) for p in self.SAFE_PREFIXES):
             return {
                 "type": "shell_result",
                 "payload": {
                     "ok": False,
-                    "message": "Comando bloqueado por seguridad.",
+                    "message": f"Comando bloqueado por seguridad: {command}",
                     "command": command,
-                }
+                },
             }
 
         try:
@@ -46,7 +64,7 @@ class ShellTool(Skill):
                     "command": command,
                     "output": output[:1500],
                     "returncode": result.returncode,
-                }
+                },
             }
         except Exception as e:
             return {
@@ -55,5 +73,5 @@ class ShellTool(Skill):
                     "ok": False,
                     "command": command,
                     "output": str(e),
-                }
+                },
             }

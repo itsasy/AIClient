@@ -17,6 +17,7 @@ class IntentAnalyzer:
     el Router.
     """
 
+
 import re
 from dataclasses import dataclass
 
@@ -47,30 +48,31 @@ class IntentAnalyzer:
         ):
             return IntentResult(
                 "laravel_project",
-                {"name": query}  # Pasamos la consulta completa, luego la skill extraerá el nombre
+                {
+                    "name": query
+                },  # Pasamos la consulta completa, luego la skill extraerá el nombre
             )
 
         # ------------------------------------------------------------
-        # 2. DETECCIÓN DE SHELL / COMANDOS
+        # 2. DETECCIÓN DE SHELL / COMANDOS (extrae el comando real)
         # ------------------------------------------------------------
         if re.search(r"\b(ejecuta|corre|run)\b", q) and re.search(
-            r"\b(comando|ls|git|docker|composer|php|artisan|npm|cd|pwd|tree|cat|grep)\b", q
+            r"\b(comando|ls|git|docker|composer|php|artisan|npm|cd|pwd|tree|cat|grep)\b",
+            q,
         ):
-            return IntentResult(
-                "shell",
-                {"command": query}  # La skill extraerá el comando real
-            )
+            command = re.sub(r"^(ejecuta|corre|run)\s+", "", q).strip()
+            command = re.sub(r"^comando\s+", "", command)
+            return IntentResult("shell", {"command": command})
 
         # ------------------------------------------------------------
-        # 3. DETECCIÓN DE DOCKER (comandos específicos)
+        # 3. DETECCIÓN DE DOCKER (comandos específicos, extrae el comando real)
         # ------------------------------------------------------------
         if re.search(r"\bdocker\b", q) and re.search(
             r"\b(ps|images|logs|status|inspect|start|stop|restart)\b", q
         ):
-            # Como 'docker' también puede caer en shell, lo ponemos aquí con prioridad
             return IntentResult(
                 "docker",
-                {"action": q}
+                {"command": q},
             )
 
         # ------------------------------------------------------------
