@@ -53,7 +53,7 @@ class ShellTool(Skill):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=60,
                 cwd=cwd,
             )
             output = result.stdout.strip() or result.stderr.strip()

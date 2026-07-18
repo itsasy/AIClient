@@ -31,6 +31,10 @@ class ProjectInspector:
         ".env",
         ".lock",
         ".ini",
+        ".vue",
+        ".ts",
+        ".jsx",
+        ".tsx",
     }
 
     PRIORITY_FILES = (
