@@ -59,3 +59,12 @@ echo "   set ARGS=%*"
 echo "   set ARGS=%ARGS:\"=%"
 echo "   wsl bash -ic \"cd \\\"\$(wslpath -u '%CWD%')\\\" && $PWD/venv/bin/python $PWD/cli/ai.py \\\"%ARGS%\\\"\""
 echo ""
+
+read -p "¿Instalar soporte para RAG semántico (sentence-transformers)? (s/N): " -n 1 -r
+echo ""
+if [[ $REPLY =~ ^[Ss]$ ]]; then
+    pip install sentence-transformers numpy
+    echo "✅ RAG semántico instalado."
+else
+    echo "ℹ️  Puedes instalarlo después con: pip install sentence-transformers numpy"
+fi

@@ -11,8 +11,22 @@ class RAG:
         if not results:
             return "No se encontró información relevante en Obsidian.\n"
 
-        context = "=== CONOCIMIENTO RELEVANTE (RAG) ===\n\n"
-        for r in results:
-            context += f"📄 {r['path']}\n{r['content'][:1000]}\n{'─' * 80}\n\n"
+        context_lines = [
+            "=== CONOCIMIENTO RELEVANTE (RAG HÍBRIDO) ===",
+            f"Búsqueda combinada: FTS5 + semántica (modelo all-MiniLM-L6-v2)",
+            ""
+        ]
 
-        return context
+        for r in results:
+            snippet = r.get("snippet", "")
+            content = r.get("content", "")
+            score = r.get("final_score", r.get("score", 0))
+
+            display_content = snippet if snippet else content[:800]
+
+            context_lines.append(f"📄 {r['path']} (relevancia: {score:.3f})")
+            context_lines.append(display_content)
+            context_lines.append("─" * 80)
+            context_lines.append("")
+
+        return "\n".join(context_lines)
