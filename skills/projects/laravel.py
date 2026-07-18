@@ -38,10 +38,10 @@ class LaravelProjectSkill(Skill):
 
         commands = [
             f"composer create-project laravel/laravel {name}",
-            f"cd {name} && php artisan sail:install --with=mysql,redis",
+            f"cd {name} && php artisan sail:install --with=mysql,redis --no-interaction",
             f"cd {name} && ./vendor/bin/sail up -d",
             f"cd {name} && ./vendor/bin/sail composer require laravel/sanctum",
-            f"cd {name} && ./vendor/bin/sail artisan vendor:publish --provider='Laravel\\Sanctum\\SanctumServiceProvider'",
+            f"cd {name} && ./vendor/bin/sail artisan vendor:publish --provider='Laravel\\Sanctum\\SanctumServiceProvider' --no-interaction",
             f"cd {name} && ./vendor/bin/sail artisan migrate",
         ]
 
