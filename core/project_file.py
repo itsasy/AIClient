@@ -6,14 +6,6 @@ from pathlib import Path
 
 @dataclass(slots=True)
 class ProjectFile:
-    """
-    Representa un archivo del proyecto.
-
-    Este objeto será la unidad mínima utilizada por el
-    ContextRetriever, ProjectIndex y futuras búsquedas
-    semánticas.
-    """
-
     path: str
     content: str
 
@@ -34,10 +26,8 @@ class ProjectFile:
         return len(self.content)
 
     def to_dict(self) -> dict:
-        return {
-            "path": self.path,
-            "filename": self.filename,
-            "directory": self.directory,
-            "extension": self.extension,
-            "size": self.size,
-        }
+        return {"path": self.path, "content": self.content}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> ProjectFile:
+        return cls(path=data["path"], content=data["content"])
