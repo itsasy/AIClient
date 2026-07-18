@@ -32,7 +32,7 @@ class ShellTool(Skill):
         "docker exec",
     ]
 
-    def execute(self, command: str, **kwargs):
+    def execute(self, command: str, timeout: int | None = None, **kwargs):
         command = command.strip()
         normalized = command.lower()
 
@@ -48,12 +48,14 @@ class ShellTool(Skill):
 
         try:
             cwd = Config.TARGET_PROJECT_ROOT
+            timeout_value = timeout if timeout is not None else Config.SHELL_TIMEOUT
+
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=Config.SHELL_TIMEOUT,
+                timeout=timeout_value,
                 cwd=cwd,
             )
             output = result.stdout.strip() or result.stderr.strip()

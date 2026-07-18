@@ -2,7 +2,7 @@ import shutil
 from pathlib import Path
 from skills.base import Skill
 from skills.tools.shell import ShellTool
-
+from core.config import Config
 
 class LaravelProjectSkill(Skill):
     name = "laravel_project"
@@ -17,6 +17,8 @@ class LaravelProjectSkill(Skill):
 
         shell = ShellTool()
         project_path = Path.cwd() / name
+
+        laravel_timeout = Config.LARAVEL_TIMEOUT
 
         if project_path.exists():
             try:
@@ -45,7 +47,7 @@ class LaravelProjectSkill(Skill):
 
         results = []
         for cmd in commands:
-            res = shell.execute(cmd)
+            res = shell.execute(cmd, timeout=laravel_timeout)
             results.append((cmd, res))
 
             if not res.get("payload", {}).get("ok"):
