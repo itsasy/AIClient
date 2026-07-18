@@ -36,7 +36,7 @@ class DockerTool(Skill):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=10,
+                timeout=Config.DOCKER_TIMEOUT,
                 cwd=cwd,
             )
             output = result.stdout.strip() or result.stderr.strip()

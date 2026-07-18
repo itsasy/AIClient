@@ -90,6 +90,9 @@ class Config:
         if provider.strip()
     ]
 
+    SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
+    DOCKER_TIMEOUT = int(os.getenv("DOCKER_TIMEOUT", "120"))
+
     # Obsidian
     OBSIDIAN_VAULT_PATH = Path(
         os.getenv(

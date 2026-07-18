@@ -1,3 +1,5 @@
+import shutil
+from pathlib import Path
 from skills.base import Skill
 from skills.tools.shell import ShellTool
 
@@ -7,15 +9,31 @@ class LaravelProjectSkill(Skill):
     description = "Crea proyecto Laravel completo con Docker y Sanctum"
 
     def execute(self, name: str = "mi_proyecto", **kwargs):
-        # Extraer el nombre del proyecto de la consulta (si viene en el payload)
+        # Extraer el nombre del proyecto de la consulta
         if " " in name:
             name = name.split()[-1]
         if not name:
             name = "mi_proyecto"
 
         shell = ShellTool()
+        project_path = Path.cwd() / name
 
-        # 1. Intentar crear el proyecto con Composer
+        if project_path.exists():
+            try:
+                shutil.rmtree(project_path)
+                print(
+                    f"⚠️  Directorio '{name}' eliminado (existía de una prueba anterior)."
+                )
+            except Exception as e:
+                return {
+                    "type": "laravel_result",
+                    "payload": {
+                        "ok": False,
+                        "project_name": name,
+                        "output": f"❌ No se pudo eliminar el directorio '{name}': {e}",
+                    },
+                }
+
         commands = [
             f"composer create-project laravel/laravel {name}",
             f"cd {name} && php artisan sail:install --with=mysql,redis",
@@ -29,15 +47,13 @@ class LaravelProjectSkill(Skill):
         for cmd in commands:
             res = shell.execute(cmd)
             results.append((cmd, res))
-            # Si algún comando falla, detener la ejecución
+
             if not res.get("payload", {}).get("ok"):
-                # Verificar si el error es por "composer not found"
                 output = res.get("payload", {}).get("output", "")
                 if (
                     "command not found" in output.lower()
                     or "permission denied" in output.lower()
                 ):
-                    # Añadir mensaje de ayuda
                     results.append(
                         (
                             "help",
@@ -56,7 +72,6 @@ class LaravelProjectSkill(Skill):
                     )
                 break
 
-        # Construir salida
         outputs = []
         all_ok = True
         for cmd, res in results:
@@ -71,11 +86,24 @@ class LaravelProjectSkill(Skill):
                 all_ok = False
                 break
 
+        if all_ok:
+            final_message = (
+                f"✅ **Proyecto Laravel '{name}'** creado y configurado correctamente."
+            )
+        else:
+            if project_path.exists() and not all_ok:
+                final_message = (
+                    f"⚠️ **Proyecto Laravel '{name}'** creado, pero fallaron pasos posteriores.\n"
+                    "El proyecto está disponible, pero es posible que Sail, Sanctum o la migración no se hayan configurado correctamente."
+                )
+            else:
+                final_message = f"❌ **Proyecto Laravel** falló al crearse."
+
         return {
             "type": "laravel_result",
             "payload": {
                 "ok": all_ok,
                 "project_name": name,
-                "output": "\n\n".join(outputs)[:3000],
+                "output": final_message + "\n\n" + "\n\n".join(outputs)[:3000],
             },
         }
