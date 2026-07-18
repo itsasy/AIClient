@@ -1,86 +1,65 @@
 import logging
 import os
 import secrets
-
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-load_dotenv(
-    dotenv_path=PROJECT_ROOT / ".env",
-)
+load_dotenv(dotenv_path=PROJECT_ROOT / ".env")
 
 logger = logging.getLogger(__name__)
 
 
 class Config:
+    """
+    Configuración global del sistema, cargada desde variables de entorno.
+
+    Atributos:
+        PROJECT_ROOT (Path): Ruta raíz del proyecto.
+        TARGET_PROJECT_ROOT (Path): Ruta del proyecto objetivo (usualmente el directorio actual).
+        GEMINI_API_KEY (str): Clave API de Google Gemini.
+        GEMINI_MODEL (str): Modelo de Gemini a usar.
+        NVIDIA_API_KEY (str): Clave API de NVIDIA NIM.
+        NVIDIA_BASE_URL (str): URL base para NVIDIA NIM.
+        NVIDIA_MODEL (str): Modelo de NVIDIA NIM.
+        DEFAULT_PROVIDER (str): Proveedor LLM por defecto.
+        CODE_PROVIDER (str): Proveedor para tareas de código.
+        ARCHITECTURE_PROVIDER (str): Proveedor para tareas de arquitectura.
+        DOCUMENTATION_PROVIDER (str): Proveedor para tareas de documentación.
+        FALLBACK_PROVIDERS (list[str]): Lista ordenada de proveedores de respaldo.
+        SHELL_TIMEOUT (int): Timeout para comandos shell (segundos).
+        DOCKER_TIMEOUT (int): Timeout para comandos Docker (segundos).
+        LARAVEL_TIMEOUT (int): Timeout para creación de proyectos Laravel (segundos).
+        OBSIDIAN_VAULT_PATH (Path): Ruta al vault de Obsidian.
+        DASHBOARD_API_KEY (str): Clave API para el dashboard Flask.
+        DASHBOARD_DEBUG (bool): Modo debug del dashboard.
+        DASHBOARD_HOST (str): Host donde escucha el dashboard.
+        DASHBOARD_PORT (int): Puerto del dashboard.
+    """
+
     PROJECT_ROOT = PROJECT_ROOT
     TARGET_PROJECT_ROOT = PROJECT_ROOT
 
     # Gemini
-    GEMINI_API_KEY = os.getenv(
-        "GEMINI_API_KEY",
-        "",
-    )
-
-    GEMINI_MODEL = os.getenv(
-        "GEMINI_MODEL",
-        "gemini-2.5-flash",
-    )
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
     # NVIDIA NIM
-    NVIDIA_API_KEY = os.getenv(
-        "NVIDIA_API_KEY",
-        "",
-    )
-
+    NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL = os.getenv(
-        "NVIDIA_BASE_URL",
-        "https://integrate.api.nvidia.com/v1",
+        "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
     )
-
-    NVIDIA_MODEL = os.getenv(
-        "NVIDIA_MODEL",
-        "meta/llama-3.1-70b-instruct",
-    )
+    NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
 
     # Provider routing
-    DEFAULT_PROVIDER = (
-        os.getenv(
-            "DEFAULT_PROVIDER",
-            "gemini",
-        )
-        .strip()
-        .lower()
-    )
-
-    CODE_PROVIDER = (
-        os.getenv(
-            "CODE_PROVIDER",
-            DEFAULT_PROVIDER,
-        )
-        .strip()
-        .lower()
-    )
-
+    DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "gemini").strip().lower()
+    CODE_PROVIDER = os.getenv("CODE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     ARCHITECTURE_PROVIDER = (
-        os.getenv(
-            "ARCHITECTURE_PROVIDER",
-            DEFAULT_PROVIDER,
-        )
-        .strip()
-        .lower()
+        os.getenv("ARCHITECTURE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     )
-
     DOCUMENTATION_PROVIDER = (
-        os.getenv(
-            "DOCUMENTATION_PROVIDER",
-            DEFAULT_PROVIDER,
-        )
-        .strip()
-        .lower()
+        os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     )
 
     FALLBACK_PROVIDERS = [
@@ -95,10 +74,7 @@ class Config:
 
     # Obsidian
     OBSIDIAN_VAULT_PATH = Path(
-        os.getenv(
-            "OBSIDIAN_VAULT_PATH",
-            str(PROJECT_ROOT / "obsidian_vault"),
-        )
+        os.getenv("OBSIDIAN_VAULT_PATH", str(PROJECT_ROOT / "obsidian_vault"))
     ).expanduser()
 
     # Dashboard
@@ -109,6 +85,11 @@ class Config:
 
     @classmethod
     def validate(cls) -> None:
+        """
+        Valida la configuración y muestra advertencias sobre valores faltantes.
+        Si DASHBOARD_API_KEY no está definida, genera una clave aleatoria.
+        Verifica la existencia del vault de Obsidian y cuenta los archivos .md.
+        """
         if not cls.GEMINI_API_KEY:
             logger.warning("GEMINI_API_KEY no configurada.")
 
@@ -116,26 +97,12 @@ class Config:
             logger.warning("NVIDIA_API_KEY no configurada.")
 
         logger.info(
-            "Configuración LLM | default=%s | code=%s | "
-            "architecture=%s | fallbacks=%s",
+            "Configuración LLM | default=%s | code=%s | architecture=%s | fallbacks=%s",
             cls.DEFAULT_PROVIDER,
             cls.CODE_PROVIDER,
             cls.ARCHITECTURE_PROVIDER,
             cls.FALLBACK_PROVIDERS,
         )
-
-        if not cls.OBSIDIAN_VAULT_PATH.exists():
-            logger.warning(
-                "Obsidian no encontrado en %s",
-                cls.OBSIDIAN_VAULT_PATH,
-            )
-        else:
-            markdown_files = list(cls.OBSIDIAN_VAULT_PATH.glob("**/*.md"))
-
-            logger.info(
-                "Obsidian encontrado (%s archivos .md)",
-                len(markdown_files),
-            )
 
         if not cls.DASHBOARD_API_KEY:
             generated_key = secrets.token_urlsafe(32)
@@ -144,3 +111,9 @@ class Config:
                 generated_key,
             )
             cls.DASHBOARD_API_KEY = generated_key
+
+        if not cls.OBSIDIAN_VAULT_PATH.exists():
+            logger.warning("Obsidian no encontrado en %s", cls.OBSIDIAN_VAULT_PATH)
+        else:
+            markdown_files = list(cls.OBSIDIAN_VAULT_PATH.glob("**/*.md"))
+            logger.info("Obsidian encontrado (%s archivos .md)", len(markdown_files))

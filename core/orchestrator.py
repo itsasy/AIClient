@@ -9,12 +9,33 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
+    """
+    Orquestador principal del sistema.
+
+    Coordina el flujo completo: análisis de intención, construcción de contexto,
+    recuperación de memoria, delegación al agente y almacenamiento de la respuesta.
+
+    Atributos:
+        context_builder (ContextBuilder): Construye el contexto del proyecto y Obsidian.
+        memory (ConversationMemory): Gestiona el historial conversacional.
+        agent_manager (AgentManager): Selecciona y delega tareas a los agentes.
+    """
+
     def __init__(self):
         self.context_builder = ContextBuilder()
         self.memory = ConversationMemory()
         self.agent_manager = AgentManager()
 
     def process(self, task: str) -> str:
+        """
+        Procesa una tarea completa del usuario.
+
+        Args:
+            task (str): Instrucción o consulta del usuario.
+
+        Returns:
+            str: Respuesta generada por el agente/LLM.
+        """
         intent = IntentAnalyzer.analyze(task)
 
         logger.info(
@@ -26,7 +47,6 @@ class Orchestrator:
         context = self.context_builder.build(task)
 
         memory = self.memory.get_context()
-
         if memory:
             context["memory"] = memory
 

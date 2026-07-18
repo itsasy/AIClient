@@ -1,12 +1,11 @@
 import logging
-import re
 
 from agents.architect import ArchitectAgent
 from agents.base import Agent
 from agents.coder import CoderAgent
-from agents.task_agent import TaskAgent
-from agents.multi_turn import MultiTurnAgent
 from agents.executor import ExecutorAgent
+from agents.multi_turn import MultiTurnAgent
+from agents.task_agent import TaskAgent
 
 logger = logging.getLogger(__name__)
 
@@ -21,61 +20,37 @@ class AgentManager:
             "executor": ExecutorAgent(),
         }
 
-    def select_agent(self, task: str, skill_name: str | None = None) -> Agent:
-        # 1. Si tenemos una skill_name detectada, la usamos para elegir agente
+        # Mapeo centralizado: skill_name -> agente
+        self.skill_agent_map = {
+            # Arquitectura y análisis
+            "analyze": "architect",
+            "analyze_project": "architect",
+            "readme": "architect",
+            "migrate_project": "architect",
+            "refactor_code": "architect",
+            # Generación de código
+            "code": "coder",
+            "generate_proposal": "coder",
+            # Ejecución de comandos y proyectos
+            "shell": "executor",
+            "docker": "executor",
+            "execute_code": "executor",
+            "sandbox": "executor",
+            "laravel_project": "executor",
+            "full_project": "executor",
+        }
+
+    def select_agent(self, skill_name: str | None = None) -> Agent:
+        """
+        Selecciona el agente basado en la skill detectada.
+        La detección de skill (regex) está centralizada en IntentAnalyzer.
+        """
         if skill_name:
-            # Skills de análisis/documentación → Arquitecto
-            if skill_name in (
-                "analyze",
-                "analyze_project",
-                "readme",
-                "migrate_project",
-                "refactor_code",
-            ):
-                return self.agents["architect"]
+            agent_name = self.skill_agent_map.get(skill_name)
+            if agent_name:
+                return self.agents[agent_name]
 
-            # Skills de generación de código → Coder
-            if skill_name in ("code", "generate_proposal"):
-                return self.agents["coder"]
-
-            # Skills de ejecución → Executor
-            if skill_name in (
-                "shell",
-                "docker",
-                "execute_code",
-                "sandbox",
-                "laravel_project",
-                "full_project",
-            ):
-                return self.agents["executor"]
-
-        # 2. Fallback: Lógica antigua por Regex
-        q = (task or "").lower().strip()
-
-        architecture_intent = re.search(
-            r"\b("
-            r"arquitectura|arquitectónico|arquitectonico|"
-            r"diseño|diseno|estándares|estandares|"
-            r"estructura del proyecto|deuda técnica|deuda tecnica"
-            r")\b",
-            q,
-        )
-
-        if architecture_intent:
-            return self.agents["architect"]
-
-        code_intent = re.search(
-            r"\b("
-            r"código|codigo|función|funcion|clase|"
-            r"script|endpoint|implementa|implementar|"
-            r"refactor|refactoriza|bug"
-            r")\b",
-            q,
-        )
-
-        if code_intent:
-            return self.agents["coder"]
-
+        logger.debug("Sin skill específica, usando agente 'task' por defecto.")
         return self.agents["task"]
 
     def delegate(
@@ -85,15 +60,10 @@ class AgentManager:
         skill_name: str | None = None,
         skill_params: dict | None = None,
     ) -> str:
-        agent = self.select_agent(task, skill_name)
+        agent = self.select_agent(skill_name)
 
         logger.info(
-            "Delegando tarea al agente: %s",
-            agent.name,
-        )
-
-        logger.info(
-            "Contexto de ejecución | agent=%s | skill=%s",
+            "Delegando al agente: %s (skill: %s)",
             agent.name,
             skill_name or "general",
         )
