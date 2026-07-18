@@ -55,7 +55,7 @@ class ProjectInspector:
         Devuelve un modelo estructurado del proyecto.
         """
 
-        root = Config.PROJECT_ROOT
+        root = Config.TARGET_PROJECT_ROOT
 
         snapshot = ProjectSnapshot(
             root=root.name,
@@ -105,27 +105,17 @@ class ProjectInspector:
             if not directory.is_dir():
                 continue
 
-            for path in sorted(
-                directory.rglob("*")
-            ):
+            for path in sorted(directory.rglob("*")):
 
                 if not path.is_file():
                     continue
 
-                relative_parts = (
-                    path.relative_to(root).parts
-                )
+                relative_parts = path.relative_to(root).parts
 
-                if any(
-                    part in self.EXCLUDED_DIRS
-                    for part in relative_parts
-                ):
+                if any(part in self.EXCLUDED_DIRS for part in relative_parts):
                     continue
 
-                if (
-                    path.suffix.lower()
-                    not in self.INCLUDED_EXTENSIONS
-                ):
+                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
                     continue
 
                 if path not in files:

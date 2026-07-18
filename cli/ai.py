@@ -17,6 +17,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from core.config import Config
 from core.orchestrator import Orchestrator
 
+Config.TARGET_PROJECT_ROOT = Path.cwd()
+
 logger.info("🚀 AIClient iniciado")
 
 orchestrator = Orchestrator()
@@ -33,7 +35,7 @@ def main():
     query = " ".join(args.query)
 
     if not query and not args.chat:
-        print("🤖 Uso: ai \"tu instrucción\"")
+        print('🤖 Uso: ai "tu instrucción"')
         print("    ai --chat")
         return
 

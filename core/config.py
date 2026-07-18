@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class Config:
     PROJECT_ROOT = PROJECT_ROOT
+    TARGET_PROJECT_ROOT = PROJECT_ROOT
 
     # Gemini
     GEMINI_API_KEY = os.getenv(
@@ -43,6 +44,7 @@ class Config:
         "meta/llama-3.1-70b-instruct",
     )
 
+    # Provider routing
     DEFAULT_PROVIDER = (
         os.getenv(
             "DEFAULT_PROVIDER",

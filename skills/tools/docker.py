@@ -1,4 +1,5 @@
 from skills.base import Skill
+from core.config import Config  # ✅ NUEVO IMPORT
 import subprocess
 
 
@@ -29,12 +30,14 @@ class DockerTool(Skill):
             }
 
         try:
+            cwd = Config.TARGET_PROJECT_ROOT
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
                 timeout=10,
+                cwd=cwd,
             )
             output = result.stdout.strip() or result.stderr.strip()
             return {

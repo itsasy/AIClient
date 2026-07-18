@@ -2,6 +2,7 @@ from pathlib import Path
 import subprocess
 
 from skills.base import Skill
+from core.config import Config
 
 
 class ShellTool(Skill):
@@ -35,7 +36,6 @@ class ShellTool(Skill):
         command = command.strip()
         normalized = command.lower()
 
-        # Verificar si el comando está permitido (por prefijo)
         if not any(normalized.startswith(p.lower()) for p in self.SAFE_PREFIXES):
             return {
                 "type": "shell_result",
@@ -47,14 +47,14 @@ class ShellTool(Skill):
             }
 
         try:
-            project_root = Path(__file__).resolve().parents[2]
+            cwd = Config.TARGET_PROJECT_ROOT
             result = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
                 timeout=15,
-                cwd=project_root,
+                cwd=cwd,
             )
             output = result.stdout.strip() or result.stderr.strip()
             return {

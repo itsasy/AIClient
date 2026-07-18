@@ -15,3 +15,10 @@ dev = [
     "ruff",
     "ipykernel",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["cli", "core", "llm", "skills", "agents", "obsidian", "dashboard"]
