@@ -46,12 +46,19 @@ class IntentAnalyzer:
         if re.search(r"\b(laravel|react|vue|django|fullstack)\b", q) and re.search(
             r"\b(proyecto|crea|genera|nuevo)\b", q
         ):
-            return IntentResult(
-                "laravel_project",
-                {
-                    "name": query
-                },  # Pasamos la consulta completa, luego la skill extraerá el nombre
+            name_match = re.search(
+                r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q
             )
+            if name_match:
+                name = (
+                    name_match.group(1)
+                    or name_match.group(2)
+                    or name_match.group(3)
+                    or "mi_proyecto"
+                )
+            else:
+                name = q.split()[-1] if q.split() else "mi_proyecto"
+            return IntentResult("laravel_project", {"name": name})
 
         # ------------------------------------------------------------
         # 2. DETECCIÓN DE SHELL / COMANDOS (extrae el comando real)

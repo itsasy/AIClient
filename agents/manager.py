@@ -35,19 +35,21 @@ class AgentManager:
                 return self.agents["architect"]
 
             # Skills de generación de código → Coder
+            if skill_name in ("code", "generate_proposal"):
+                return self.agents["coder"]
+
+            # Skills de ejecución → Executor
             if skill_name in (
-                "code",
-                "generate_proposal",
+                "shell",
+                "docker",
+                "execute_code",
+                "sandbox",
                 "laravel_project",
                 "full_project",
             ):
-                return self.agents["coder"]
-
-            # Skills de ejecución (shell, docker) → Executor (o Task)
-            if skill_name in ("shell", "docker", "execute_code", "sandbox"):
                 return self.agents["executor"]
 
-        # 2. Fallback: Lógica antigua por Regex (para mantener compatibilidad)
+        # 2. Fallback: Lógica antigua por Regex
         q = (task or "").lower().strip()
 
         architecture_intent = re.search(

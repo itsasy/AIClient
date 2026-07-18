@@ -18,6 +18,8 @@ class ExecutorAgent(Agent):
             "docker",
             "execute_code",
             "sandbox",
+            "laravel_project",
+            "full_project",
         ):
             from llm.router import LLMRouter
 
