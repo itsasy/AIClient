@@ -10,6 +10,8 @@ class ShellTool(Skill):
     SAFE_PREFIXES = [
         "git status", "git log", "git branch", "git diff",
         "ls", "tree ", "pwd", "echo ", "cat ", "find ", "grep ",
+        "composer ", "php ", "artisan ", "laravel new", "npm ", "yarn ",
+        "docker compose", "docker run", "docker exec",
     ]
 
     def execute(self, command: str, **kwargs):

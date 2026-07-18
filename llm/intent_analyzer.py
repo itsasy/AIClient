@@ -17,6 +17,21 @@ class IntentAnalyzer:
     el Router.
     """
 
+import re
+from dataclasses import dataclass
+
+
+@dataclass(slots=True)
+class IntentResult:
+    skill_name: str | None
+    skill_params: dict | None
+
+
+class IntentAnalyzer:
+    """
+    Analiza una consulta y determina qué Skill debe ejecutarse.
+    """
+
     @staticmethod
     def analyze(query: str) -> IntentResult:
         if not query:
@@ -24,33 +39,43 @@ class IntentAnalyzer:
 
         q = query.lower().strip()
 
-        # 1. DETECCIÓN DE LARAVEL / PROYECTOS COMPLETOS
-        if re.search(
-            r"\b(laravel|react|vue|django|fullstack)\b.*\b(proyecto|crea|genera|nuevo)\b",
-            q,
+        # ------------------------------------------------------------
+        # 1. DETECCIÓN DE PROYECTOS (Laravel, React, Vue, Django, etc.)
+        # ------------------------------------------------------------
+        if re.search(r"\b(laravel|react|vue|django|fullstack)\b", q) and re.search(
+            r"\b(proyecto|crea|genera|nuevo)\b", q
         ):
             return IntentResult(
                 "laravel_project",
-                {
-                    "name": query
-                },  # Pasamos la consulta completa para extraer el nombre después
+                {"name": query}  # Pasamos la consulta completa, luego la skill extraerá el nombre
             )
 
+        # ------------------------------------------------------------
         # 2. DETECCIÓN DE SHELL / COMANDOS
+        # ------------------------------------------------------------
         if re.search(r"\b(ejecuta|corre|run)\b", q) and re.search(
-            r"\b(comando|ls|git|docker|composer|php|artisan|npm|cd)\b", q
+            r"\b(comando|ls|git|docker|composer|php|artisan|npm|cd|pwd|tree|cat|grep)\b", q
         ):
             return IntentResult(
-                "shell", {"command": query}  # El ShellTool recibe el comando completo
+                "shell",
+                {"command": query}  # La skill extraerá el comando real
             )
 
-        # 3. DETECCIÓN DE DOCKER
-        if re.search(r"\b(docker)\b", q) and re.search(
-            r"\b(ps|images|logs|status|inspect)\b", q
+        # ------------------------------------------------------------
+        # 3. DETECCIÓN DE DOCKER (comandos específicos)
+        # ------------------------------------------------------------
+        if re.search(r"\bdocker\b", q) and re.search(
+            r"\b(ps|images|logs|status|inspect|start|stop|restart)\b", q
         ):
-            return IntentResult("docker", {"action": q})  # DockerTool espera 'action'
+            # Como 'docker' también puede caer en shell, lo ponemos aquí con prioridad
+            return IntentResult(
+                "docker",
+                {"action": q}
+            )
 
-        # --- REGLAS EXISTENTES ---
+        # ------------------------------------------------------------
+        # 4. REGLAS EXISTENTES (sin modificar su lógica original)
+        # ------------------------------------------------------------
 
         # Análisis explícito de código
         if re.search(r"\b(analiza|revisa)\b.*\b(código|codigo|función|clase)\b", q):
@@ -68,7 +93,7 @@ class IntentAnalyzer:
                 {},
             )
 
-        # Generación de código genérica
+        # Generación de código genérica (si no es Laravel, cae aquí)
         if re.search(r"\b(crea|genera)\b", q) and re.search(
             r"\b(función|clase|script|endpoint)\b", q
         ):

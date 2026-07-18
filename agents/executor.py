@@ -7,10 +7,16 @@ class ExecutorAgent(Agent):
     name = "executor"
     role = "Ejecutor Autónomo de Tareas"
 
-    def process(self, task: str, context: dict = None) -> str:
-        prompt = f"""Ejecuta esta tarea de forma autónoma:
-
-Tarea: {task}
-
-Usa las skills y herramientas disponibles para completarla paso a paso."""
-        return LLMRouter.generate(prompt)
+    def process(
+        self,
+        task: str,
+        context: dict | None = None,
+        skill_name: str | None = None,
+        skill_params: dict | None = None,
+    ) -> str:
+        return LLMRouter.generate(
+            task=task,
+            context=context or {},
+            skill_name=skill_name,
+            skill_params=skill_params,
+        )
