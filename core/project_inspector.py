@@ -19,6 +19,18 @@ class ProjectInspector:
         ".py",
         ".toml",
         ".md",
+        ".php",
+        ".json",
+        ".js",
+        ".css",
+        ".html",
+        ".yml",
+        ".yaml",
+        ".xml",
+        ".sh",
+        ".env",
+        ".lock",
+        ".ini",
     }
 
     PRIORITY_FILES = (

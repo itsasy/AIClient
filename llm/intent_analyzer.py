@@ -11,26 +11,6 @@ class IntentResult:
 class IntentAnalyzer:
     """
     Analiza una consulta y determina qué Skill debe ejecutarse.
-
-    Actualmente utiliza reglas (Regex), pero fue diseñado para
-    poder evolucionar a un clasificador por IA sin modificar
-    el Router.
-    """
-
-
-import re
-from dataclasses import dataclass
-
-
-@dataclass(slots=True)
-class IntentResult:
-    skill_name: str | None
-    skill_params: dict | None
-
-
-class IntentAnalyzer:
-    """
-    Analiza una consulta y determina qué Skill debe ejecutarse.
     """
 
     @staticmethod
