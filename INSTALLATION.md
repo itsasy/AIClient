@@ -55,21 +55,32 @@ pip install python-dotenv google-genai requests openai flask beautifulsoup4
 
 ## ⚙️ 4. Configurar variables de entorno
 
-Crea un archivo `.env` en la raíz del proyecto:
+Crea un archivo `.env` en la raíz del proyecto con el siguiente contenido (ajusta las claves y rutas):
 
 ```bash
 cat > .env << EOF
 GEMINI_API_KEY=tu_api_key_aqui
 NVIDIA_API_KEY=tu_api_key_nvidia_aqui
-DEFAULT_PROVIDER=gemini
+DEFAULT_PROVIDER=nim
 CODE_PROVIDER=nim
 ARCHITECTURE_PROVIDER=nim
-FALLBACK_PROVIDERS=nim,gemini
+DOCUMENTATION_PROVIDER=nim
+FALLBACK_PROVIDERS=gemini
+SHELL_TIMEOUT=300
+DOCKER_TIMEOUT=120
 OBSIDIAN_VAULT_PATH=~/Workspace/AIClient/obsidian_vault
 EOF
 ```
 
-Ajusta las claves y rutas según tu configuración.
+**Explicación de variables:**
+- `GEMINI_API_KEY` → Clave de Google Gemini (obligatoria si usas este proveedor).
+- `NVIDIA_API_KEY` → Clave de NVIDIA NIM (opcional, recomendada como fallback).
+- `DEFAULT_PROVIDER` → Proveedor principal (gemini o nim).
+- `CODE_PROVIDER`, `ARCHITECTURE_PROVIDER`, `DOCUMENTATION_PROVIDER` → Proveedores específicos por skill.
+- `FALLBACK_PROVIDERS` → Lista de proveedores de respaldo en orden de prioridad.
+- `SHELL_TIMEOUT` → Tiempo máximo (segundos) para comandos shell (recomendado: 180-300).
+- `DOCKER_TIMEOUT` → Tiempo máximo (segundos) para comandos Docker (recomendado: 120).
+- `OBSIDIAN_VAULT_PATH` → Ruta al vault de Obsidian (opcional).
 
 ---
 
@@ -106,12 +117,20 @@ build-backend = "setuptools.build_meta"
 packages = ["cli", "core", "llm", "skills", "agents", "obsidian", "dashboard"]
 ```
 
-### B. Agregar `DOCUMENTATION_PROVIDER` en `core/config.py`
+### B. Agregar `DOCUMENTATION_PROVIDER` y `TARGET_PROJECT_ROOT` en `core/config.py`
 
-Añade esta línea después de `ARCHITECTURE_PROVIDER`:
+Añade estas líneas después de `ARCHITECTURE_PROVIDER`:
 
 ```python
 DOCUMENTATION_PROVIDER = os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
+DOCKER_TIMEOUT = int(os.getenv("DOCKER_TIMEOUT", "120"))
+```
+
+Y declara al inicio de la clase:
+
+```python
+TARGET_PROJECT_ROOT = PROJECT_ROOT
 ```
 
 ### C. Hacer que el asistente respete el directorio actual del usuario
@@ -132,9 +151,22 @@ por:
 root = Config.TARGET_PROJECT_ROOT
 ```
 
-**En `skills/tools/shell.py` y `skills/tools/docker.py`,** cambia el `cwd` de `subprocess.run` para que use `Config.TARGET_PROJECT_ROOT`.
+**En `skills/tools/shell.py` y `skills/tools/docker.py`,** cambia el `cwd` de `subprocess.run` para que use `Config.TARGET_PROJECT_ROOT` y `timeout` para que use `Config.SHELL_TIMEOUT` / `Config.DOCKER_TIMEOUT`.
 
-### D. (Opcional) Registrar skills de proyectos
+### D. Ampliar extensiones de proyecto en `ProjectInspector`
+
+En `core/project_inspector.py`, reemplaza `INCLUDED_EXTENSIONS` por:
+
+```python
+INCLUDED_EXTENSIONS = {
+    ".py", ".toml", ".md",
+    ".php", ".json", ".js", ".css", ".html",
+    ".yml", ".yaml", ".xml", ".sh", ".env",
+    ".lock", ".ini", ".vue", ".ts", ".jsx", ".tsx"
+}
+```
+
+### E. Registrar skills de proyectos
 
 Si quieres usar `laravel_project`, regístrala en `skills/manager.py`:
 
@@ -144,6 +176,20 @@ from skills.projects.laravel import LaravelProjectSkill
 self.skills["laravel_project"] = LaravelProjectSkill()
 ```
 
+### F. (Opcional) Mejorar `LaravelProjectSkill` para eliminar directorios existentes
+
+Reemplaza `skills/projects/laravel.py` con la versión que incluye:
+
+```python
+import shutil
+from pathlib import Path
+
+# Antes de ejecutar composer, eliminar el directorio si existe
+project_path = Path.cwd() / name
+if project_path.exists():
+    shutil.rmtree(project_path)
+```
+
 ---
 
 ## 🔗 6. Crear alias en WSL
@@ -151,32 +197,38 @@ self.skills["laravel_project"] = LaravelProjectSkill()
 Para ejecutar `ai` desde cualquier lugar sin activar el entorno virtual, añade al final de `~/.bashrc`:
 
 ```bash
-echo 'alias ai="/home/alexis/Workspace/AIClient/venv/bin/python /home/alexis/Workspace/AIClient/cli/ai.py"' >> ~/.bashrc
+echo 'alias ai="/home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-> Sustituye `/home/alexis` por tu usuario real.
+> Sustituye `/home/tu_usuario` por tu nombre de usuario real.
 
 ---
 
-## 🪟 7. Crear script puente para Windows
+## 🪟 7. Crear script puente para Windows (CORREGIDO)
 
-Crea el archivo `C:\Windows\System32\ai.cmd` con el siguiente contenido:
+Crea el archivo `C:\Windows\System32\ai.cmd` con el siguiente contenido (esto maneja correctamente argumentos con espacios):
 
 ```cmd
 @echo off
 set CWD=%CD%
-wsl bash -ic "cd \"$(wslpath -u '%CWD%')\" && /home/alexis/Workspace/AIClient/venv/bin/python /home/alexis/Workspace/AIClient/cli/ai.py %*"
+set ARGS=%*
+set ARGS=%ARGS:"=%
+wsl bash -ic "cd \"$(wslpath -u '%CWD%')\" && /home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py \"%ARGS%\""
 ```
 
-Si `wslpath` no funciona en tu sistema, usa esta alternativa:
+**Si `wslpath` no funciona en tu sistema**, usa esta alternativa:
 
 ```cmd
 @echo off
 set CWD=%CD:\=/%
 set CWD=%CWD:C:=/mnt/c%
-wsl bash -ic "cd '%CWD%' && /home/alexis/Workspace/AIClient/venv/bin/python /home/alexis/Workspace/AIClient/cli/ai.py %*"
+set ARGS=%*
+set ARGS=%ARGS:"=%
+wsl bash -ic "cd '%CWD%' && /home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py \"%ARGS%\""
 ```
+
+**Nota:** Sustituye `/home/tu_usuario` por tu ruta real de WSL.
 
 ---
 
@@ -192,9 +244,14 @@ Deberías ver la ayuda del asistente sin errores de importación.
 ## 🧪 9. Prueba de funcionamiento
 
 ```bash
-ai "hola"                            # respuesta del LLM
-ai "ejecuta git status"              # ejecuta git en el directorio actual
-ai "crea un proyecto laravel llamado prueba"   # crea proyecto Laravel real
+# Respuesta del LLM
+ai "hola"
+
+# Ejecutar comandos en el directorio actual (WSL o Windows)
+ai "ejecuta git status"
+
+# Crear proyecto Laravel real (se crea en el directorio actual)
+ai "crea un proyecto laravel llamado prueba"
 ```
 
 ---
@@ -208,13 +265,21 @@ ai "crea un proyecto laravel llamado prueba"   # crea proyecto Laravel real
 ├── core/
 │   ├── config.py
 │   ├── orchestrator.py
+│   ├── project_inspector.py
 │   └── ...
 ├── llm/
 ├── skills/
+│   ├── manager.py
+│   ├── projects/
+│   │   └── laravel.py
+│   └── tools/
+│       ├── shell.py
+│       └── docker.py
 ├── agents/
 ├── obsidian/
 ├── venv/                 # Entorno virtual
-├── .env                  # Variables de entorno
+├── .env                  # Variables de entorno (NO subir a Git)
+├── .env.example          # Plantilla de variables (subir a Git)
 ├── pyproject.toml        # Configuración de paquetes
 └── README.md
 ```
@@ -231,6 +296,10 @@ ai "crea un proyecto laravel llamado prueba"   # crea proyecto Laravel real
 | `Permission denied` al ejecutar `composer` | Instala Composer en WSL con `sudo apt install composer` |
 | El alias no funciona en WSL | Asegúrate de que `~/.bashrc` se haya recargado con `source ~/.bashrc` |
 | Desde Windows no encuentra el comando `ai` | Verifica que `ai.cmd` esté en una carpeta del PATH (ej. `C:\Windows\System32`) |
+| `echo: unexpected EOF while looking for matching` | Usa la versión corregida de `ai.cmd` que maneja correctamente las comillas |
+| Proyecto Laravel falla por "directory not empty" | La skill mejorada elimina automáticamente el directorio existente, o elimina manualmente con `rm -rf nombre` |
+| Timeout en comandos largos | Ajusta `SHELL_TIMEOUT` en `.env` a un valor mayor (ej. 300) |
+| La consulta se trunca a la primera palabra | Verifica que `ai.cmd` use `%*` y las comillas escapadas como se indica en el paso 7 |
 
 ---
 
@@ -253,6 +322,7 @@ ai "crea un proyecto laravel llamado prueba"   # crea proyecto Laravel real
 - Puedes extender las skills agregando nuevas clases en `skills/` y registrándolas en `SkillManager`.
 - La memoria conversacional se almacena en `.history.json` en la raíz del proyecto.
 - El contexto del proyecto se construye a partir del directorio actual (`TARGET_PROJECT_ROOT`).
+- Los timeouts son configurables desde `.env` sin necesidad de modificar el código.
 
 ---
 
