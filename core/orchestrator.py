@@ -2,9 +2,9 @@ import logging
 
 from agents.manager import AgentManager
 from core.context_builder import ContextBuilder
+from core.learner import ContinuousLearner
 from core.memory import ConversationMemory
 from llm.intent_analyzer import IntentAnalyzer
-from core.learner import ContinuousLearner
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class Orchestrator:
         context_builder (ContextBuilder): Construye el contexto del proyecto y Obsidian.
         memory (ConversationMemory): Gestiona el historial conversacional.
         agent_manager (AgentManager): Selecciona y delega tareas a los agentes.
+        learner (ContinuousLearner): Gestiona el aprendizaje continuo de preferencias.
     """
 
     def __init__(self):
@@ -52,15 +53,15 @@ class Orchestrator:
         if memory:
             context["memory"] = memory
 
-        if self.learner.extract_and_learn(task, response):
-            logger.info("El sistema ha aprendido una nueva preferencia del usuario.")
-
         response = self.agent_manager.delegate(
             task=task,
             context=context,
             skill_name=intent.skill_name,
             skill_params=intent.skill_params,
         )
+
+        if self.learner.extract_and_learn(task, response):
+            logger.info("El sistema ha aprendido una nueva preferencia del usuario.")
 
         self.memory.add(task, response)
 

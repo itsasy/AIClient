@@ -5,7 +5,7 @@ from core.context_retriever import ContextRetriever
 
 
 class PromptBuilder:
-    PROMPTS_DIR = Config.PROJECT_ROOT / "prompts"
+    PROMPTS_DIR = Config.PROJECT_ROOT / "llm" / "prompts"
 
     @staticmethod
     def _load_template(name: str) -> str:
