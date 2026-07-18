@@ -1,31 +1,60 @@
 import shutil
+import re
 from pathlib import Path
 from skills.base import Skill
 from skills.tools.shell import ShellTool
 from core.config import Config
 
+
 class LaravelProjectSkill(Skill):
     name = "laravel_project"
     description = "Crea proyecto Laravel completo con Docker y Sanctum"
 
-    def execute(self, name: str = "mi_proyecto", **kwargs):
-        # Extraer el nombre del proyecto de la consulta
+    def execute(self, name: str = "mi_proyecto", force: bool = False, **kwargs):
+        # Limpieza y validación del nombre
         if " " in name:
             name = name.split()[-1]
         if not name:
             name = "mi_proyecto"
 
+        # Seguridad: solo caracteres permitidos (evita inyección de comandos)
+        if not re.match(r"^[a-zA-Z0-9_-]+$", name):
+            return {
+                "type": "laravel_result",
+                "payload": {
+                    "ok": False,
+                    "project_name": name,
+                    "output": (
+                        f"❌ Nombre de proyecto inválido: '{name}'. "
+                        "Usa solo letras, números, guiones y guiones bajos."
+                    ),
+                },
+            }
+
         shell = ShellTool()
         project_path = Path.cwd() / name
-
         laravel_timeout = Config.LARAVEL_TIMEOUT
 
+        # Seguridad CRÍTICA: no borrar sin consentimiento explícito
         if project_path.exists():
+            if not force:
+                return {
+                    "type": "laravel_result",
+                    "payload": {
+                        "ok": False,
+                        "project_name": name,
+                        "output": (
+                            f"⚠️ El directorio '{name}' ya existe.\n"
+                            "Para borrarlo y crear uno nuevo, usa force=True.\n"
+                            "O elimínalo manualmente y vuelve a intentar."
+                        ),
+                    },
+                }
+
+            # Solo llegamos aquí si force=True (uso consciente)
             try:
                 shutil.rmtree(project_path)
-                print(
-                    f"⚠️  Directorio '{name}' eliminado (existía de una prueba anterior)."
-                )
+                output_warning = f"⚠️  Directorio '{name}' eliminado (force=True).\n"
             except Exception as e:
                 return {
                     "type": "laravel_result",
@@ -35,6 +64,8 @@ class LaravelProjectSkill(Skill):
                         "output": f"❌ No se pudo eliminar el directorio '{name}': {e}",
                     },
                 }
+        else:
+            output_warning = ""
 
         commands = [
             f"composer create-project laravel/laravel {name}",
@@ -74,7 +105,7 @@ class LaravelProjectSkill(Skill):
                     )
                 break
 
-        outputs = []
+        outputs = [output_warning] if output_warning else []
         all_ok = True
         for cmd, res in results:
             if cmd == "help":

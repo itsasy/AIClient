@@ -1,5 +1,7 @@
 import logging
 import os
+import secrets
+
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -82,12 +84,9 @@ class Config:
     )
 
     FALLBACK_PROVIDERS = [
-        provider.strip().lower()
-        for provider in os.getenv(
-            "FALLBACK_PROVIDERS",
-            "nim",
-        ).split(",")
-        if provider.strip()
+        p.strip().lower()
+        for p in os.getenv("FALLBACK_PROVIDERS", "nim").split(",")
+        if p.strip()
     ]
 
     SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
@@ -101,6 +100,12 @@ class Config:
             str(PROJECT_ROOT / "obsidian_vault"),
         )
     ).expanduser()
+
+    # Dashboard
+    DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
+    DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
+    DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
+    DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
 
     @classmethod
     def validate(cls) -> None:
@@ -131,3 +136,11 @@ class Config:
                 "Obsidian encontrado (%s archivos .md)",
                 len(markdown_files),
             )
+
+        if not cls.DASHBOARD_API_KEY:
+            generated_key = secrets.token_urlsafe(32)
+            logger.warning(
+                "DASHBOARD_API_KEY no configurada. Usando clave generada: %s",
+                generated_key,
+            )
+            cls.DASHBOARD_API_KEY = generated_key
