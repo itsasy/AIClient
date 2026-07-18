@@ -92,6 +92,7 @@ class Config:
 
     SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
     DOCKER_TIMEOUT = int(os.getenv("DOCKER_TIMEOUT", "120"))
+    LARAVEL_TIMEOUT = int(os.getenv("LARAVEL_TIMEOUT", "600"))
 
     # Obsidian
     OBSIDIAN_VAULT_PATH = Path(
