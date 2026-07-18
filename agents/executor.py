@@ -33,7 +33,9 @@ class ExecutorAgent(Agent):
         skill_manager = SkillManager()
         result = skill_manager.execute(skill_name, **(skill_params or {}))
 
-        if result.get("type") in (
+        result_type = result.get("type")
+
+        if result_type in (
             "shell_result",
             "docker_result",
             "execution_result",
@@ -53,5 +55,21 @@ class ExecutorAgent(Agent):
                     or "Error desconocido."
                 )
                 return f"❌ **{skill_name}** falló:\n```\n{error}\n```"
+
+        if result_type == "laravel_result":
+            payload = result.get("payload", {})
+            project_name = payload.get("project_name", "proyecto")
+            output = payload.get("output", "")
+
+            if payload.get("ok"):
+                return (
+                    f"✅ **Proyecto Laravel '{project_name}'** creado correctamente.\n\n"
+                    f"Salida:\n```\n{output}\n```"
+                )
+            else:
+                return (
+                    f"❌ **Proyecto Laravel** falló al crearse.\n\n"
+                    f"Salida de error:\n```\n{output}\n```"
+                )
 
         return str(result)
