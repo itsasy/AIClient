@@ -1,16 +1,15 @@
 from agents.base import Agent
 from llm.router import LLMRouter
-from skills.manager import SkillManager
 
 
 class PlannerAgent(Agent):
     name = "planner"
-    role = "Planificador y Ejecutor Autónomo"
+    role = "Planificador Autónomo"
 
     def process(self, task: str, context: dict = None) -> str:
-        prompt = f"""Planifica y ejecuta esta tarea:
+        prompt = f"""Planifica esta tarea de forma autónoma y detallada:
 
 Tarea: {task}
 
-Crea un plan detallado y luego indica qué skills o herramientas usarás para ejecutarlo."""
+Crea un plan paso a paso, identifica skills necesarias y posibles riesgos."""
         return LLMRouter.generate(prompt)
