@@ -26,6 +26,20 @@ class IntentAnalyzer:
         if re.search(r"\b(laravel|react|vue|django|fullstack)\b", q) and re.search(
             r"\b(proyecto|crea|genera|nuevo)\b", q
         ):
+            # Detectar el framework específico
+            framework = None
+            if "react" in q:
+                framework = "react"
+            elif "vue" in q:
+                framework = "vue"
+            elif "django" in q:
+                framework = "django"
+            elif "fullstack" in q:
+                framework = "fullstack"
+            else:
+                framework = "laravel"
+
+            # Extraer el nombre
             name_match = re.search(
                 r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q
             )
@@ -38,7 +52,14 @@ class IntentAnalyzer:
                 )
             else:
                 name = q.split()[-1] if q.split() else "mi_proyecto"
-            return IntentResult("laravel_project", {"name": name})
+
+            # Si es Laravel, usar laravel_project. Para otros, usar full_project
+            if framework == "laravel":
+                return IntentResult("laravel_project", {"name": name})
+            else:
+                return IntentResult(
+                    "full_project", {"framework": framework, "name": name}
+                )
 
         # ------------------------------------------------------------
         # 2. DETECCIÓN DE SHELL / COMANDOS (extrae el comando real)

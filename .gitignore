@@ -5,7 +5,7 @@ __pycache__/
 *.log
 .history.json
 .DS_Store
-.vscode/
+vscode/
 .pytest_cache/
 .env
 *.swp

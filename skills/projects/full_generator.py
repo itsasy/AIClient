@@ -11,10 +11,24 @@ class FullProjectGeneratorSkill(Skill):
 
         if framework == "laravel":
             commands = [
-                f"laravel new {name} --pest",
-                f"cd {name} && composer require laravel/sanctum",
-                f"cd {name} && php artisan sanctum:install",
-                f"cd {name} && docker compose up -d --build",
+                f"composer create-project laravel/laravel {name}",
+                f"cd {name} && php artisan sail:install --with=mysql,redis",
+                f"cd {name} && ./vendor/bin/sail up -d",
+            ]
+        elif framework == "react":
+            commands = [
+                f"npx create-react-app {name}",
+                f"cd {name} && npm start",
+            ]
+        elif framework == "vue":
+            commands = [
+                f"npm create vue@latest {name}",
+                f"cd {name} && npm install",
+            ]
+        elif framework == "django":
+            commands = [
+                f"django-admin startproject {name}",
+                f"cd {name} && python manage.py runserver",
             ]
         else:
             commands = [f"echo 'Framework {framework} no soportado aún'"]
