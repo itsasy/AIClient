@@ -6,6 +6,7 @@ from agents.coder import CoderAgent
 from agents.executor import ExecutorAgent
 from agents.multi_turn import MultiTurnAgent
 from agents.task_agent import TaskAgent
+from agents.planner import PlannerAgent
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,7 @@ class AgentManager:
             "task": TaskAgent(),
             "multi_turn": MultiTurnAgent(),
             "executor": ExecutorAgent(),
+            "planner": PlannerAgent(),
         }
 
         # Mapeo centralizado: skill_name -> agente
@@ -38,6 +40,7 @@ class AgentManager:
             "sandbox": "executor",
             "laravel_project": "executor",
             "full_project": "executor",
+            "plan": "planner",
         }
 
     def select_agent(self, skill_name: str | None = None) -> Agent:

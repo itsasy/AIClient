@@ -119,4 +119,11 @@ class IntentAnalyzer:
                 {"request": query},
             )
 
+        # Detección de planificación autónoma
+        if re.search(
+            r"\b(plan|planifica|descompone|autónomo|autonomo|complejo|multi-paso|plan de acción)\b",
+            q,
+        ):
+            return IntentResult("plan", {"original_task": query})
+
         return IntentResult(None, None)
