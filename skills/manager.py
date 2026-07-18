@@ -1,11 +1,13 @@
-from skills.code.analyze import AnalyzeCodeSkill
+from skills.projects.laravel import LaravelProjectSkill
+from skills.projects.full_generator import FullProjectGeneratorSkill
+from skills.code.project_analyzer import ProjectAnalyzerSkill
 from skills.code.generate import GenerateCodeSkill
 from skills.code.executor import CodeExecutorSkill
-from skills.code.sandbox import CodeSandboxSkill
-from skills.code.project_analyzer import ProjectAnalyzerSkill
 from skills.docs.readme import GenerateReadmeSkill
-from skills.tools.shell import ShellTool
+from skills.code.sandbox import CodeSandboxSkill
+from skills.code.analyze import AnalyzeCodeSkill
 from skills.tools.docker import DockerTool
+from skills.tools.shell import ShellTool
 
 
 class SkillManager:
@@ -19,6 +21,8 @@ class SkillManager:
             "execute_code": CodeExecutorSkill(),
             "docker": DockerTool(),
             "sandbox": CodeSandboxSkill(),
+            "laravel_project": LaravelProjectSkill(),
+            "full_project": FullProjectGeneratorSkill(),
         }
 
     def execute(self, skill_name: str, **kwargs):

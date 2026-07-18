@@ -21,7 +21,33 @@ class AgentManager:
             "executor": ExecutorAgent(),
         }
 
-    def select_agent(self, task: str) -> Agent:
+    def select_agent(self, task: str, skill_name: str | None = None) -> Agent:
+        # 1. Si tenemos una skill_name detectada, la usamos para elegir agente
+        if skill_name:
+            # Skills de análisis/documentación → Arquitecto
+            if skill_name in (
+                "analyze",
+                "analyze_project",
+                "readme",
+                "migrate_project",
+                "refactor_code",
+            ):
+                return self.agents["architect"]
+
+            # Skills de generación de código → Coder
+            if skill_name in (
+                "code",
+                "generate_proposal",
+                "laravel_project",
+                "full_project",
+            ):
+                return self.agents["coder"]
+
+            # Skills de ejecución (shell, docker) → Executor (o Task)
+            if skill_name in ("shell", "docker", "execute_code", "sandbox"):
+                return self.agents["executor"]
+
+        # 2. Fallback: Lógica antigua por Regex (para mantener compatibilidad)
         q = (task or "").lower().strip()
 
         architecture_intent = re.search(
@@ -57,7 +83,7 @@ class AgentManager:
         skill_name: str | None = None,
         skill_params: dict | None = None,
     ) -> str:
-        agent = self.select_agent(task)
+        agent = self.select_agent(task, skill_name)
 
         logger.info(
             "Delegando tarea al agente: %s",

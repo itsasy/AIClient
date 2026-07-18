@@ -24,6 +24,34 @@ class IntentAnalyzer:
 
         q = query.lower().strip()
 
+        # 1. DETECCIÓN DE LARAVEL / PROYECTOS COMPLETOS
+        if re.search(
+            r"\b(laravel|react|vue|django|fullstack)\b.*\b(proyecto|crea|genera|nuevo)\b",
+            q,
+        ):
+            return IntentResult(
+                "laravel_project",
+                {
+                    "name": query
+                },  # Pasamos la consulta completa para extraer el nombre después
+            )
+
+        # 2. DETECCIÓN DE SHELL / COMANDOS
+        if re.search(r"\b(ejecuta|corre|run)\b", q) and re.search(
+            r"\b(comando|ls|git|docker|composer|php|artisan|npm|cd)\b", q
+        ):
+            return IntentResult(
+                "shell", {"command": query}  # El ShellTool recibe el comando completo
+            )
+
+        # 3. DETECCIÓN DE DOCKER
+        if re.search(r"\b(docker)\b", q) and re.search(
+            r"\b(ps|images|logs|status|inspect)\b", q
+        ):
+            return IntentResult("docker", {"action": q})  # DockerTool espera 'action'
+
+        # --- REGLAS EXISTENTES ---
+
         # Análisis explícito de código
         if re.search(r"\b(analiza|revisa)\b.*\b(código|codigo|función|clase)\b", q):
             return IntentResult(
@@ -32,14 +60,18 @@ class IntentAnalyzer:
             )
 
         # Análisis del proyecto
-        if re.search(r"\b(analiza|revisa|problemas|errores)\b", q) and re.search(r"\b(proyecto|repo|actual|actualmente)\b", q):
+        if re.search(r"\b(analiza|revisa|problemas|errores)\b", q) and re.search(
+            r"\b(proyecto|repo|actual|actualmente)\b", q
+        ):
             return IntentResult(
                 "analyze_project",
                 {},
             )
 
-        # Generación
-        if re.search(r"\b(crea|genera)\b", q) and re.search(r"\b(función|clase|proyecto)\b", q):
+        # Generación de código genérica
+        if re.search(r"\b(crea|genera)\b", q) and re.search(
+            r"\b(función|clase|script|endpoint)\b", q
+        ):
             return IntentResult(
                 "code",
                 {"task": query},

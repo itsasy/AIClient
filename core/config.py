@@ -4,7 +4,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 load_dotenv(
@@ -44,21 +43,41 @@ class Config:
         "meta/llama-3.1-70b-instruct",
     )
 
-    # Provider routing
-    DEFAULT_PROVIDER = os.getenv(
-        "DEFAULT_PROVIDER",
-        "gemini",
-    ).strip().lower()
+    DEFAULT_PROVIDER = (
+        os.getenv(
+            "DEFAULT_PROVIDER",
+            "gemini",
+        )
+        .strip()
+        .lower()
+    )
 
-    CODE_PROVIDER = os.getenv(
-        "CODE_PROVIDER",
-        DEFAULT_PROVIDER,
-    ).strip().lower()
+    CODE_PROVIDER = (
+        os.getenv(
+            "CODE_PROVIDER",
+            DEFAULT_PROVIDER,
+        )
+        .strip()
+        .lower()
+    )
 
-    ARCHITECTURE_PROVIDER = os.getenv(
-        "ARCHITECTURE_PROVIDER",
-        DEFAULT_PROVIDER,
-    ).strip().lower()
+    ARCHITECTURE_PROVIDER = (
+        os.getenv(
+            "ARCHITECTURE_PROVIDER",
+            DEFAULT_PROVIDER,
+        )
+        .strip()
+        .lower()
+    )
+
+    DOCUMENTATION_PROVIDER = (
+        os.getenv(
+            "DOCUMENTATION_PROVIDER",
+            DEFAULT_PROVIDER,
+        )
+        .strip()
+        .lower()
+    )
 
     FALLBACK_PROVIDERS = [
         provider.strip().lower()
@@ -80,14 +99,10 @@ class Config:
     @classmethod
     def validate(cls) -> None:
         if not cls.GEMINI_API_KEY:
-            logger.warning(
-                "GEMINI_API_KEY no configurada."
-            )
+            logger.warning("GEMINI_API_KEY no configurada.")
 
         if not cls.NVIDIA_API_KEY:
-            logger.warning(
-                "NVIDIA_API_KEY no configurada."
-            )
+            logger.warning("NVIDIA_API_KEY no configurada.")
 
         logger.info(
             "Configuración LLM | default=%s | code=%s | "
@@ -104,9 +119,7 @@ class Config:
                 cls.OBSIDIAN_VAULT_PATH,
             )
         else:
-            markdown_files = list(
-                cls.OBSIDIAN_VAULT_PATH.glob("**/*.md")
-            )
+            markdown_files = list(cls.OBSIDIAN_VAULT_PATH.glob("**/*.md"))
 
             logger.info(
                 "Obsidian encontrado (%s archivos .md)",
