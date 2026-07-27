@@ -14,45 +14,29 @@ logger = logging.getLogger(__name__)
 class Config:
     """
     Configuración global del sistema, cargada desde variables de entorno.
-
-    Atributos:
-        PROJECT_ROOT (Path): Ruta raíz del proyecto.
-        TARGET_PROJECT_ROOT (Path): Ruta del proyecto objetivo (usualmente el directorio actual).
-        GEMINI_API_KEY (str): Clave API de Google Gemini.
-        GEMINI_MODEL (str): Modelo de Gemini a usar.
-        NVIDIA_API_KEY (str): Clave API de NVIDIA NIM.
-        NVIDIA_BASE_URL (str): URL base para NVIDIA NIM.
-        NVIDIA_MODEL (str): Modelo de NVIDIA NIM.
-        DEFAULT_PROVIDER (str): Proveedor LLM por defecto.
-        CODE_PROVIDER (str): Proveedor para tareas de código.
-        ARCHITECTURE_PROVIDER (str): Proveedor para tareas de arquitectura.
-        DOCUMENTATION_PROVIDER (str): Proveedor para tareas de documentación.
-        FALLBACK_PROVIDERS (list[str]): Lista ordenada de proveedores de respaldo.
-        SHELL_TIMEOUT (int): Timeout para comandos shell (segundos).
-        DOCKER_TIMEOUT (int): Timeout para comandos Docker (segundos).
-        LARAVEL_TIMEOUT (int): Timeout para creación de proyectos Laravel (segundos).
-        OBSIDIAN_VAULT_PATH (Path): Ruta al vault de Obsidian.
-        DASHBOARD_API_KEY (str): Clave API para el dashboard Flask.
-        DASHBOARD_DEBUG (bool): Modo debug del dashboard.
-        DASHBOARD_HOST (str): Host donde escucha el dashboard.
-        DASHBOARD_PORT (int): Puerto del dashboard.
     """
 
     PROJECT_ROOT = PROJECT_ROOT
     TARGET_PROJECT_ROOT = PROJECT_ROOT
 
-    # Gemini
+    # ----- Gemini -----
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-    # NVIDIA NIM
+    # ----- NVIDIA NIM -----
     NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL = os.getenv(
         "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
     )
     NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
 
-    # Provider routing
+    # ----- DeepSeek (nuevo) -----
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+    DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
+    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    DEEPSEEK_CODER_MODEL = os.getenv("DEEPSEEK_CODER_MODEL", "deepseek-coder")
+
+    # ----- Proveedores primarios por categoría -----
     DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "gemini").strip().lower()
     CODE_PROVIDER = os.getenv("CODE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     ARCHITECTURE_PROVIDER = (
@@ -61,49 +45,87 @@ class Config:
     DOCUMENTATION_PROVIDER = (
         os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     )
+    FAST_PROVIDER = os.getenv("FAST_PROVIDER", "gemini_flash")
 
-    FALLBACK_PROVIDERS = [
+    # ----- Fallbacks por categoría (listas separadas por coma) -----
+    DEFAULT_FALLBACKS = [
         p.strip().lower()
-        for p in os.getenv("FALLBACK_PROVIDERS", "nim").split(",")
+        for p in os.getenv("DEFAULT_FALLBACKS", "nim,deepseek").split(",")
+        if p.strip()
+    ]
+    CODE_FALLBACKS = [
+        p.strip().lower()
+        for p in os.getenv("CODE_FALLBACKS", "nim,gemini").split(",")
+        if p.strip()
+    ]
+    ARCHITECTURE_FALLBACKS = [
+        p.strip().lower()
+        for p in os.getenv("ARCHITECTURE_FALLBACKS", "deepseek,nim").split(",")
+        if p.strip()
+    ]
+    FAST_FALLBACKS = [
+        p.strip().lower()
+        for p in os.getenv("FAST_FALLBACKS", "deepseek").split(",")
         if p.strip()
     ]
 
+    # FALLBACK_PROVIDERS por compatibilidad con código antiguo
+    FALLBACK_PROVIDERS = DEFAULT_FALLBACKS
+
+    # ----- Timeouts -----
     SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
     DOCKER_TIMEOUT = int(os.getenv("DOCKER_TIMEOUT", "120"))
     LARAVEL_TIMEOUT = int(os.getenv("LARAVEL_TIMEOUT", "600"))
 
-    # Obsidian
+    # ----- Obsidian -----
     OBSIDIAN_VAULT_PATH = Path(
         os.getenv("OBSIDIAN_VAULT_PATH", str(PROJECT_ROOT / "obsidian_vault"))
     ).expanduser()
 
-    # Dashboard
+    # ----- Dashboard -----
     DASHBOARD_API_KEY = os.getenv("DASHBOARD_API_KEY", "")
     DASHBOARD_DEBUG = os.getenv("DASHBOARD_DEBUG", "false").lower() == "true"
     DASHBOARD_HOST = os.getenv("DASHBOARD_HOST", "127.0.0.1")
     DASHBOARD_PORT = int(os.getenv("DASHBOARD_PORT", "5000"))
 
+    # ----- Sandbox (Docker) -----
+    SANDBOX_TIMEOUT = int(os.getenv("SANDBOX_TIMEOUT", "30"))
+    SANDBOX_MEMORY = os.getenv("SANDBOX_MEMORY", "128m")
+    SANDBOX_CPU = os.getenv("SANDBOX_CPU", "0.5")
+    SANDBOX_IMAGE = os.getenv("SANDBOX_IMAGE", "python:3.11-slim")
+
+    # ----- Self-Critic -----
+    ENABLE_SELF_CRITIC = os.getenv("ENABLE_SELF_CRITIC", "true").lower() == "true"
+
     @classmethod
     def validate(cls) -> None:
-        """
-        Valida la configuración y muestra advertencias sobre valores faltantes.
-        Si DASHBOARD_API_KEY no está definida, genera una clave aleatoria.
-        Verifica la existencia del vault de Obsidian y cuenta los archivos .md.
-        """
+        """Valida la configuración y genera claves si faltan."""
         if not cls.GEMINI_API_KEY:
             logger.warning("GEMINI_API_KEY no configurada.")
 
         if not cls.NVIDIA_API_KEY:
             logger.warning("NVIDIA_API_KEY no configurada.")
 
+        if not cls.DEEPSEEK_API_KEY:
+            logger.warning("DEEPSEEK_API_KEY no configurada.")
+
         logger.info(
-            "Configuración LLM | default=%s | code=%s | architecture=%s | fallbacks=%s",
+            "Proveedores primarios | default=%s | code=%s | architecture=%s | fast=%s",
             cls.DEFAULT_PROVIDER,
             cls.CODE_PROVIDER,
             cls.ARCHITECTURE_PROVIDER,
-            cls.FALLBACK_PROVIDERS,
+            cls.FAST_PROVIDER,
         )
 
+        logger.info(
+            "Fallbacks por categoría | default=%s | code=%s | architecture=%s | fast=%s",
+            cls.DEFAULT_FALLBACKS,
+            cls.CODE_FALLBACKS,
+            cls.ARCHITECTURE_FALLBACKS,
+            cls.FAST_FALLBACKS,
+        )
+
+        # Generar API Key para el dashboard si no está definida
         if not cls.DASHBOARD_API_KEY:
             generated_key = secrets.token_urlsafe(32)
             logger.warning(

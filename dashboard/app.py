@@ -28,6 +28,12 @@ def require_api_key(f):
     return decorated
 
 
+@app.route("/api/health", methods=["GET"])
+def health():
+    """Endpoint público para verificar que el servidor está vivo."""
+    return jsonify({"status": "ok", "provider": Config.DEFAULT_PROVIDER})
+
+
 @app.route("/api/ask", methods=["POST"])
 @require_api_key
 def ask():
@@ -61,12 +67,9 @@ def learn():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok", "provider": Config.DEFAULT_PROVIDER})
-
-
 if __name__ == "__main__":
+    Config.validate()
+
     logger.info(
         "🚀 Dashboard iniciado en http://%s:%s",
         Config.DASHBOARD_HOST,
