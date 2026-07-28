@@ -119,11 +119,24 @@ class IntentAnalyzer:
                 {"request": query},
             )
 
-        # Detección de planificación autónoma
+        # ------------------------------------------------------------
+        # 5. DETECCIÓN DE ESPECIFICACIONES (SDD)
+        # ------------------------------------------------------------
+        if re.search(r"\b(spec|especificación|sdd)\b", q) and re.search(
+            r"\b(crea|genera|nuevo|ejecuta)\b", q
+        ):
+            return IntentResult("plan", {"original_task": query, "mode": "spec"})
+
+        # ------------------------------------------------------------
+        # 6. DETECCIÓN DE PLANIFICACIÓN AUTÓNOMA (genérica)
+        # ------------------------------------------------------------
         if re.search(
             r"\b(plan|planifica|descompone|autónomo|autonomo|complejo|multi-paso|plan de acción)\b",
             q,
         ):
             return IntentResult("plan", {"original_task": query})
 
+        # ------------------------------------------------------------
+        # 7. SIN INTENCIÓN DETECTADA
+        # ------------------------------------------------------------
         return IntentResult(None, None)

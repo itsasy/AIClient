@@ -1,21 +1,26 @@
 import json
 import logging
-
 from agents.base import Agent
+from core.spec_manager import SpecManager
+from core.engram_memory import EngramMemory
 from llm.provider_manager import ProviderManager
 from llm.provider_selector import ProviderSelector
 from skills.manager import SkillManager
+from agents.self_critic import SelfCriticAgent
 
 logger = logging.getLogger(__name__)
 
 
 class PlannerAgent(Agent):
     name = "planner"
-    role = "Planificador y Ejecutor Autónomo"
+    role = "Planificador y Ejecutor Autónomo con SDD"
 
     def __init__(self):
         self.skill_manager = SkillManager()
         self.provider_manager = ProviderManager()
+        self.spec_manager = SpecManager()
+        self.engram = EngramMemory()
+        self.critic = SelfCriticAgent()
 
     def process(
         self,
@@ -24,92 +29,241 @@ class PlannerAgent(Agent):
         skill_name: str = None,
         skill_params: dict = None,
     ) -> str:
-        # 1. Generar el plan usando el LLM directamente (sin detección de skills)
-        selected_provider = ProviderSelector.select(task=task, skill_name="plan")
+        """
+        Procesa una tarea de planificación.
+        Si se proporciona una spec (por nombre o ID), la carga y genera un plan.
+        Si no, intenta generar una spec a partir de la tarea.
+        """
+        # 1. Detectar si el usuario menciona una spec existente
+        spec_name = self._extract_spec_name(task)
+        if spec_name:
+            spec = self.spec_manager.load_spec_by_name(spec_name)
+            if spec:
+                logger.info("Cargando Spec existente: %s", spec_name)
+                return self._execute_spec(spec, context)
+            else:
+                return f"⚠️ No se encontró la especificación '{spec_name}'. ¿Quieres crearla?"
 
-        prompt = f"""Eres un planificador autónomo. Descompón la siguiente tarea en pasos ejecutables utilizando las skills disponibles.
+        # 2. Si no hay spec, generar una a partir de la tarea y luego ejecutarla
+        logger.info("Generando nueva Spec a partir de la tarea: %s", task[:100])
+        spec = self._generate_spec_from_task(task, context)
+        if not spec:
+            return "❌ No se pudo generar una especificación válida para la tarea."
 
-Skills disponibles: shell, docker, laravel_project, full_project, analyze, code, readme, analyze_project, execute_code, sandbox.
+        # Guardar la spec generada
+        self.spec_manager.save_spec(
+            name=spec["name"],
+            description=spec["description"],
+            objective=spec["objective"],
+            criteria=spec["criteria"],
+            constraints=spec.get("constraints", []),
+            steps=spec.get("steps", []),
+        )
+        return self._execute_spec(spec, context)
+
+    def _extract_spec_name(self, task: str) -> Optional[str]:
+        """Extrae el nombre de una spec de la tarea (ej. 'ejecuta spec mi_proyecto')."""
+        import re
+
+        match = re.search(
+            r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
+            task,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1)
+        return None
+
+    def _generate_spec_from_task(self, task: str, context: dict) -> dict:
+        """Usa el LLM para generar una Spec estructurada a partir de la tarea."""
+        provider, fallback_chain = ProviderSelector.select(task=task, skill_name="plan")
+        prompt = f"""
+Eres un arquitecto de software. A partir de la siguiente tarea del usuario, genera una especificación estructurada (Spec) en formato JSON.
 
 Tarea: {task}
 
-Contexto adicional:
-{context or "No hay contexto adicional."}
+Contexto adicional: {context or "No hay contexto adicional."}
 
-Devuelve SOLO un JSON válido con una lista de objetos con el siguiente formato:
-[
-    {{"skill": "shell", "params": {{"command": "ls -la"}}, "description": "Listar archivos del directorio"}},
-    {{"skill": "code", "params": {{"task": "genera una función de suma", "language": "python"}}, "description": "Generar código"}},
-    {{"skill": "analyze", "params": {{"code_snippet": "def foo(): pass"}}, "description": "Analizar el código"}}
-]
+La Spec debe tener estos campos:
+- name: nombre corto (sin espacios)
+- description: descripción detallada
+- objective: objetivo principal
+- criteria: lista de criterios de éxito (mínimo 3)
+- constraints: lista de restricciones (opcional, mínimo 1)
+- steps: lista de pasos sugeridos (cada paso con: description, skill, params)
 
-REGLAS:
-- Usa SOLO las skills listadas arriba.
-- Cada paso debe tener una descripción clara.
-- Si la tarea es simple, devuelve un solo paso.
-- Si es compleja, divídela en pasos lógicos y secuenciales.
-- No incluyas texto adicional fuera del JSON.
-- Asegúrate de que el JSON sea válido.
+Devuelve SOLO el JSON, sin texto adicional.
+Ejemplo:
+{{
+  "name": "mi_proyecto",
+  "description": "Crear un módulo de autenticación",
+  "objective": "Implementar registro, login y logout",
+  "criteria": ["Los usuarios pueden registrarse", "Los usuarios pueden iniciar sesión", "Los usuarios pueden cerrar sesión"],
+  "constraints": ["Usar JWT", "No usar librerías externas"],
+  "steps": [
+    {{"description": "Crear modelo User", "skill": "code", "params": {{"task": "Genera modelo User con campos email y password", "language": "python"}}}},
+    {{"description": "Crear endpoint de registro", "skill": "code", "params": {{"task": "Crea endpoint /register", "language": "python"}}}}
+  ]
+}}
 """
         try:
-            plan_text = self.provider_manager.generate(
-                prompt, provider_name=selected_provider
+            response = self.provider_manager.generate(
+                prompt, provider_name=provider, fallback_chain=fallback_chain
             )
-
-            # Extraer el JSON del texto (por si el LLM añade markdown o explicaciones)
-            start = plan_text.find("[")
-            end = plan_text.rfind("]") + 1
+            # Extraer JSON
+            start = response.find("{")
+            end = response.rfind("}") + 1
             if start != -1 and end != -1:
-                plan_text = plan_text[start:end]
-
-            plan = json.loads(plan_text)
-            if not isinstance(plan, list):
-                raise ValueError("El plan no es una lista de pasos.")
-
+                spec = json.loads(response[start:end])
+                return spec
+            else:
+                raise ValueError("No se encontró JSON en la respuesta")
         except Exception as e:
-            logger.exception("Error generando o parseando el plan")
-            return f"❌ No se pudo generar un plan para la tarea.\nError: {e}\n\nRespuesta del LLM:\n{plan_text if 'plan_text' in locals() else 'Sin respuesta'}"
+            logger.exception("Error generando spec: %s", e)
+            return None
 
-        # 2. Ejecutar cada paso secuencialmente
+    def _execute_spec(self, spec: dict, context: dict) -> str:
+        """
+        Ejecuta una spec: genera un plan detallado y lo ejecuta paso a paso
+        utilizando subagentes con auto-corrección.
+        """
+        # 1. Actualizar estado a "executing"
+        self.spec_manager.update_status(spec["name"], "executing")
+
+        # 2. Generar un plan detallado a partir de la spec
+        plan = self._generate_plan_from_spec(spec, context)
+        if not plan:
+            self.spec_manager.update_status(spec["name"], "failed")
+            return f"❌ No se pudo generar un plan para la spec '{spec['name']}'."
+
+        # 3. Inicializar subagente
+        from core.subagent import Subagent
+
+        subagent = Subagent()
+
+        # 4. Ejecutar cada paso del plan con validación y reintentos
         results = []
         for i, step in enumerate(plan, 1):
+            desc = step.get("description", f"Paso {i}")
             skill = step.get("skill")
             params = step.get("params", {})
-            desc = step.get("description", f"Paso {i}: {skill}")
-
-            if not skill:
-                results.append(f"⚠️ **Paso {i}**: Skill no especificada. Saltando.")
-                continue
 
             logger.info("Ejecutando paso %d: %s (%s)", i, desc, skill)
 
+            # Ejecutar con subagente (retry + auto-corrección)
             try:
-                result = self.skill_manager.execute(skill, **params)
-                # Extraer la salida legible del resultado
-                if isinstance(result, dict):
-                    payload = result.get("payload", {})
-                    output = (
-                        payload.get("output") or payload.get("message") or str(result)
+                skill_result, eval_result = subagent.execute_with_retry(
+                    step_description=desc,
+                    skill_name=skill,
+                    params=params,
+                    context=context,
+                    max_retries=2,
+                )
+
+                # Extraer salida legible
+                output = subagent._extract_output(skill_result)
+                alignment = eval_result.get("alignment_score", 0) if eval_result else 0
+
+                if alignment >= 5:
+                    results.append(
+                        f"✅ **Paso {i} - {desc}** (Score: {alignment})\n{output[:500]}"
                     )
                 else:
-                    output = str(result)
+                    results.append(
+                        f"⚠️ **Paso {i} - {desc}** (Score: {alignment} - Bajo)\n{output[:500]}"
+                    )
+                    results.append(
+                        f"   💡 Corrección sugerida: {eval_result.get('course_correction_advice', 'Sin consejo')}"
+                    )
 
-                results.append(
-                    f"✅ **Paso {i} - {desc}**\n{output[:500]}"
-                )  # Limitar a 500 chars
+                # Guardar evaluación en Engram para trazabilidad
+                if eval_result:
+                    self.engram.save(
+                        f"Evaluación paso {i} - {desc}: Score {alignment}",
+                        tags=[
+                            "step_evaluation",
+                            f"spec_{spec['name']}",
+                            f"score_{alignment}",
+                        ],
+                    )
 
             except Exception as e:
-                logger.exception("Error ejecutando paso %d: %s", i, skill)
-                results.append(f"❌ **Paso {i} - {desc}** falló: {e}")
-                # Detener la ejecución en caso de error grave (opcional)
-                # break
+                logger.exception("Error crítico en paso %d: %s", i, skill)
+                results.append(f"❌ **Paso {i} - {desc}** falló críticamente: {e}")
+                # Podríamos detener la ejecución o continuar. Decidimos continuar.
 
-        # 3. Generar resumen final
-        if not results:
-            return "⚠️ No se generaron pasos para ejecutar."
+        # 5. Marcar estado final
+        failed_steps = [r for r in results if r.startswith("❌") or r.startswith("⚠️")]
+        if failed_steps:
+            self.spec_manager.update_status(spec["name"], "completed_with_issues")
+        else:
+            self.spec_manager.update_status(spec["name"], "completed")
 
-        summary = "## 📋 Plan ejecutado autónomamente\n\n"
+        # 6. Resumen final
+        summary = f"## 📋 Ejecución de Spec: {spec['name']}\n\n"
         summary += "\n\n---\n\n".join(results)
-        summary += "\n\n---\n\n✅ **Ejecución completada.**"
+        summary += "\n\n---\n\n✅ **Especificación ejecutada.**"
+
+        # Guardar el plan y los resultados en Engram
+        self.engram.save(
+            f"Plan ejecutado para spec {spec['name']}: {summary[:500]}",
+            tags=["plan_execution", f"spec_{spec['name']}", "sdd"],
+        )
 
         return summary
+
+    def _generate_plan_from_spec(self, spec: dict, context: dict) -> list:
+        """
+        Genera un plan detallado (lista de pasos) a partir de la Spec.
+        """
+        provider, fallback_chain = ProviderSelector.select(
+            task="plan_generation", skill_name="plan"
+        )
+        prompt = f"""
+Eres un planificador de desarrollo. A partir de la siguiente especificación (Spec), genera un plan detallado de pasos ejecutables.
+
+Spec:
+{json.dumps(spec, ensure_ascii=False, indent=2)}
+
+Contexto adicional: {context or "No hay contexto adicional."}
+
+El plan debe ser una lista de objetos, cada uno con:
+- description: descripción del paso
+- skill: nombre de la skill (shell, code, analyze, docker, laravel_project, etc.)
+- params: diccionario de parámetros para la skill
+
+Devuelve SOLO un JSON con la lista de pasos.
+Ejemplo:
+[
+  {{"description": "Crear modelo de usuario", "skill": "code", "params": {{"task": "Genera modelo User", "language": "python"}}}},
+  {{"description": "Crear endpoint de registro", "skill": "code", "params": {{"task": "Crea endpoint /register", "language": "python"}}}}
+]
+"""
+        try:
+            response = self.provider_manager.generate(
+                prompt, provider_name=provider, fallback_chain=fallback_chain
+            )
+            start = response.find("[")
+            end = response.rfind("]") + 1
+            if start != -1 and end != -1:
+                plan = json.loads(response[start:end])
+                return plan
+            else:
+                raise ValueError("No se encontró JSON en la respuesta")
+        except Exception as e:
+            logger.exception("Error generando plan: %s", e)
+            return None
+
+    def _should_critic_step(self, step: dict, result: any) -> bool:
+        """Decide si un paso merece ser evaluado por SelfCritic."""
+        # Evaluar solo pasos importantes (code, analyze, project)
+        skill = step.get("skill")
+        if skill in (
+            "code",
+            "analyze",
+            "analyze_project",
+            "laravel_project",
+            "full_project",
+        ):
+            return True
+        return False

@@ -1,12 +1,14 @@
 import json
 import logging
 import os
+from typing import Optional
 
 from core.config import Config
 from core.context_builder import ContextBuilder
 from core.memory import ConversationMemory
 from core.engram_memory import EngramMemory
 from core.learner import ContinuousLearner
+from core.spec_manager import SpecManager
 from agents.manager import AgentManager
 from agents.self_critic import SelfCriticAgent
 from llm.intent_analyzer import IntentAnalyzer
@@ -20,7 +22,7 @@ class Orchestrator:
 
     Coordina el flujo completo:
     1. Análisis de intención
-    2. Construcción de contexto (proyecto + Obsidian + Engram)
+    2. Construcción de contexto (proyecto + Obsidian + Engram + Specs)
     3. Delegación al agente (genera respuesta)
     4. Auto-evaluación (Self-Critic) si está habilitada
     5. Aprendizaje continuo (detecta correcciones del usuario)
@@ -34,8 +36,9 @@ class Orchestrator:
         self.learner = ContinuousLearner()
         self.critic = SelfCriticAgent()
         self.engram = EngramMemory()
+        self.spec_manager = SpecManager()
 
-        logger.info("Orchestrator iniciado con Engram + Self-Critic")
+        logger.info("Orchestrator iniciado con Engram + Self-Critic + SDD (Specs)")
 
     def process(self, task: str) -> str:
         """
@@ -67,14 +70,22 @@ class Orchestrator:
             )
 
         # ------------------------------------------------------------
-        # 4. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
+        # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
+        # ------------------------------------------------------------
+        spec = self._find_relevant_spec(task)
+        if spec:
+            context["spec"] = json.dumps(spec, ensure_ascii=False, indent=2)
+            logger.info("Spec encontrada y añadida al contexto: %s", spec.get("name"))
+
+        # ------------------------------------------------------------
+        # 5. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
         # ------------------------------------------------------------
         memory = self.memory.get_context()
         if memory:
             context["memory"] = memory
 
         # ------------------------------------------------------------
-        # 5. DELEGACIÓN AL AGENTE (genera la respuesta)
+        # 6. DELEGACIÓN AL AGENTE (genera la respuesta)
         # ------------------------------------------------------------
         response = self.agent_manager.delegate(
             task=task,
@@ -84,12 +95,12 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 6. SELF-CRITIC (auto-evaluación de la respuesta)
+        # 7. SELF-CRITIC (auto-evaluación de la respuesta)
         # ------------------------------------------------------------
         if self._should_critic(task):
             eval_result = self.critic.process(task, context, response)
             if eval_result:
-                # 6a. Guardar evaluación en Engram
+                # 7a. Guardar evaluación en Engram
                 self.engram.save(
                     json.dumps(eval_result, ensure_ascii=False),
                     tags=[
@@ -105,7 +116,7 @@ class Orchestrator:
                     eval_result.get("hallucination_risk"),
                 )
 
-                # 6b. Enriquecer la respuesta con el resumen del crítico
+                # 7b. Enriquecer la respuesta con el resumen del crítico
                 summary = eval_result.get("summary", "Evaluación no disponible.")
                 critic_footer = f"\n\n---\n🤖 **Self-Critic:** {summary}"
 
@@ -117,7 +128,7 @@ class Orchestrator:
                 response = response + critic_footer
 
         # ------------------------------------------------------------
-        # 7. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
+        # 8. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
         # ------------------------------------------------------------
         if self.learner.extract_and_learn(task, response):
             logger.info("Nuevo estándar aprendido. Guardando también en Engram.")
@@ -128,7 +139,7 @@ class Orchestrator:
             )
 
         # ------------------------------------------------------------
-        # 8. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
+        # 9. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
         # ------------------------------------------------------------
         # Guardar la consulta del usuario
         self.engram.save(
@@ -142,12 +153,12 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 9. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
+        # 10. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
         # ------------------------------------------------------------
         self.memory.add(task, response)
 
         # ------------------------------------------------------------
-        # 10. DEVOLVER RESPUESTA AL USUARIO
+        # 11. DEVOLVER RESPUESTA AL USUARIO
         # ------------------------------------------------------------
         return response
 
@@ -176,8 +187,36 @@ class Orchestrator:
             "complejo",
             "especificación",
             "spec",
+            "sdd",
             "refactor",
             "migra",
             "estructura",
         ]
         return any(k in task.lower() for k in keywords)
+
+    def _find_relevant_spec(self, task: str) -> Optional[dict]:
+        """
+        Busca una Spec relevante para la tarea (por nombre o contenido).
+        """
+        import re
+
+        # 1. Buscar por nombre explícito
+        match = re.search(
+            r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
+            task,
+            re.IGNORECASE,
+        )
+        if match:
+            spec_name = match.group(1)
+            return self.spec_manager.load_spec_by_name(spec_name)
+
+        # 2. Si no, buscar por contenido semántico (usando Engram)
+        memories = self.engram.recall(task, limit=3)
+        for m in memories:
+            try:
+                data = json.loads(m.get("content", "{}"))
+                if data.get("type") == "spec":
+                    return data
+            except json.JSONDecodeError:
+                continue
+        return None
