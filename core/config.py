@@ -97,6 +97,9 @@ class Config:
     # ----- Self-Critic -----
     ENABLE_SELF_CRITIC = os.getenv("ENABLE_SELF_CRITIC", "true").lower() == "true"
 
+    # ----- Continuous Learner -----
+    LEARNER_BACKEND = os.getenv("LEARNER_BACKEND", "both")  # "engram", "legacy", "both"
+
     @classmethod
     def validate(cls) -> None:
         """Valida la configuración y genera claves si faltan."""

@@ -14,125 +14,104 @@ logger = logging.getLogger(__name__)
 
 
 class ProviderManager:
-    def __init__(self):
-        self._factories: dict[
-            str,
-            Callable[[], LLMProvider],
-        ] = {}
+    """
+    Gestiona los proveedores LLM y ejecuta la cadena de fallbacks.
 
+    Registra fábricas de proveedores y permite ejecutar generaciones
+    con una cadena de fallbacks personalizada o por defecto.
+    """
+
+    def __init__(self):
+        self._factories: dict[str, Callable[[], LLMProvider]] = {}
         self._register_default_providers()
 
     def _register_default_providers(self) -> None:
+        """Registra los proveedores disponibles en el sistema."""
         from llm.gemini import GeminiProvider
         from llm.nim import NVIDIAProvider
+        from llm.deepseek import DeepSeekProvider
 
-        self.register(
-            "gemini",
-            GeminiProvider,
-        )
+        self.register("gemini", GeminiProvider)
+        self.register("nim", NVIDIAProvider)
+        self.register("deepseek", DeepSeekProvider)
 
-        self.register(
-            "nim",
-            NVIDIAProvider,
-        )
+        logger.info("Proveedores registrados: gemini, nim, deepseek")
 
-    def register(
-        self,
-        name: str,
-        factory: Callable[[], LLMProvider],
-    ) -> None:
+    def register(self, name: str, factory: Callable[[], LLMProvider]) -> None:
+        """Registra un nuevo proveedor LLM."""
         normalized_name = name.strip().lower()
-
         self._factories[normalized_name] = factory
 
     def generate(
         self,
         prompt: str,
         provider_name: str | None = None,
+        fallback_chain: list[str] | None = None,
         **kwargs,
     ) -> str:
-        provider_chain = self._build_provider_chain(
-            provider_name,
-        )
+        """
+        Genera una respuesta usando el proveedor primario y sus fallbacks.
 
-        logger.info(
-            "Cadena de providers: %s",
-            " -> ".join(provider_chain),
-        )
+        Args:
+            prompt: El prompt a enviar.
+            provider_name: Proveedor primario solicitado (opcional).
+            fallback_chain: Lista ordenada de proveedores de respaldo.
+                           Si es None, se usa la cadena por defecto de Config.
+            **kwargs: Argumentos adicionales para el proveedor.
+
+        Returns:
+            str: Respuesta generada.
+
+        Raises:
+            AllProvidersFailedError: Si todos los proveedores fallan.
+        """
+        # Construir la cadena de proveedores
+        if fallback_chain is None:
+            # Cadena por defecto: primario + fallbacks globales
+            primary = (provider_name or Config.DEFAULT_PROVIDER).strip().lower()
+            chain = [primary]
+            for fallback in Config.FALLBACK_PROVIDERS:
+                norm_fallback = fallback.strip().lower()
+                if norm_fallback and norm_fallback not in chain:
+                    chain.append(norm_fallback)
+        else:
+            # Usar la cadena personalizada, asegurando que el primario esté primero
+            if provider_name:
+                # Asegurar que el primario está al inicio
+                if provider_name not in fallback_chain:
+                    chain = [provider_name] + fallback_chain
+                else:
+                    # Mover el primario al inicio
+                    chain = [provider_name] + [
+                        p for p in fallback_chain if p != provider_name
+                    ]
+            else:
+                chain = fallback_chain
+
+        logger.info("Cadena de proveedores: %s", " -> ".join(chain))
 
         errors: dict[str, Exception] = {}
 
-        for name in provider_chain:
+        for name in chain:
             try:
-                logger.info(
-                    "Intentando provider: %s",
-                    name,
-                )
-
+                logger.info("Intentando proveedor: %s", name)
                 provider = self._create_provider(name)
-
-                response = provider.generate(
-                    prompt,
-                    **kwargs,
-                )
-
-                logger.info(
-                    "Provider completado correctamente: %s",
-                    name,
-                )
-
+                response = provider.generate(prompt, **kwargs)
+                logger.info("Proveedor completado: %s", name)
                 return response
 
             except ProviderError as exc:
                 errors[name] = exc
-
-                logger.warning(
-                    "Provider %s falló: %s",
-                    name,
-                    exc,
-                )
-
+                logger.warning("Proveedor %s falló: %s", name, exc)
             except Exception as exc:
                 errors[name] = exc
-
-                logger.exception(
-                    "Error inesperado en provider %s.",
-                    name,
-                )
+                logger.exception("Error inesperado en proveedor %s.", name)
 
         raise AllProvidersFailedError(errors)
 
-    def _create_provider(
-        self,
-        name: str,
-    ) -> LLMProvider:
+    def _create_provider(self, name: str) -> LLMProvider:
+        """Crea una instancia del proveedor solicitado."""
         factory = self._factories.get(name)
-
         if factory is None:
-            raise ProviderError(
-                f"Provider desconocido: {name}"
-            )
-
+            raise ProviderError(f"Proveedor desconocido: {name}")
         return factory()
-
-    def _build_provider_chain(
-        self,
-        provider_name: str | None,
-    ) -> list[str]:
-        primary = (
-            provider_name
-            or Config.DEFAULT_PROVIDER
-        ).strip().lower()
-
-        chain = [primary]
-
-        for fallback in Config.FALLBACK_PROVIDERS:
-            normalized_fallback = fallback.strip().lower()
-
-            if (
-                normalized_fallback
-                and normalized_fallback not in chain
-            ):
-                chain.append(normalized_fallback)
-
-        return chain
