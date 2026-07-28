@@ -1,25 +1,39 @@
-# 📘 Guía de Instalación y Configuración de AIClient
+# 📘 Guía de Instalación y Configuración de AIClient (v1.0)
 
-**AIClient** es un asistente personal de desarrollo que integra múltiples LLMs (Gemini, NVIDIA NIM), un segundo cerebro basado en Obsidian, memoria persistente, skills y agentes, todo accesible desde la terminal. Esta guía documenta la instalación completa, requisitos y configuración utilizada para lograr su funcionamiento en **WSL (Ubuntu)** y desde **Windows (PowerShell/CMD/VS Code)**.
+**AIClient** es un asistente personal de desarrollo con **memoria persistente**, **selección inteligente de LLMs**, **planificación autónoma (SDD)**, **auto‑evaluación (Self‑Critic)**, **ingesta de documentos e imágenes**, y una **interfaz TUI** interactiva. Esta guía cubre la instalación completa, configuración y verificación del sistema.
 
 ---
 
 ## 🧩 Requisitos previos
 
-- **Sistema operativo:** Windows 10/11 con WSL2 habilitado.
-- **Distribución WSL:** Ubuntu 22.04 o superior.
-- **Python:** 3.11 o superior instalado en WSL.
-- **Git:** Para clonar el repositorio.
+- **Sistema operativo:** Windows 10/11 con WSL2, Linux, o macOS.
+- **Python:** 3.11 o superior.
+- **Git:** Para clonar el repositorio (opcional si usas `pip`).
 - **Conexión a Internet:** Para descargar dependencias y acceder a las APIs de LLM.
 - **Claves de API:** 
   - Gemini API Key (obligatoria)
+  - DeepSeek API Key (recomendada para código barato)
   - NVIDIA NIM API Key (opcional, para fallback)
+- **Docker:** (opcional) para el sandbox aislado y proyectos con Sail.
+- **Composer:** (opcional) para proyectos Laravel.
 
 ---
 
-## 📦 1. Clonar el proyecto
+## 🚀 Instalación rápida (recomendada)
 
-Dentro de WSL:
+```bash
+# Instalar desde PyPI (cuando esté publicado)
+pip install aiclient
+
+# O desde el código fuente
+git clone https://github.com/tu_usuario/aiclient
+cd aiclient
+pip install -e .
+```
+
+---
+
+## 📦 1. Clonar el proyecto (si no usas pip)
 
 ```bash
 cd ~
@@ -35,223 +49,219 @@ cd AIClient
 
 ```bash
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate   # Linux/macOS
+# o venv\Scripts\activate  # Windows
 ```
 
 ---
 
-## 📚 3. Instalar dependencias
+## 📚 3. Instalar dependencias base
 
-Con el entorno activado (`(venv)` aparece en el prompt):
+Con el entorno activado:
 
 ```bash
 pip install --upgrade pip
 pip install python-dotenv google-genai requests openai flask beautifulsoup4
+pip install pypdf python-docx pillow   # Para ingesta de documentos
+pip install textual rich               # Para TUI y salida visual
 ```
 
-> **Nota:** Estas son las dependencias mínimas. Si usas el dashboard o scraping, instala también `flask` y `beautifulsoup4`. Si solo usas el CLI, `flask` no es estrictamente necesario, pero se incluye para evitar errores de importación.
+> **Nota:** `textual` y `rich` son opcionales pero muy recomendados para la TUI y la salida en tablas.
 
 ---
 
-## ⚙️ 4. Configurar variables de entorno
+## ⚙️ 4. Configurar variables de entorno (`.env`)
 
 Crea un archivo `.env` en la raíz del proyecto con el siguiente contenido (ajusta las claves y rutas):
 
 ```bash
-cat > .env << EOF
+# ============================================================
+# AIClient - Variables de entorno (v1.0)
+# ============================================================
+
+# --- Claves API ---
 GEMINI_API_KEY=tu_api_key_aqui
-NVIDIA_API_KEY=tu_api_key_nvidia_aqui
-DEFAULT_PROVIDER=nim
-CODE_PROVIDER=nim
-ARCHITECTURE_PROVIDER=nim
-DOCUMENTATION_PROVIDER=nim
-FALLBACK_PROVIDERS=gemini
+DEEPSEEK_API_KEY=tu_api_key_deepseek_aqui
+NVIDIA_API_KEY=tu_api_key_nvidia_aqui   # Opcional
+
+# --- Modelos por defecto ---
+GEMINI_MODEL=gemini-2.5-flash
+DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_CODER_MODEL=deepseek-coder
+NVIDIA_MODEL=meta/llama-3.1-70b-instruct
+
+# --- Proveedores primarios por categoría ---
+DEFAULT_PROVIDER=gemini
+CODE_PROVIDER=deepseek
+ARCHITECTURE_PROVIDER=gemini
+FAST_PROVIDER=gemini_flash
+
+# --- Fallbacks por categoría (orden de prioridad) ---
+DEFAULT_FALLBACKS=nim,deepseek
+CODE_FALLBACKS=nim,gemini
+ARCHITECTURE_FALLBACKS=deepseek,nim
+FAST_FALLBACKS=deepseek
+
+# --- Timeouts ---
 SHELL_TIMEOUT=300
 DOCKER_TIMEOUT=120
+LARAVEL_TIMEOUT=600
+
+# --- Obsidian (segundo cerebro) ---
 OBSIDIAN_VAULT_PATH=~/Workspace/AIClient/obsidian_vault
-EOF
-```
 
-**Explicación de variables:**
-- `GEMINI_API_KEY` → Clave de Google Gemini (obligatoria si usas este proveedor).
-- `NVIDIA_API_KEY` → Clave de NVIDIA NIM (opcional, recomendada como fallback).
-- `DEFAULT_PROVIDER` → Proveedor principal (gemini o nim).
-- `CODE_PROVIDER`, `ARCHITECTURE_PROVIDER`, `DOCUMENTATION_PROVIDER` → Proveedores específicos por skill.
-- `FALLBACK_PROVIDERS` → Lista de proveedores de respaldo en orden de prioridad.
-- `SHELL_TIMEOUT` → Tiempo máximo (segundos) para comandos shell (recomendado: 180-300).
-- `DOCKER_TIMEOUT` → Tiempo máximo (segundos) para comandos Docker (recomendado: 120).
-- `OBSIDIAN_VAULT_PATH` → Ruta al vault de Obsidian (opcional).
+# --- Engram (memoria persistente) ---
+ENGRAM_DB_PATH=./engram_memory.db
+ENGRAM_BINARY=engram
+ENGRAM_ASYNC_SAVE=true
+ENGRAM_AUTO_CONTEXT=true
 
----
+# --- Self-Critic (auto-evaluación) ---
+ENABLE_SELF_CRITIC=true
 
-## 🛠️ 5. Aplicar los parches necesarios
+# --- Modo seguro / potente ---
+POWER_MODE=safe   # "safe" o "powerful"
 
-### A. Modificar `pyproject.toml`
+# --- Dashboard ---
+DASHBOARD_API_KEY=tu_clave_dashboard_aqui  # Se genera automáticamente si se deja vacía
+DASHBOARD_DEBUG=false
+DASHBOARD_HOST=127.0.0.1
+DASHBOARD_PORT=5000
 
-Para evitar el error de "múltiples paquetes top-level", reemplaza el contenido con:
+# --- Sandbox (Docker) ---
+SANDBOX_TIMEOUT=30
+SANDBOX_MEMORY=128m
+SANDBOX_CPU=0.5
+SANDBOX_IMAGE=python:3.11-slim
 
-```toml
-[project]
-name = "aiclient"
-version = "0.1.0"
-description = "Cliente IA Personal - Fase 1"
-requires-python = ">=3.11"
-dependencies = [
-    "requests",
-    "python-dotenv",
-    "google-genai>=2.10.0",
-]
+# --- Gemini Vision (para imágenes) ---
+GEMINI_VISION_MODEL=gemini-2.0-flash-exp
 
-[dependency-groups]
-dev = [
-    "black",
-    "ruff",
-    "ipykernel",
-]
-
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[tool.setuptools]
-packages = ["cli", "core", "llm", "skills", "agents", "obsidian", "dashboard"]
-```
-
-### B. Agregar `DOCUMENTATION_PROVIDER` y `TARGET_PROJECT_ROOT` en `core/config.py`
-
-Añade estas líneas después de `ARCHITECTURE_PROVIDER`:
-
-```python
-DOCUMENTATION_PROVIDER = os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
-SHELL_TIMEOUT = int(os.getenv("SHELL_TIMEOUT", "180"))
-DOCKER_TIMEOUT = int(os.getenv("DOCKER_TIMEOUT", "120"))
-```
-
-Y declara al inicio de la clase:
-
-```python
-TARGET_PROJECT_ROOT = PROJECT_ROOT
-```
-
-### C. Hacer que el asistente respete el directorio actual del usuario
-
-**En `cli/ai.py`,** justo después de importar `Config`, añade:
-
-```python
-Config.TARGET_PROJECT_ROOT = Path.cwd()
-```
-
-**En `core/project_inspector.py`,** cambia:
-
-```python
-root = Config.PROJECT_ROOT
-```
-por:
-```python
-root = Config.TARGET_PROJECT_ROOT
-```
-
-**En `skills/tools/shell.py` y `skills/tools/docker.py`,** cambia el `cwd` de `subprocess.run` para que use `Config.TARGET_PROJECT_ROOT` y `timeout` para que use `Config.SHELL_TIMEOUT` / `Config.DOCKER_TIMEOUT`.
-
-### D. Ampliar extensiones de proyecto en `ProjectInspector`
-
-En `core/project_inspector.py`, reemplaza `INCLUDED_EXTENSIONS` por:
-
-```python
-INCLUDED_EXTENSIONS = {
-    ".py", ".toml", ".md",
-    ".php", ".json", ".js", ".css", ".html",
-    ".yml", ".yaml", ".xml", ".sh", ".env",
-    ".lock", ".ini", ".vue", ".ts", ".jsx", ".tsx"
-}
-```
-
-### E. Registrar skills de proyectos
-
-Si quieres usar `laravel_project`, regístrala en `skills/manager.py`:
-
-```python
-from skills.projects.laravel import LaravelProjectSkill
-...
-self.skills["laravel_project"] = LaravelProjectSkill()
-```
-
-### F. (Opcional) Mejorar `LaravelProjectSkill` para eliminar directorios existentes
-
-Reemplaza `skills/projects/laravel.py` con la versión que incluye:
-
-```python
-import shutil
-from pathlib import Path
-
-# Antes de ejecutar composer, eliminar el directorio si existe
-project_path = Path.cwd() / name
-if project_path.exists():
-    shutil.rmtree(project_path)
+# --- Aprendizaje continuo ---
+LEARNER_BACKEND=both   # "engram", "legacy", "both"
 ```
 
 ---
 
-## 🔗 6. Crear alias en WSL
+## 🛠️ 5. Instalar Engram (memoria persistente)
 
-Para ejecutar `ai` desde cualquier lugar sin activar el entorno virtual, añade al final de `~/.bashrc`:
+Engram es un binario externo que proporciona la memoria persistente. Instálalo según tu sistema:
+
+### Con Homebrew (macOS/Linux)
+```bash
+brew tap gentleman-programming/tap
+brew install engram
+```
+
+### Con Go (si tienes Go 1.24+)
+```bash
+go install github.com/Gentleman-Programming/engram/cmd/engram@latest
+export PATH=$PATH:~/go/bin
+```
+
+### Descarga manual
+Descarga el binario para tu sistema desde:  
+[https://github.com/Gentleman-Programming/engram/releases](https://github.com/Gentleman-Programming/engram/releases)  
+y colócalo en una carpeta del PATH (ej. `/usr/local/bin/`).
+
+Verifica que esté instalado:
+```bash
+engram --version
+```
+
+---
+
+## 🔗 6. Crear alias en WSL (opcional)
+
+Para ejecutar `ai` desde cualquier lugar sin activar el entorno virtual:
 
 ```bash
 echo 'alias ai="/home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-> Sustituye `/home/tu_usuario` por tu nombre de usuario real.
-
 ---
 
-## 🪟 7. Crear script puente para Windows (CORREGIDO)
+## 🪟 7. Script puente para Windows
 
-Crea el archivo `C:\Windows\System32\ai.cmd` con el siguiente contenido (esto maneja correctamente argumentos con espacios):
+Crea `C:\Windows\System32\ai.cmd` con:
 
 ```cmd
 @echo off
+setlocal enabledelayedexpansion
 set CWD=%CD%
-set ARGS=%*
-set ARGS=%ARGS:"=%
-wsl bash -ic "cd \"$(wslpath -u '%CWD%')\" && /home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py \"%ARGS%\""
-```
-
-**Si `wslpath` no funciona en tu sistema**, usa esta alternativa:
-
-```cmd
-@echo off
-set CWD=%CD:\=/%
+set CWD=%CWD:\=/%
 set CWD=%CWD:C:=/mnt/c%
-set ARGS=%*
-set ARGS=%ARGS:"=%
-wsl bash -ic "cd '%CWD%' && /home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py \"%ARGS%\""
+set ARGS=
+:loop
+if "%~1"=="" goto :endloop
+set ARG=%~1
+set ARG=%ARG:"=%
+set ARGS=%ARGS% "%ARG%"
+shift
+goto loop
+:endloop
+wsl bash -ic "cd '%CWD%' && /home/tu_usuario/Workspace/AIClient/venv/bin/python /home/tu_usuario/Workspace/AIClient/cli/ai.py%ARGS%"
 ```
-
-**Nota:** Sustituye `/home/tu_usuario` por tu ruta real de WSL.
 
 ---
 
 ## ✅ 8. Verificar instalación
 
-- **Desde WSL:** `ai --help`
-- **Desde PowerShell/CMD:** `ai --help`
+```bash
+ai --help
+```
 
-Deberías ver la ayuda del asistente sin errores de importación.
+Deberías ver la ayuda con todos los subcomandos:
+
+```
+usage: ai [-h] [--chat] [--tui] [--memory ...] [--status] [--specs] [--ingest ...] [--forget ...] [query ...]
+```
 
 ---
 
 ## 🧪 9. Prueba de funcionamiento
 
+### Consulta básica
 ```bash
-# Respuesta del LLM
-ai "hola"
+ai "Hola, ¿cómo estás?"
+```
 
-# Ejecutar comandos en el directorio actual (WSL o Windows)
-ai "ejecuta git status"
+### Búsqueda en memoria
+```bash
+ai --memory "proyecto"
+```
 
-# Crear proyecto Laravel real (se crea en el directorio actual)
-ai "crea un proyecto laravel llamado prueba"
+### Estado del sistema
+```bash
+ai --status
+```
+
+### Listar especificaciones
+```bash
+ai --specs
+```
+
+### Ingerir un documento
+```bash
+ai --ingest manual.pdf
+ai --ingest imagen.png   # Usa Gemini Vision para describirla
+```
+
+### Modo TUI (interfaz interactiva)
+```bash
+ai --tui
+```
+
+### Modo chat interactivo
+```bash
+ai --chat
+```
+
+### Crear y ejecutar una especificación (SDD)
+```bash
+ai "crea una spec para un sistema de tickets con autenticación JWT"
+ai "ejecuta spec tickets_jwt"
 ```
 
 ---
@@ -261,27 +271,50 @@ ai "crea un proyecto laravel llamado prueba"
 ```
 ~/Workspace/AIClient/
 ├── cli/
-│   └── ai.py
+│   └── ai.py                   # CLI con subcomandos
 ├── core/
-│   ├── config.py
-│   ├── orchestrator.py
-│   ├── project_inspector.py
+│   ├── config.py               # Configuración central
+│   ├── orchestrator.py         # Orquestador principal
+│   ├── engram_memory.py        # Cliente Engram
+│   ├── document_ingestor.py    # Ingesta de documentos
+│   ├── spec_manager.py         # Gestión de especificaciones
+│   ├── learner.py              # Aprendizaje continuo
 │   └── ...
 ├── llm/
+│   ├── gemini.py
+│   ├── nim.py
+│   ├── deepseek.py
+│   ├── provider_selector.py
+│   ├── provider_manager.py
+│   ├── router.py
+│   └── prompt_builder.py
 ├── skills/
 │   ├── manager.py
-│   ├── projects/
-│   │   └── laravel.py
-│   └── tools/
-│       ├── shell.py
-│       └── docker.py
+│   ├── knowledge/ingest.py
+│   ├── projects/laravel.py
+│   ├── tools/{shell,docker}.py
+│   └── ...
 ├── agents/
+│   ├── manager.py
+│   ├── planner.py
+│   ├── self_critic.py
+│   └── ...
 ├── obsidian/
-├── venv/                 # Entorno virtual
-├── .env                  # Variables de entorno (NO subir a Git)
-├── .env.example          # Plantilla de variables (subir a Git)
-├── pyproject.toml        # Configuración de paquetes
-└── README.md
+│   ├── index.py
+│   ├── search.py
+│   ├── semantic.py
+│   └── rag.py
+├── tui/
+│   └── app.py                  # TUI con Textual
+├── dashboard/
+│   └── app.py                  # API REST con autenticación
+├── tests/
+│   └── test_integration.py
+├── venv/
+├── .env
+├── pyproject.toml
+├── README.md
+└── INSTALLATION.md
 ```
 
 ---
@@ -290,39 +323,40 @@ ai "crea un proyecto laravel llamado prueba"
 
 | Error | Solución |
 |-------|----------|
-| `ModuleNotFoundError: No module named 'dotenv'` | Instala las dependencias con `pip install python-dotenv google-genai requests openai flask beautifulsoup4` |
-| `Multiple top-level packages discovered` | Modifica `pyproject.toml` como se indica en el paso 5.A |
-| `Command 'docker' not found` | Instala Docker Desktop y habilita la integración con WSL2 |
-| `Permission denied` al ejecutar `composer` | Instala Composer en WSL con `sudo apt install composer` |
-| El alias no funciona en WSL | Asegúrate de que `~/.bashrc` se haya recargado con `source ~/.bashrc` |
-| Desde Windows no encuentra el comando `ai` | Verifica que `ai.cmd` esté en una carpeta del PATH (ej. `C:\Windows\System32`) |
-| `echo: unexpected EOF while looking for matching` | Usa la versión corregida de `ai.cmd` que maneja correctamente las comillas |
-| Proyecto Laravel falla por "directory not empty" | La skill mejorada elimina automáticamente el directorio existente, o elimina manualmente con `rm -rf nombre` |
-| Timeout en comandos largos | Ajusta `SHELL_TIMEOUT` en `.env` a un valor mayor (ej. 300) |
-| La consulta se trunca a la primera palabra | Verifica que `ai.cmd` use `%*` y las comillas escapadas como se indica en el paso 7 |
+| `ModuleNotFoundError: No module named 'textual'` | `pip install textual` |
+| `Engram no disponible` | Instala Engram (paso 5) o desactiva `ENGRAM_AUTO_CONTEXT` |
+| `DEEPSEEK_API_KEY no configurada` | Añade tu clave en `.env` o usa otro proveedor |
+| `Docker no encontrado en sandbox` | Instala Docker o desactiva el sandbox |
+| `No se puede describir imagen` | Verifica `GEMINI_API_KEY` y `GEMINI_VISION_MODEL` |
+| `La TUI no arranca` | `pip install textual` y ejecuta `ai --tui` en una terminal con soporte de colores |
 
 ---
 
-## 📦 Dependencias completas (versiones usadas)
+## 📦 Dependencias completas (versiones recomendadas)
 
-- Python 3.12.3
-- pip 24.0
+- Python 3.11+
+- pip 24.0+
 - python-dotenv 1.0.1
 - google-genai 2.10.0
-- requests 2.31.0
 - openai 1.12.0
+- requests 2.31.0
 - flask 3.0.2
 - beautifulsoup4 4.12.3
+- pypdf 5.0.0 (para PDFs)
+- python-docx 1.0.0 (para DOCX)
+- pillow 10.0.0 (para imágenes)
+- textual 0.50+ (para TUI)
+- rich 13.0+ (para salida visual)
 
 ---
 
 ## 📝 Notas finales
 
-- El asistente respeta el directorio actual desde donde se ejecuta, tanto en WSL como en Windows.
-- Puedes extender las skills agregando nuevas clases en `skills/` y registrándolas en `SkillManager`.
-- La memoria conversacional se almacena en `.history.json` en la raíz del proyecto.
-- El contexto del proyecto se construye a partir del directorio actual (`TARGET_PROJECT_ROOT`).
-- Los timeouts son configurables desde `.env` sin necesidad de modificar el código.
+- **Engram** es el corazón de la memoria persistente. Sin él, AIClient funciona con memoria de sesión limitada, pero recomendamos instalarlo.
+- **DeepSeek** es el proveedor más económico para código. Si no tienes clave, el sistema usará Gemini o NIM como fallback.
+- **Self‑Critic** se activa automáticamente en tareas complejas. Puedes desactivarlo con `ENABLE_SELF_CRITIC=false`.
+- **Modo seguro** bloquea comandos peligrosos (`sudo`, `rm -rf`). Cambia a `POWER_MODE=powerful` para desbloquearlos (bajo tu responsabilidad).
+- La **TUI** es la interfaz más completa. Úsala para sesiones largas de trabajo.
 
 ---
 

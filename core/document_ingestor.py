@@ -96,9 +96,7 @@ class DocumentIngestor:
                     source=f"ingestor_{ext[1:]}",
                 )
 
-            logger.info(
-                "✅ Documento ingerido: %s (%d fragmentos)", filename, len(chunks)
-            )
+            logger.info("✅ Documento ingerido: %s (%d fragmentos)", filename, len(chunks))
             return True
 
         except Exception as e:
@@ -129,35 +127,55 @@ class DocumentIngestor:
     def _describe_image(self, filepath: Path) -> str:
         """
         Describe una imagen usando Gemini Vision.
-        Si no está disponible, devuelve el nombre del archivo y dimensiones.
+        Si falla, devuelve una descripción básica con el nombre y dimensiones.
         """
         if not PILLOW_AVAILABLE:
             return f"Imagen: {filepath.name} (no se pudo procesar sin Pillow)"
 
         try:
-            # Intentar usar Gemini Vision si está disponible
-            from llm.gemini import GeminiProvider
+            # Importar cliente de Gemini directamente (usando google-genai)
+            from google import genai
+            from google.genai.types import Part
 
-            provider = GeminiProvider()
-
-            # Leer imagen
+            # Leer la imagen con Pillow
             img = Image.open(filepath)
-            # Convertir a bytes
+            # Convertir a bytes (formato PNG para mantener calidad)
             img_bytes = io.BytesIO()
-            img.save(img_bytes, format=img.format or "PNG")
+            img.save(img_bytes, format="PNG")
             img_data = img_bytes.getvalue()
 
-            # Prompt para Gemini
-            prompt = "Describe esta imagen en detalle. Incluye colores, objetos, contexto y cualquier texto visible."
-            # Gemini Vision requiere el contenido en un formato específico
-            # Aquí asumimos que GeminiProvider soporta imágenes (necesitarías adaptarlo)
-            # Como AIClient actualmente no tiene soporte directo para imágenes en GeminiProvider,
-            # usaremos un fallback simple.
-            # Por ahora, devolveremos una descripción básica.
-            return f"Imagen: {filepath.name} ({img.width}x{img.height} px). Se recomienda usar Gemini Vision para descripción detallada."
+            # Crear cliente de Gemini (usará la API key de Config)
+            client = genai.Client(api_key=Config.GEMINI_API_KEY)
+
+            # Prompt en español para la descripción
+            prompt = """
+            Describe esta imagen en detalle. Incluye:
+            - El contexto o escena general.
+            - Colores predominantes y composición.
+            - Objetos, personas o elementos principales.
+            - Cualquier texto visible (léelo si es posible).
+            - El estilo o tipo de imagen (fotografía, ilustración, captura de pantalla, etc.).
+            Sé conciso pero informativo, en español.
+            """
+
+            # Enviar la solicitud con la imagen
+            response = client.models.generate_content(
+                model=Config.GEMINI_VISION_MODEL,
+                contents=[Part.from_bytes(data=img_data, mime_type="image/png"), prompt],
+            )
+
+            description = response.text.strip()
+            if description:
+                return f"📷 Imagen: {filepath.name}\nDescripción: {description}"
+            else:
+                return f"Imagen: {filepath.name} (Gemini no devolvió descripción)"
+
+        except ImportError as e:
+            logger.warning("No se pudo importar genai o Pillow: %s", e)
+            return f"Imagen: {filepath.name} (dependencias faltantes)"
         except Exception as e:
-            logger.warning("No se pudo describir imagen con Gemini: %s", e)
-            return f"Imagen: {filepath.name} (no se pudo describir automáticamente)"
+            logger.warning("Error describiendo imagen con Gemini: %s", e)
+            return f"Imagen: {filepath.name} (no se pudo describir automáticamente: {str(e)[:100]})"
 
     def _chunk_text(self, text: str) -> List[str]:
         """Divide el texto en fragmentos superpuestos."""
