@@ -22,7 +22,7 @@ class Orchestrator:
 
     Coordina el flujo completo:
     1. Análisis de intención
-    2. Construcción de contexto (proyecto + Obsidian + Engram + Specs)
+    2. Construcción de contexto (proyecto + Obsidian + Engram + documentos)
     3. Delegación al agente (genera respuesta)
     4. Auto-evaluación (Self-Critic) si está habilitada
     5. Aprendizaje continuo (detecta correcciones del usuario)
@@ -38,7 +38,7 @@ class Orchestrator:
         self.engram = EngramMemory()
         self.spec_manager = SpecManager()
 
-        logger.info("Orchestrator iniciado con Engram + Self-Critic + SDD (Specs)")
+        logger.info("Orchestrator iniciado con Engram + Self-Critic + SpecManager")
 
     def process(self, task: str) -> str:
         """
@@ -55,22 +55,22 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 2. CONSTRUCCIÓN DE CONTEXTO (Proyecto + Obsidian)
+        # 2. CONSTRUCCIÓN DE CONTEXTO (centralizado en ContextBuilder)
+        #    Incluye: proyecto, Obsidian, Engram, documentos ingeridos
         # ------------------------------------------------------------
         context = self.context_builder.build(task)
 
-        # ------------------------------------------------------------
-        # 3. INYECCIÓN DE MEMORIA DE ENGRAM (persistente)
-        # ------------------------------------------------------------
-        engram_ctx = self.engram.get_context(task)
-        if engram_ctx:
-            context["engram"] = engram_ctx
-            logger.info(
-                "Contexto recuperado de Engram (%d caracteres)", len(engram_ctx)
-            )
+        # Nota: el contexto de Engram ya viene incluido por ContextBuilder.
+        # Si necesitas forzar una búsqueda adicional, puedes hacerlo aquí,
+        # pero por ahora lo dejamos comentado para evitar duplicación.
+        #
+        # if not context.get("engram"):
+        #     engram_ctx = self.engram.get_context(task)
+        #     if engram_ctx:
+        #         context["engram"] = engram_ctx
 
         # ------------------------------------------------------------
-        # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
+        # 3. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
         # ------------------------------------------------------------
         spec = self._find_relevant_spec(task)
         if spec:
@@ -78,14 +78,14 @@ class Orchestrator:
             logger.info("Spec encontrada y añadida al contexto: %s", spec.get("name"))
 
         # ------------------------------------------------------------
-        # 5. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
+        # 4. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
         # ------------------------------------------------------------
         memory = self.memory.get_context()
         if memory:
             context["memory"] = memory
 
         # ------------------------------------------------------------
-        # 6. DELEGACIÓN AL AGENTE (genera la respuesta)
+        # 5. DELEGACIÓN AL AGENTE (genera la respuesta)
         # ------------------------------------------------------------
         response = self.agent_manager.delegate(
             task=task,
@@ -95,12 +95,12 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 7. SELF-CRITIC (auto-evaluación de la respuesta)
+        # 6. SELF-CRITIC (auto-evaluación de la respuesta)
         # ------------------------------------------------------------
         if self._should_critic(task):
             eval_result = self.critic.process(task, context, response)
             if eval_result:
-                # 7a. Guardar evaluación en Engram
+                # 6a. Guardar evaluación en Engram
                 self.engram.save(
                     json.dumps(eval_result, ensure_ascii=False),
                     tags=[
@@ -116,7 +116,7 @@ class Orchestrator:
                     eval_result.get("hallucination_risk"),
                 )
 
-                # 7b. Enriquecer la respuesta con el resumen del crítico
+                # 6b. Enriquecer la respuesta con el resumen del crítico
                 summary = eval_result.get("summary", "Evaluación no disponible.")
                 critic_footer = f"\n\n---\n🤖 **Self-Critic:** {summary}"
 
@@ -128,7 +128,7 @@ class Orchestrator:
                 response = response + critic_footer
 
         # ------------------------------------------------------------
-        # 8. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
+        # 7. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
         # ------------------------------------------------------------
         if self.learner.extract_and_learn(task, response):
             logger.info("Nuevo estándar aprendido. Guardando también en Engram.")
@@ -139,7 +139,7 @@ class Orchestrator:
             )
 
         # ------------------------------------------------------------
-        # 9. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
+        # 8. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
         # ------------------------------------------------------------
         # Guardar la consulta del usuario
         self.engram.save(
@@ -153,12 +153,12 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 10. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
+        # 9. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
         # ------------------------------------------------------------
         self.memory.add(task, response)
 
         # ------------------------------------------------------------
-        # 11. DEVOLVER RESPUESTA AL USUARIO
+        # 10. DEVOLVER RESPUESTA AL USUARIO
         # ------------------------------------------------------------
         return response
 
@@ -187,10 +187,11 @@ class Orchestrator:
             "complejo",
             "especificación",
             "spec",
-            "sdd",
             "refactor",
             "migra",
             "estructura",
+            "código",
+            "analiza",
         ]
         return any(k in task.lower() for k in keywords)
 
@@ -200,7 +201,7 @@ class Orchestrator:
         """
         import re
 
-        # 1. Buscar por nombre explícito
+        # 1. Buscar por nombre explícito (ej. "spec mi_proyecto")
         match = re.search(
             r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
             task,

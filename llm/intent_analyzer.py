@@ -137,6 +137,20 @@ class IntentAnalyzer:
             return IntentResult("plan", {"original_task": query})
 
         # ------------------------------------------------------------
-        # 7. SIN INTENCIÓN DETECTADA
+        # 7. DETECCIÓN DE INGESTA DE DOCUMENTOS
+        # ------------------------------------------------------------
+        if re.search(
+            r"\b(ingiere|ingest|sube|carga|process|analiza)\b.*\b(documento|archivo|pdf|docx|imagen)\b",
+            q,
+        ):
+            # Extraer el nombre del archivo (ej. "ingiere documento.pdf")
+            file_match = re.search(
+                r"\b([\w\-\.]+\.(pdf|docx|txt|png|jpg|jpeg))\b", q, re.IGNORECASE
+            )
+            if file_match:
+                return IntentResult("ingest", {"filepath": file_match.group(1)})
+
+        # ------------------------------------------------------------
+        # 8. SIN INTENCIÓN DETECTADA
         # ------------------------------------------------------------
         return IntentResult(None, None)

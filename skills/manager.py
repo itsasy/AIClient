@@ -1,6 +1,7 @@
 from skills.projects.laravel import LaravelProjectSkill
 from skills.projects.full_generator import FullProjectGeneratorSkill
 from skills.code.project_analyzer import ProjectAnalyzerSkill
+from skills.knowledge.ingest import IngestDocumentSkill
 from skills.code.generate import GenerateCodeSkill
 from skills.code.executor import CodeExecutorSkill
 from skills.docs.readme import GenerateReadmeSkill
@@ -23,6 +24,7 @@ class SkillManager:
             "sandbox": CodeSandboxSkill(),
             "laravel_project": LaravelProjectSkill(),
             "full_project": FullProjectGeneratorSkill(),
+            "ingest": IngestDocumentSkill(),
         }
 
     def execute(self, skill_name: str, **kwargs):
