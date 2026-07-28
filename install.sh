@@ -1,7 +1,7 @@
 #!/bin/bash
 # ================================================================
 # AIClient - Script de instalación automatizada
-# (con Engram, DeepSeek, Self-Critic, CLI avanzado e ingesta)
+# (con Engram, DeepSeek, Self-Critic, CLI avanzado, TUI e ingesta)
 # ================================================================
 # Ejecutar: chmod +x install.sh && ./install.sh
 # ================================================================
@@ -40,16 +40,16 @@ else
 fi
 
 # ================================================================
-# 3. CLI AVANZADO (OPCIONAL)
+# 3. CLI AVANZADO + TUI (OPCIONAL)
 # ================================================================
 echo ""
-read -p "¿Instalar dependencias para CLI avanzado (rich, tablas coloreadas)? (s/N): " -n 1 -r
+read -p "¿Instalar dependencias para CLI avanzado (rich) y TUI (textual)? (s/N): " -n 1 -r
 echo ""
 if [[ $REPLY =~ ^[Ss]$ ]]; then
-    pip install rich
-    echo "✅ Rich instalado (salida visual mejorada)."
+    pip install rich textual
+    echo "✅ Rich y Textual instalados (CLI mejorado + TUI)."
 else
-    echo "ℹ️  Puedes instalarlo después con: pip install rich"
+    echo "ℹ️  Puedes instalarlos después con: pip install rich textual"
 fi
 
 # ================================================================
@@ -223,19 +223,22 @@ echo ""
 echo "3. Prueba el asistente: ai --help"
 echo "   Verás todos los subcomandos disponibles."
 echo ""
-echo "4. Prueba Engram:"
+echo "4. Prueba la TUI (interfaz en terminal):"
+echo "   ai --tui"
+echo ""
+echo "5. Prueba Engram:"
 echo "   engram remember 'Hola mundo'"
 echo "   engram recall 'hola'"
 echo ""
-echo "5. Prueba DeepSeek (si tienes API key):"
+echo "6. Prueba DeepSeek (si tienes API key):"
 echo "   ai 'Genera una función en Python'"
 echo ""
-echo "6. Prueba el CLI avanzado:"
+echo "7. Prueba el CLI avanzado:"
 echo "   ai --status"
 echo "   ai --memory 'término'"
 echo "   ai --specs"
 echo ""
-echo "7. (Opcional) Prueba la ingesta de documentos:"
+echo "8. (Opcional) Prueba la ingesta de documentos:"
 echo "   ai --ingest documento.pdf --tags 'manual'"
 echo ""
 echo "🪟 Para usar desde Windows, crea C:\\Windows\\System32\\ai.cmd con:"
