@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from typing import Optional
 
 from core.config import Config
@@ -22,7 +21,7 @@ class Orchestrator:
 
     Coordina el flujo completo:
     1. Análisis de intención
-    2. Construcción de contexto (proyecto + Obsidian + Engram + documentos)
+    2. Construcción de contexto (proyecto + Obsidian + Engram + Specs)
     3. Delegación al agente (genera respuesta)
     4. Auto-evaluación (Self-Critic) si está habilitada
     5. Aprendizaje continuo (detecta correcciones del usuario)
@@ -40,9 +39,16 @@ class Orchestrator:
 
         logger.info("Orchestrator iniciado con Engram + Self-Critic + SpecManager")
 
-    def process(self, task: str) -> str:
+    def process(self, task: str, verbose: bool = False) -> str:
         """
         Procesa una tarea completa del usuario.
+
+        Args:
+            task (str): Instrucción o consulta del usuario.
+            verbose (bool): Si es True, recupera más contexto (memoria y specs).
+
+        Returns:
+            str: Respuesta generada por el agente/LLM.
         """
         # ------------------------------------------------------------
         # 1. ANÁLISIS DE INTENCIÓN
@@ -55,22 +61,26 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 2. CONSTRUCCIÓN DE CONTEXTO (centralizado en ContextBuilder)
-        #    Incluye: proyecto, Obsidian, Engram, documentos ingeridos
+        # 2. CONSTRUCCIÓN DE CONTEXTO (Proyecto + Obsidian)
         # ------------------------------------------------------------
         context = self.context_builder.build(task)
 
-        # Nota: el contexto de Engram ya viene incluido por ContextBuilder.
-        # Si necesitas forzar una búsqueda adicional, puedes hacerlo aquí,
-        # pero por ahora lo dejamos comentado para evitar duplicación.
-        #
-        # if not context.get("engram"):
-        #     engram_ctx = self.engram.get_context(task)
-        #     if engram_ctx:
-        #         context["engram"] = engram_ctx
+        # ------------------------------------------------------------
+        # 3. INYECCIÓN DE MEMORIA DE ENGRAM (persistente)
+        # ------------------------------------------------------------
+        # Progressive disclosure: más contexto si verbose=True
+        limit = 8 if verbose else 3
+        engram_ctx = self.engram.get_context(task, limit=limit)
+        if engram_ctx:
+            context["engram"] = engram_ctx
+            logger.info(
+                "Contexto recuperado de Engram (%d caracteres, límite=%d)",
+                len(engram_ctx),
+                limit,
+            )
 
         # ------------------------------------------------------------
-        # 3. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
+        # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
         # ------------------------------------------------------------
         spec = self._find_relevant_spec(task)
         if spec:
@@ -78,14 +88,14 @@ class Orchestrator:
             logger.info("Spec encontrada y añadida al contexto: %s", spec.get("name"))
 
         # ------------------------------------------------------------
-        # 4. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
+        # 5. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
         # ------------------------------------------------------------
         memory = self.memory.get_context()
         if memory:
             context["memory"] = memory
 
         # ------------------------------------------------------------
-        # 5. DELEGACIÓN AL AGENTE (genera la respuesta)
+        # 6. DELEGACIÓN AL AGENTE (genera la respuesta)
         # ------------------------------------------------------------
         response = self.agent_manager.delegate(
             task=task,
@@ -95,12 +105,12 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 6. SELF-CRITIC (auto-evaluación de la respuesta)
+        # 7. SELF-CRITIC (auto-evaluación de la respuesta)
         # ------------------------------------------------------------
         if self._should_critic(task):
             eval_result = self.critic.process(task, context, response)
             if eval_result:
-                # 6a. Guardar evaluación en Engram
+                # 7a. Guardar evaluación en Engram
                 self.engram.save(
                     json.dumps(eval_result, ensure_ascii=False),
                     tags=[
@@ -116,7 +126,7 @@ class Orchestrator:
                     eval_result.get("hallucination_risk"),
                 )
 
-                # 6b. Enriquecer la respuesta con el resumen del crítico
+                # 7b. Enriquecer la respuesta con el resumen del crítico
                 summary = eval_result.get("summary", "Evaluación no disponible.")
                 critic_footer = f"\n\n---\n🤖 **Self-Critic:** {summary}"
 
@@ -128,18 +138,17 @@ class Orchestrator:
                 response = response + critic_footer
 
         # ------------------------------------------------------------
-        # 7. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
+        # 8. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
         # ------------------------------------------------------------
         if self.learner.extract_and_learn(task, response):
             logger.info("Nuevo estándar aprendido. Guardando también en Engram.")
-            # Guardar el estándar aprendido también en Engram para trazabilidad
             self.engram.save(
                 f"Estándar aprendido: {task[:200]}",
                 tags=["learning", "standard", "continuous_learning"],
             )
 
         # ------------------------------------------------------------
-        # 8. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
+        # 9. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
         # ------------------------------------------------------------
         # Guardar la consulta del usuario
         self.engram.save(
@@ -153,14 +162,54 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 9. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
+        # 10. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
         # ------------------------------------------------------------
         self.memory.add(task, response)
 
         # ------------------------------------------------------------
-        # 10. DEVOLVER RESPUESTA AL USUARIO
+        # 11. DEVOLVER RESPUESTA AL USUARIO
         # ------------------------------------------------------------
         return response
+
+    # ================================================================
+    # MÉTODOS PRIVADOS
+    # ================================================================
+
+    def _find_relevant_spec(self, task: str) -> Optional[dict]:
+        """
+        Busca una Spec relevante para la tarea.
+        Primero por nombre explícito (ej. 'spec mi_proyecto').
+        Luego por búsqueda semántica en Engram.
+        """
+        import re
+
+        # 1. Búsqueda por nombre explícito
+        match = re.search(
+            r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
+            task,
+            re.IGNORECASE,
+        )
+        if match:
+            spec_name = match.group(1)
+            spec = self.spec_manager.load_spec_by_name(spec_name)
+            if spec:
+                logger.info("Spec encontrada por nombre: %s", spec_name)
+                return spec
+
+        # 2. Búsqueda semántica en Engram
+        memories = self.engram.recall(task, limit=3)
+        for m in memories:
+            try:
+                data = json.loads(m.get("content", "{}"))
+                if data.get("type") == "spec":
+                    logger.info(
+                        "Spec encontrada por búsqueda semántica: %s", data.get("name")
+                    )
+                    return data
+            except json.JSONDecodeError:
+                continue
+
+        return None
 
     def _should_critic(self, task: str) -> bool:
         """
@@ -190,34 +239,5 @@ class Orchestrator:
             "refactor",
             "migra",
             "estructura",
-            "código",
-            "analiza",
         ]
         return any(k in task.lower() for k in keywords)
-
-    def _find_relevant_spec(self, task: str) -> Optional[dict]:
-        """
-        Busca una Spec relevante para la tarea (por nombre o contenido).
-        """
-        import re
-
-        # 1. Buscar por nombre explícito (ej. "spec mi_proyecto")
-        match = re.search(
-            r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
-            task,
-            re.IGNORECASE,
-        )
-        if match:
-            spec_name = match.group(1)
-            return self.spec_manager.load_spec_by_name(spec_name)
-
-        # 2. Si no, buscar por contenido semántico (usando Engram)
-        memories = self.engram.recall(task, limit=3)
-        for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec":
-                    return data
-            except json.JSONDecodeError:
-                continue
-        return None

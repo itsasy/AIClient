@@ -100,6 +100,9 @@ class Config:
     # ----- Continuous Learner -----
     LEARNER_BACKEND = os.getenv("LEARNER_BACKEND", "both")  # "engram", "legacy", "both"
 
+    # ----- Modo de operación: "safe" o "powerful" -----
+    POWER_MODE = os.getenv("POWER_MODE", "safe").lower()
+
     @classmethod
     def validate(cls) -> None:
         """Valida la configuración y genera claves si faltan."""
@@ -127,6 +130,8 @@ class Config:
             cls.ARCHITECTURE_FALLBACKS,
             cls.FAST_FALLBACKS,
         )
+
+        logger.info("Modo de operación: %s", cls.POWER_MODE)
 
         # Generar API Key para el dashboard si no está definida
         if not cls.DASHBOARD_API_KEY:

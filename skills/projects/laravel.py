@@ -78,6 +78,22 @@ class LaravelProjectSkill(Skill):
 
         results = []
         for cmd in commands:
+            if Config.POWER_MODE == "safe" and cmd.startswith("sudo"):
+                results.append(
+                    (
+                        cmd,
+                        {
+                            "payload": {
+                                "ok": False,
+                                "output": "❌ Comando 'sudo' bloqueado en modo seguro.\n"
+                                "   El proyecto Laravel requiere permisos de administrador.\n"
+                                "   Cambia POWER_MODE a 'powerful' en .env para permitirlo.",
+                            }
+                        },
+                    )
+                )
+                break
+
             res = shell.execute(cmd, timeout=laravel_timeout)
             results.append((cmd, res))
 

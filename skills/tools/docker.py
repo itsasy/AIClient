@@ -1,5 +1,5 @@
 from skills.base import Skill
-from core.config import Config  # ✅ NUEVO IMPORT
+from core.config import Config
 import subprocess
 
 
@@ -9,6 +9,17 @@ class DockerTool(Skill):
 
     def execute(self, command: str, **kwargs):
         command = command.strip()
+
+        if Config.POWER_MODE == "safe" and command.startswith("sudo"):
+            return {
+                "type": "docker_result",
+                "payload": {
+                    "ok": False,
+                    "message": "Comando 'sudo' bloqueado en modo seguro",
+                    "command": command,
+                },
+            }
+
         if not command.startswith("docker"):
             command = f"docker {command}"
 

@@ -36,6 +36,16 @@ class ShellTool(Skill):
         command = command.strip()
         normalized = command.lower()
 
+        if Config.POWER_MODE == "safe" and command.startswith("sudo"):
+            return {
+                "type": "shell_result",
+                "payload": {
+                    "ok": False,
+                    "message": "Comando 'sudo' bloqueado en modo seguro",
+                    "command": command,
+                },
+            }
+
         if not any(normalized.startswith(p.lower()) for p in self.SAFE_PREFIXES):
             return {
                 "type": "shell_result",
