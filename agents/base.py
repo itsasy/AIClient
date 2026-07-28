@@ -8,8 +8,8 @@ class Agent(ABC):
     def process(
         self,
         task: str,
-        context: dict | None = None,
+        context: dict[str, object] | None = None,
         skill_name: str | None = None,
-        skill_params: dict | None = None,
+        skill_params: dict[str, object] | None = None,
     ) -> str:
-        raise NotImplementedError
+        raise NotImplementedError("Los agentes deben implementar process()")

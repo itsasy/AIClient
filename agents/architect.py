@@ -8,13 +8,13 @@ class ArchitectAgent(Agent):
     def process(
         self,
         task: str,
-        context: dict | None = None,
+        context: dict[str, object] | None = None,
         skill_name: str | None = None,
-        skill_params: dict | None = None,
+        skill_params: dict[str, object] | None = None,
     ) -> str:
         return LLMRouter.generate(
             task=task,
-            context=context or {},
+            context=context if context is not None else {},
             skill_name=skill_name,
             skill_params=skill_params,
         )

@@ -6,7 +6,29 @@ class MultiTurnAgent(Agent):
     name = "multi_turn"
     role = "Agente conversacional con memoria"
 
-    def process(self, task: str, context: dict = None) -> str:
-        history = context.get("memory", "") if context else ""
-        prompt = f"""Historial:\n{history}\n\nNueva tarea: {task}\nMantén coherencia y contexto."""
-        return LLMRouter.generate(prompt)
+    def process(
+        self,
+        task: str,
+        context: dict[str, object] | None = None,
+        skill_name: str | None = None,
+        skill_params: dict[str, object] | None = None,
+    ) -> str:
+        history = ""
+
+        if context is not None:
+            history = str(context.get("memory", ""))
+
+        prompt = f"""Historial:
+{history}
+
+Nueva tarea:
+{task}
+
+Mantén coherencia y contexto."""
+
+        return LLMRouter.generate(
+            task=prompt,
+            context=context if context is not None else {},
+            skill_name=skill_name,
+            skill_params=skill_params,
+        )

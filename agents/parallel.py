@@ -5,8 +5,25 @@ class ParallelAgentSystem:
     def __init__(self):
         self.manager = AgentManager()
 
-    def run(self, task: str, context: dict = None):
-        architect = self.manager.delegate(task + " [ARQUITECTURA]", context)
-        coder = self.manager.delegate(task + " [CÓDIGO]", context)
+    def run(
+        self,
+        task: str,
+        context: dict[str, object] | None = None,
+    ) -> str:
+        shared_context = context if context is not None else {}
 
-        return f"""**Arquitecto:**\n{architect}\n\n**Programador:**\n{coder}"""
+        architect = self.manager.delegate(
+            f"{task} [ARQUITECTURA]",
+            shared_context.copy(),
+        )
+
+        coder = self.manager.delegate(
+            f"{task} [CÓDIGO]",
+            shared_context.copy(),
+        )
+
+        return f"""**Arquitecto:**
+{architect}
+
+**Programador:**
+{coder}"""

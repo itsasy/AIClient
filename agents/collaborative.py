@@ -5,9 +5,22 @@ class CollaborativeSystem:
     def __init__(self):
         self.manager = AgentManager()
 
-    def collaborate(self, task: str, context: dict = None):
-        architect_response = self.manager.delegate(task + " [ARQUITECTURA]", context)
-        coder_response = self.manager.delegate(task + " [IMPLEMENTACIÓN]", context)
+    def collaborate(
+        self,
+        task: str,
+        context: dict[str, object] | None = None,
+    ) -> str:
+        shared_context = context if context is not None else {}
+
+        architect_response = self.manager.delegate(
+            f"{task} [ARQUITECTURA]",
+            shared_context.copy(),
+        )
+
+        coder_response = self.manager.delegate(
+            f"{task} [IMPLEMENTACIÓN]",
+            shared_context.copy(),
+        )
 
         return f"""**Equipo Colaborativo:**
 

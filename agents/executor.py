@@ -1,4 +1,5 @@
 from agents.base import Agent
+from llm.router import LLMRouter
 from skills.manager import SkillManager
 
 
@@ -6,70 +7,93 @@ class ExecutorAgent(Agent):
     name = "executor"
     role = "Ejecutor Autónomo de Tareas"
 
+    AVAILABLE_SKILLS = {
+        "shell",
+        "docker",
+        "execute_code",
+        "sandbox",
+        "laravel_project",
+        "full_project",
+    }
+
+    def __init__(self):
+        self.skill_manager = SkillManager()
+
     def process(
         self,
         task: str,
-        context: dict | None = None,
+        context: dict[str, object] | None = None,
         skill_name: str | None = None,
-        skill_params: dict | None = None,
+        skill_params: dict[str, object] | None = None,
     ) -> str:
-        if not skill_name or skill_name not in (
-            "shell",
-            "docker",
-            "execute_code",
-            "sandbox",
-            "laravel_project",
-            "full_project",
-        ):
-            from llm.router import LLMRouter
-
+        if not skill_name or skill_name not in self.AVAILABLE_SKILLS:
             return LLMRouter.generate(
                 task=task,
-                context=context or {},
+                context=context if context is not None else {},
                 skill_name=skill_name,
                 skill_params=skill_params,
             )
 
-        skill_manager = SkillManager()
-        result = skill_manager.execute(skill_name, **(skill_params or {}))
+        result = self.skill_manager.execute(
+            skill_name,
+            **(skill_params if skill_params is not None else {}),
+        )
 
         result_type = result.get("type")
 
-        if result_type in (
+        if result_type in {
             "shell_result",
             "docker_result",
             "execution_result",
             "sandbox_result",
-        ):
-            payload = result.get("payload", {})
-            if payload.get("ok"):
-                output = payload.get(
-                    "output", "Comando ejecutado correctamente (sin salida)."
-                )
-                return f"✅ **{skill_name}** ejecutado:\n```\n{output}\n```"
-            else:
-                error = (
-                    payload.get("message")
-                    or payload.get("output")
-                    or payload.get("error")
-                    or "Error desconocido."
-                )
-                return f"❌ **{skill_name}** falló:\n```\n{error}\n```"
+        }:
+            return self._format_execution_result(
+                skill_name,
+                result.get("payload", {}),
+            )
 
         if result_type == "laravel_result":
-            payload = result.get("payload", {})
-            project_name = payload.get("project_name", "proyecto")
-            output = payload.get("output", "")
-
-            if payload.get("ok"):
-                return (
-                    f"✅ **Proyecto Laravel '{project_name}'** creado correctamente.\n\n"
-                    f"Salida:\n```\n{output}\n```"
-                )
-            else:
-                return (
-                    f"❌ **Proyecto Laravel** falló al crearse.\n\n"
-                    f"Salida de error:\n```\n{output}\n```"
-                )
+            return self._format_laravel_result(
+                result.get("payload", {}),
+            )
 
         return str(result)
+
+    def _format_execution_result(
+        self,
+        skill_name: str,
+        payload: dict,
+    ) -> str:
+        if payload.get("ok"):
+            output = payload.get(
+                "output",
+                "Comando ejecutado correctamente (sin salida).",
+            )
+            return f"✅ **{skill_name}** ejecutado:\n```\n{output}\n```"
+
+        error = (
+            payload.get("message")
+            or payload.get("output")
+            or payload.get("error")
+            or "Error desconocido."
+        )
+
+        return f"❌ **{skill_name}** falló:\n```\n{error}\n```"
+
+    def _format_laravel_result(
+        self,
+        payload: dict,
+    ) -> str:
+        project_name = payload.get("project_name", "proyecto")
+        output = payload.get("output", "")
+
+        if payload.get("ok"):
+            return (
+                f"✅ **Proyecto Laravel '{project_name}'** creado correctamente.\n\n"
+                f"Salida:\n```\n{output}\n```"
+            )
+
+        return (
+            "❌ **Proyecto Laravel** falló al crearse.\n\n"
+            f"Salida de error:\n```\n{output}\n```"
+        )
