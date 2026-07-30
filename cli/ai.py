@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-# cli/ai.py – Punto de entrada principal con subcomandos y TUI
+# cli/ai.py – Punto de entrada principal (opciones estilo --memory, --status)
 
 import argparse
 import sys
-import json
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +18,6 @@ from core.document_ingestor import DocumentIngestor
 try:
     from rich.console import Console
     from rich.table import Table
-    from rich import print as rprint
 
     RICH_AVAILABLE = True
 except ImportError:
@@ -35,52 +33,36 @@ def main():
         description="AIClient – Asistente de Desarrollo Inteligente",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Comandos principales:
-  ai "consulta"              Consulta directa al asistente
-  ai --chat                  Modo chat interactivo
-  ai --tui                   Interfaz gráfica en terminal (TUI)
-  ai memory "texto"          Buscar en memoria persistente
-  ai status                  Mostrar estadísticas del sistema
-  ai specs                   Listar especificaciones guardadas
-  ai ingest archivo.pdf      Ingerir documento para la memoria
-  ai forget <id>             Eliminar una memoria por ID
+Ejemplos:
+  ai "crea una función en Python"   # Consulta directa
+  ai --chat                         # Modo chat interactivo
+  ai --tui                          # Interfaz TUI
+  ai --memory "color favorito"      # Buscar en memoria
+  ai --status                       # Estadísticas del sistema
+  ai --specs                        # Listar especificaciones
+  ai --ingest documento.pdf         # Ingerir documento
+  ai --forget <id>                  # Eliminar memoria
         """,
     )
 
-    # Opciones generales (no subcomandos)
+    # Opciones de control
     parser.add_argument("--chat", action="store_true", help="Modo chat interactivo")
     parser.add_argument("--tui", action="store_true", help="Modo TUI (interfaz en terminal)")
 
-    # ================================================================
-    # SUBCOMANDOS (se definen ANTES de 'query' para que los reconozca)
-    # ================================================================
-    subparsers = parser.add_subparsers(dest="command", help="Subcomandos")
+    # Opciones de comandos
+    parser.add_argument(
+        "--memory", nargs="+", metavar="texto", help="Buscar en memoria persistente"
+    )
+    parser.add_argument("--limit", type=int, default=5, help="Máx. resultados para --memory")
+    parser.add_argument("--status", action="store_true", help="Mostrar estadísticas del sistema")
+    parser.add_argument("--specs", action="store_true", help="Listar especificaciones guardadas")
+    parser.add_argument("--list-specs", action="store_true", help="Alias de --specs")
+    parser.add_argument("--ingest", metavar="archivo", help="Ingerir un documento")
+    parser.add_argument("--tags", default="", help="Etiquetas para --ingest (separadas por coma)")
+    parser.add_argument("--forget", metavar="id", help="Eliminar una memoria por ID")
 
-    # -- memory
-    memory_parser = subparsers.add_parser("memory", help="Buscar en memoria persistente")
-    memory_parser.add_argument("query", nargs="+", help="Texto a buscar")
-    memory_parser.add_argument("--limit", type=int, default=5, help="Máximo de resultados")
-
-    # -- status
-    subparsers.add_parser("status", help="Mostrar estadísticas del sistema")
-
-    # -- specs / --list-specs
-    subparsers.add_parser("specs", help="Listar especificaciones guardadas")
-    subparsers.add_parser("list-specs", help="Alias de specs")
-
-    # -- ingest
-    ingest_parser = subparsers.add_parser("ingest", help="Ingerir un documento")
-    ingest_parser.add_argument("filepath", help="Ruta al archivo")
-    ingest_parser.add_argument("--tags", help="Etiquetas separadas por coma", default="")
-
-    # -- forget
-    forget_parser = subparsers.add_parser("forget", help="Eliminar una memoria por ID")
-    forget_parser.add_argument("memory_id", help="ID de la memoria a eliminar")
-
-    # ================================================================
-    # CONSULTA DIRECTA (captura todo lo que no es subcomando)
-    # ================================================================
-    parser.add_argument("query", nargs=argparse.REMAINDER, help="Tu instrucción")
+    # Consulta directa (todo lo que no sea opción)
+    parser.add_argument("query", nargs="*", help="Tu instrucción")
 
     args = parser.parse_args()
 
@@ -99,11 +81,13 @@ Comandos principales:
         return
 
     # ================================================================
-    # 1. SUBCOMANDOS (si args.command no es None)
+    # 1. COMANDOS CON OPCIONES
     # ================================================================
-    if args.command == "memory":
+
+    # --memory
+    if args.memory is not None:
         eng = EngramMemory()
-        query = " ".join(args.query)
+        query = " ".join(args.memory)
         results = eng.recall(query, limit=args.limit)
 
         if not results:
@@ -132,7 +116,8 @@ Comandos principales:
                 print(f"ID: {r.get('id', 'N/A')} | {content} | Score: {r.get('score', 0)}")
         return
 
-    if args.command == "status":
+    # --status
+    if args.status:
         eng = EngramMemory()
         stats = eng.stats()
 
@@ -165,7 +150,8 @@ Comandos principales:
             print(f"• Proveedor rápido: {getattr(Config, 'FAST_PROVIDER', 'No configurado')}")
         return
 
-    if args.command in ("specs", "list-specs"):
+    # --specs / --list-specs
+    if args.specs or args.list_specs:
         spec_mgr = SpecManager()
         specs = spec_mgr.list_specs()
 
@@ -198,8 +184,9 @@ Comandos principales:
                 print(f"📋 {s.get('name')} – {s.get('status')} ({s.get('created_at', '')[:16]})")
         return
 
-    if args.command == "ingest":
-        filepath = Path(args.filepath).expanduser()
+    # --ingest
+    if args.ingest:
+        filepath = Path(args.ingest).expanduser()
         if not filepath.exists():
             if RICH_AVAILABLE:
                 console.print(f"[red]❌ Archivo no encontrado: {filepath}[/red]")
@@ -223,33 +210,36 @@ Comandos principales:
                 print(f"❌ Error al ingerir: {filepath.name}")
         return
 
-    if args.command == "forget":
+    # --forget
+    if args.forget:
         eng = EngramMemory()
-        success = eng.forget(args.memory_id)
+        success = eng.forget(args.forget)
         if success:
             if RICH_AVAILABLE:
-                console.print(f"[green]✅ Memoria {args.memory_id} eliminada.[/green]")
+                console.print(f"[green]✅ Memoria {args.forget} eliminada.[/green]")
             else:
-                print(f"✅ Memoria {args.memory_id} eliminada.")
+                print(f"✅ Memoria {args.forget} eliminada.")
         else:
             if RICH_AVAILABLE:
-                console.print(f"[red]❌ No se pudo eliminar la memoria {args.memory_id}.[/red]")
+                console.print(f"[red]❌ No se pudo eliminar la memoria {args.forget}.[/red]")
             else:
-                print(f"❌ No se pudo eliminar la memoria {args.memory_id}.")
+                print(f"❌ No se pudo eliminar la memoria {args.forget}.")
         return
 
     # ================================================================
-    # 2. CONSULTA DIRECTA (si args.command is None)
+    # 2. CONSULTA DIRECTA (si no se usó ninguna opción)
     # ================================================================
-    # args.query es una lista de todos los argumentos restantes
     query = " ".join(args.query).strip()
 
     if not query and not args.chat:
         print("🤖 Uso: ai 'tu instrucción'")
         print("    ai --chat")
         print("    ai --tui")
-        print("    ai memory 'término'")
-        print("    ai status")
+        print("    ai --memory 'término'")
+        print("    ai --status")
+        print("    ai --specs")
+        print("    ai --ingest archivo.pdf")
+        print("    ai --forget <id>")
         return
 
     orchestrator = Orchestrator()
