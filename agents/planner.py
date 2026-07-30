@@ -10,7 +10,6 @@ from llm.provider_selector import ProviderSelector
 from skills.manager import SkillManager
 from agents.self_critic import SelfCriticAgent
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -65,16 +64,34 @@ class PlannerAgent(Agent):
         return self._execute_spec(spec, context)
 
     def _extract_spec_name(self, task: str) -> Optional[str]:
-        """Extrae el nombre de una spec de la tarea (ej. 'ejecuta spec mi_proyecto')."""
+        """Extrae el nombre de una spec de la tarea de forma más robusta."""
         import re
 
         match = re.search(
-            r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
+            r"(?:llamado|nombre)\s+[\"']?([a-zA-Z0-9_-]+)[\"']?",
             task,
             re.IGNORECASE,
         )
         if match:
             return match.group(1)
+
+        match = re.search(
+            r"(?:spec|especificación|plan)\s+[\"']?([a-zA-Z0-9_-]+)[\"']?",
+            task,
+            re.IGNORECASE,
+        )
+        if match:
+            name = match.group(1)
+            if name.lower() not in {"para", "un", "una", "de", "el", "la", "los", "las"}:
+                return name
+
+        # 3. Fallback: última palabra alfanumérica
+        words = task.split()
+        if words:
+            last = words[-1].strip(".,;:!?\"'")
+            if re.match(r"^[a-zA-Z0-9_-]+$", last):
+                return last
+
         return None
 
     def _generate_spec_from_task(self, task: str, context: dict) -> dict:
@@ -168,9 +185,7 @@ Ejemplo:
                 alignment = eval_result.get("alignment_score", 0) if eval_result else 0
 
                 if alignment >= 5:
-                    results.append(
-                        f"✅ **Paso {i} - {desc}** (Score: {alignment})\n{output[:500]}"
-                    )
+                    results.append(f"✅ **Paso {i} - {desc}** (Score: {alignment})\n{output[:500]}")
                 else:
                     results.append(
                         f"⚠️ **Paso {i} - {desc}** (Score: {alignment} - Bajo)\n{output[:500]}"

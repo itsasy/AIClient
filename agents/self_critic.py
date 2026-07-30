@@ -1,6 +1,5 @@
 import json
 import logging
-import os
 from agents.base import Agent
 from llm.provider_manager import ProviderManager
 from llm.provider_selector import ProviderSelector
@@ -22,14 +21,18 @@ class SelfCriticAgent(Agent):
         Returns:
             dict: Evaluación estructurada (JSON parseado) o un fallback.
         """
-        # Seleccionar un modelo bueno para razonar (ej. Gemini para reflexión)
-        provider = ProviderSelector.select(task="critique", skill_name="reflection")
+        primary_provider, fallback_chain = ProviderSelector.select(
+            task="critique", skill_name="reflection"
+        )
 
-        # Construir el prompt de evaluación (con reglas anti-alucinación)
         prompt = self._build_critique_prompt(task, context, draft_response)
 
         try:
-            raw_eval = self.provider_manager.generate(prompt, provider_name=provider)
+            raw_eval = self.provider_manager.generate(
+                prompt,
+                provider_name=primary_provider,
+                fallback_chain=fallback_chain,
+            )
             eval_data = self._extract_json(raw_eval)
             logger.info(
                 "Self-Critic completado. Score: %s, Riesgo: %s",
@@ -44,7 +47,6 @@ class SelfCriticAgent(Agent):
     def _build_critique_prompt(self, task, context, draft_response):
         """Construye el prompt con reglas estrictas anti-alucinación."""
 
-        # Extraer contexto relevante
         context_parts = []
         if context.get("project"):
             context_parts.append(f"PROYECTO:\n{context['project'][:2000]}")
@@ -56,9 +58,7 @@ class SelfCriticAgent(Agent):
             context_parts.append(f"SPEC / PLAN:\n{context['spec'][:1000]}")
 
         context_str = (
-            "\n\n".join(context_parts)
-            if context_parts
-            else "No hay contexto adicional disponible."
+            "\n\n".join(context_parts) if context_parts else "No hay contexto adicional disponible."
         )
 
         prompt = f"""
