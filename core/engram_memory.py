@@ -125,11 +125,12 @@ class EngramMemory:
 
     def recall(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Busca memorias en Engram y parsea el formato real de v1.20:
+        Busca memorias en Engram v1.20 (salida en texto plano).
 
+        Formato real de Engram:
         Found N memories:
         [1] #13 (manual) — Título corto
-            Contenido de la memoria
+            Contenido de la memoria aquí
             2026-07-30 15:46:16 | project: aiclient | scope: project
         """
         if not query or not query.strip():
@@ -147,10 +148,9 @@ class EngramMemory:
         results: List[Dict[str, Any]] = []
         current: Optional[Dict[str, Any]] = None
 
-        for line in stdout.splitlines():
-            line = line.rstrip()
+        for raw_line in stdout.splitlines():
+            line = raw_line.rstrip()
 
-            # Cabecera: [1] #13 (manual) — Título...
             header = re.match(
                 r"^\[(\d+)\]\s+#(\d+)\s+\(([^)]+)\)\s+[—\-]\s+(.*)$",
                 line,
@@ -160,7 +160,7 @@ class EngramMemory:
                     results.append(current)
 
                 current = {
-                    "id": header.group(2),  # ID real de Engram
+                    "id": header.group(2),
                     "index": int(header.group(1)),
                     "type": header.group(3),
                     "title": header.group(4).strip(),
@@ -172,28 +172,23 @@ class EngramMemory:
             if current is None:
                 continue
 
-            # Línea de contenido (indentada) — ignoramos la línea de fecha/metadata
             stripped = line.strip()
             if not stripped:
                 continue
 
-            # Saltar líneas de metadata (fecha | project: ... | scope: ...)
             if re.match(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}", stripped):
                 continue
             if "project:" in stripped and "scope:" in stripped:
                 continue
 
-            # Contenido real
-            if line.startswith(" ") or line.startswith("\t"):
-                if current["content"]:
-                    current["content"] += " " + stripped
-                else:
-                    current["content"] = stripped
+            if current["content"]:
+                current["content"] += " " + stripped
+            else:
+                current["content"] = stripped
 
         if current:
             results.append(current)
 
-        # Si no hay content, usar el title
         for r in results:
             if not r.get("content"):
                 r["content"] = r.get("title", "")

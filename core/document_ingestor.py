@@ -91,9 +91,10 @@ class DocumentIngestor:
             for i, chunk in enumerate(chunks):
                 chunk_tags = base_tags + [f"chunk_{i}"]
                 self.engram.save(
-                    f"[{filename} - fragmento {i+1}/{len(chunks)}]\n{chunk}",
+                    f"Documento: {filename}\n\n{chunk}",
                     tags=chunk_tags,
                     source=f"ingestor_{ext[1:]}",
+                    async_mode=False,
                 )
 
             logger.info("✅ Documento ingerido: %s (%d fragmentos)", filename, len(chunks))
