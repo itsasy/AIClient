@@ -52,7 +52,7 @@ Comandos principales:
     parser.add_argument("--tui", action="store_true", help="Modo TUI (interfaz en terminal)")
 
     # ================================================================
-    # SUBCOMANDOS (se definen ANTES de 'query' para que no los consuma)
+    # SUBCOMANDOS (se definen ANTES de 'query' para que los reconozca)
     # ================================================================
     subparsers = parser.add_subparsers(dest="command", help="Subcomandos")
 
@@ -78,14 +78,14 @@ Comandos principales:
     forget_parser.add_argument("memory_id", help="ID de la memoria a eliminar")
 
     # ================================================================
-    # CONSULTA DIRECTA (se define DESPUÉS de los subcomandos)
+    # CONSULTA DIRECTA (captura todo lo que no es subcomando)
     # ================================================================
-    parser.add_argument("query", nargs="*", help="Tu instrucción")
+    parser.add_argument("query", nargs=argparse.REMAINDER, help="Tu instrucción")
 
     args = parser.parse_args()
 
     # ================================================================
-    # 0. TUI (interfaz gráfica en terminal)
+    # 0. TUI
     # ================================================================
     if args.tui:
         try:
@@ -239,9 +239,11 @@ Comandos principales:
         return
 
     # ================================================================
-    # 2. CONSULTA DIRECTA (si no hay subcomando y no es --chat)
+    # 2. CONSULTA DIRECTA (si args.command is None)
     # ================================================================
-    query = " ".join(args.query)
+    # args.query es una lista de todos los argumentos restantes
+    query = " ".join(args.query).strip()
+
     if not query and not args.chat:
         print("🤖 Uso: ai 'tu instrucción'")
         print("    ai --chat")
