@@ -39,42 +39,48 @@ Comandos principales:
   ai "consulta"              Consulta directa al asistente
   ai --chat                  Modo chat interactivo
   ai --tui                   Interfaz gráfica en terminal (TUI)
-  ai --memory "texto"        Buscar en memoria persistente
-  ai --status                Mostrar estadísticas del sistema
-  ai --specs                 Listar especificaciones guardadas
-  ai --ingest archivo.pdf    Ingerir documento para la memoria
-  ai --forget <id>           Eliminar una memoria por ID
+  ai memory "texto"          Buscar en memoria persistente
+  ai status                  Mostrar estadísticas del sistema
+  ai specs                   Listar especificaciones guardadas
+  ai ingest archivo.pdf      Ingerir documento para la memoria
+  ai forget <id>             Eliminar una memoria por ID
         """,
     )
 
-    # Argumentos principales
-    parser.add_argument("query", nargs="*", help="Tu instrucción")
+    # Opciones generales (no subcomandos)
     parser.add_argument("--chat", action="store_true", help="Modo chat interactivo")
     parser.add_argument("--tui", action="store_true", help="Modo TUI (interfaz en terminal)")
 
-    # Subcomandos
+    # ================================================================
+    # SUBCOMANDOS (se definen ANTES de 'query' para que no los consuma)
+    # ================================================================
     subparsers = parser.add_subparsers(dest="command", help="Subcomandos")
 
-    # --memory
+    # -- memory
     memory_parser = subparsers.add_parser("memory", help="Buscar en memoria persistente")
     memory_parser.add_argument("query", nargs="+", help="Texto a buscar")
     memory_parser.add_argument("--limit", type=int, default=5, help="Máximo de resultados")
 
-    # --status
+    # -- status
     subparsers.add_parser("status", help="Mostrar estadísticas del sistema")
 
-    # --specs / --list-specs
+    # -- specs / --list-specs
     subparsers.add_parser("specs", help="Listar especificaciones guardadas")
     subparsers.add_parser("list-specs", help="Alias de specs")
 
-    # --ingest
+    # -- ingest
     ingest_parser = subparsers.add_parser("ingest", help="Ingerir un documento")
     ingest_parser.add_argument("filepath", help="Ruta al archivo")
     ingest_parser.add_argument("--tags", help="Etiquetas separadas por coma", default="")
 
-    # --forget
+    # -- forget
     forget_parser = subparsers.add_parser("forget", help="Eliminar una memoria por ID")
     forget_parser.add_argument("memory_id", help="ID de la memoria a eliminar")
+
+    # ================================================================
+    # CONSULTA DIRECTA (se define DESPUÉS de los subcomandos)
+    # ================================================================
+    parser.add_argument("query", nargs="*", help="Tu instrucción")
 
     args = parser.parse_args()
 
@@ -93,40 +99,7 @@ Comandos principales:
         return
 
     # ================================================================
-    # 1. COMANDO PRINCIPAL (CONSULTA DIRECTA) o --chat
-    # ================================================================
-    if args.command is None:
-        query = " ".join(args.query)
-        if not query and not args.chat:
-            print("🤖 Uso: ai 'tu instrucción'")
-            print("    ai --chat")
-            print("    ai --tui")
-            print("    ai --memory 'término'")
-            print("    ai --status")
-            return
-
-        orchestrator = Orchestrator()
-
-        if args.chat:
-            print("🤖 Modo Chat (escribe 'exit' para salir)\n")
-            while True:
-                try:
-                    q = input("Tú: ")
-                    if q.lower() in ["exit", "salir", "quit"]:
-                        break
-                    print(f"\nAI: {orchestrator.process(q)}\n")
-                except KeyboardInterrupt:
-                    break
-        else:
-            response = orchestrator.process(query)
-            if RICH_AVAILABLE:
-                console.print(f"\n[bold cyan]🤖[/bold cyan] {response}\n")
-            else:
-                print(f"\n🤖 {response}\n")
-        return
-
-    # ================================================================
-    # 2. SUBCOMANDO --memory
+    # 1. SUBCOMANDOS (si args.command no es None)
     # ================================================================
     if args.command == "memory":
         eng = EngramMemory()
@@ -159,9 +132,6 @@ Comandos principales:
                 print(f"ID: {r.get('id', 'N/A')} | {content} | Score: {r.get('score', 0)}")
         return
 
-    # ================================================================
-    # 3. SUBCOMANDO --status
-    # ================================================================
     if args.command == "status":
         eng = EngramMemory()
         stats = eng.stats()
@@ -195,9 +165,6 @@ Comandos principales:
             print(f"• Proveedor rápido: {getattr(Config, 'FAST_PROVIDER', 'No configurado')}")
         return
 
-    # ================================================================
-    # 4. SUBCOMANDO --specs / --list-specs
-    # ================================================================
     if args.command in ("specs", "list-specs"):
         spec_mgr = SpecManager()
         specs = spec_mgr.list_specs()
@@ -231,9 +198,6 @@ Comandos principales:
                 print(f"📋 {s.get('name')} – {s.get('status')} ({s.get('created_at', '')[:16]})")
         return
 
-    # ================================================================
-    # 5. SUBCOMANDO --ingest
-    # ================================================================
     if args.command == "ingest":
         filepath = Path(args.filepath).expanduser()
         if not filepath.exists():
@@ -259,9 +223,6 @@ Comandos principales:
                 print(f"❌ Error al ingerir: {filepath.name}")
         return
 
-    # ================================================================
-    # 6. SUBCOMANDO --forget
-    # ================================================================
     if args.command == "forget":
         eng = EngramMemory()
         success = eng.forget(args.memory_id)
@@ -276,6 +237,37 @@ Comandos principales:
             else:
                 print(f"❌ No se pudo eliminar la memoria {args.memory_id}.")
         return
+
+    # ================================================================
+    # 2. CONSULTA DIRECTA (si no hay subcomando y no es --chat)
+    # ================================================================
+    query = " ".join(args.query)
+    if not query and not args.chat:
+        print("🤖 Uso: ai 'tu instrucción'")
+        print("    ai --chat")
+        print("    ai --tui")
+        print("    ai memory 'término'")
+        print("    ai status")
+        return
+
+    orchestrator = Orchestrator()
+
+    if args.chat:
+        print("🤖 Modo Chat (escribe 'exit' para salir)\n")
+        while True:
+            try:
+                q = input("Tú: ")
+                if q.lower() in ["exit", "salir", "quit"]:
+                    break
+                print(f"\nAI: {orchestrator.process(q)}\n")
+            except KeyboardInterrupt:
+                break
+    else:
+        response = orchestrator.process(query)
+        if RICH_AVAILABLE:
+            console.print(f"\n[bold cyan]🤖[/bold cyan] {response}\n")
+        else:
+            print(f"\n🤖 {response}\n")
 
 
 if __name__ == "__main__":
