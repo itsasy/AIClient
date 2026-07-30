@@ -106,12 +106,6 @@ class Config:
     # ----- Modo de operación: "safe" o "powerful" -----
     POWER_MODE = os.getenv("POWER_MODE", "safe").lower()
 
-    # ----- Engram (memoria persistente) -----
-    ENGRAM_DB_PATH = Path(os.getenv("ENGRAM_DB_PATH", "./engram_memory.db")).expanduser()
-    ENGRAM_BINARY = os.getenv("ENGRAM_BINARY", "engram")
-    ENGRAM_ASYNC_SAVE = os.getenv("ENGRAM_ASYNC_SAVE", "true").lower() == "true"
-    ENGRAM_AUTO_CONTEXT = os.getenv("ENGRAM_AUTO_CONTEXT", "true").lower() == "true"
-
     @classmethod
     def validate(cls) -> None:
         """Valida la configuración y genera claves si faltan."""
@@ -141,7 +135,6 @@ class Config:
         )
 
         logger.info("Modo de operación: %s", cls.POWER_MODE)
-        logger.info("Engram DB path: %s", cls.ENGRAM_DB_PATH)
 
         # Generar API Key para el dashboard si no está definida
         if not cls.DASHBOARD_API_KEY:
