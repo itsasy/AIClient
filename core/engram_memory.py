@@ -42,7 +42,7 @@ class EngramMemory:
                      Por defecto, nombre del directorio actual.
             async_save: Si es True, guarda en hilo separado.
         """
-        self.data_dir = data_dir or Config.PROJECT_ROOT / ".engram"
+        self.data_dir = data_dir or Path.home() / ".engram"
         self.project = project or Config.PROJECT_ROOT.name
         self.async_save = async_save
 
