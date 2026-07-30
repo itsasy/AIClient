@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -16,14 +17,13 @@ class EngramMemory:
     """
     Cliente para Engram v1.20+.
 
-    Utiliza los comandos CLI:
-    - save <title> <msg>   → guardar memoria
-    - search <query>       → buscar memorias
-    - stats                → estadísticas
-    - delete <obs_id>      → eliminar memoria
+    Comandos CLI usados:
+    - save <title> <msg> [--project NAME]
+    - search <query> [--limit N] [--project NAME]
+    - stats [--project NAME]
+    - delete <obs_id> [--project NAME]
 
-    La base de datos se almacena en el directorio definido por ENGRAM_DATA_DIR.
-    Por defecto, usamos el directorio del proyecto (PROJECT_ROOT).
+    Base de datos: ENGRAM_DATA_DIR (por defecto ~/.engram)
     """
 
     def __init__(
@@ -32,24 +32,13 @@ class EngramMemory:
         project: Optional[str] = None,
         async_save: bool = True,
     ):
-        """
-        Inicializa el cliente de Engram.
-
-        Args:
-            data_dir: Directorio donde Engram almacenará sus datos.
-                     Por defecto, Config.PROJECT_ROOT / ".engram".
-            project: Nombre del proyecto (para etiquetar memorias).
-                     Por defecto, nombre del directorio actual.
-            async_save: Si es True, guarda en hilo separado.
-        """
+        # Unificado con el directorio por defecto de Engram
         self.data_dir = data_dir or Path.home() / ".engram"
         self.project = project or Config.PROJECT_ROOT.name
         self.async_save = async_save
 
-        # Establecer ENGRAM_DATA_DIR para que Engram use este directorio
         os.environ["ENGRAM_DATA_DIR"] = str(self.data_dir)
 
-        # Verificar disponibilidad
         self._available = self._check_available()
         if not self._available:
             logger.warning(
@@ -58,14 +47,14 @@ class EngramMemory:
                 "Instala con: brew install engram (o descarga el binario)."
             )
         else:
-            logger.info("Engram disponible. Data dir: %s", self.data_dir)
+            logger.info(
+                "Engram disponible. Data dir: %s | Project: %s", self.data_dir, self.project
+            )
 
     def _check_available(self) -> bool:
-        """Verifica que el binario de Engram existe y es ejecutable."""
         return shutil.which("engram") is not None
 
     def _run_command(self, cmd: List[str], timeout: int = 10) -> tuple[bool, str, str]:
-        """Ejecuta un comando de Engram de forma segura."""
         if not self._available:
             return False, "", "Engram no disponible"
 
@@ -97,18 +86,6 @@ class EngramMemory:
         source: str = "aiclient",
         async_mode: Optional[bool] = None,
     ) -> bool:
-        """
-        Guarda una memoria en Engram.
-
-        Args:
-            content: Texto de la memoria.
-            tags: Lista de etiquetas (se guardan como tipo/scope).
-            source: Fuente (se añade al contenido).
-            async_mode: Si es True, ejecuta en hilo separado.
-
-        Returns:
-            bool: True si se guardó correctamente (o se encoló).
-        """
         if not content or not content.strip():
             return False
         if not self._available:
@@ -130,20 +107,16 @@ class EngramMemory:
     def _save_sync(
         self, content: str, tags: Optional[List[str]] = None, source: str = "aiclient"
     ) -> bool:
-        """Implementación síncrona del guardado."""
-        # Usar las primeras 50 palabras como título
-        title = content[:50] + ("..." if len(content) > 50 else "")
+        # Título = primeras 50 caracteres
+        title = content[:50].strip() + ("..." if len(content) > 50 else "")
         msg = content
 
-        cmd = ["save", title, msg, "--project", self.project]
         if tags:
-            # Engram usa --type y --scope. Usamos --type para la primera etiqueta y --scope para el resto.
-            # O simplemente pasamos las etiquetas en el contenido.
-            # Como no hay forma directa, añadimos las tags al contenido.
-            msg_with_tags = f"[{', '.join(tags)}] {content}"
-            cmd = ["save", title, msg_with_tags, "--project", self.project]
+            msg = f"[{', '.join(tags)}] {content}"
 
+        cmd = ["save", title, msg, "--project", self.project]
         success, stdout, stderr = self._run_command(cmd)
+
         if not success:
             logger.debug("Error guardando memoria: %s", stderr or stdout)
         else:
@@ -152,14 +125,12 @@ class EngramMemory:
 
     def recall(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
         """
-        Busca memorias en Engram.
+        Busca memorias en Engram y parsea el formato real de v1.20:
 
-        Args:
-            query: Texto de búsqueda.
-            limit: Número máximo de resultados.
-
-        Returns:
-            Lista de memorias, cada una con 'content', 'id' y 'score'.
+        Found N memories:
+        [1] #13 (manual) — Título corto
+            Contenido de la memoria
+            2026-07-30 15:46:16 | project: aiclient | scope: project
         """
         if not query or not query.strip():
             return []
@@ -173,30 +144,61 @@ class EngramMemory:
             logger.debug("Error o sin resultados en search: %s", stderr)
             return []
 
-        # Engram devuelve texto plano. Parseamos líneas que empiecen con número o bullet.
-        # Ejemplo:
-        #   1. Mi color favorito es el azul  (score: -0.45)
-        #   2. Otro recuerdo
-        results = []
-        lines = stdout.splitlines()
-        for line in lines:
-            # Intentar extraer número y contenido
-            import re
+        results: List[Dict[str, Any]] = []
+        current: Optional[Dict[str, Any]] = None
 
-            match = re.match(r"\s*(\d+)\.\s+(.*?)(?:\s+\(score:\s*([\d.-]+)\))?$", line)
-            if match:
-                idx = int(match.group(1))
-                content = match.group(2).strip()
-                score_str = match.group(3)
-                score = float(score_str) if score_str else 0.0
-                results.append(
-                    {
-                        "id": str(idx),
-                        "content": content,
-                        "score": score,
-                    }
-                )
-        return results
+        for line in stdout.splitlines():
+            line = line.rstrip()
+
+            # Cabecera: [1] #13 (manual) — Título...
+            header = re.match(
+                r"^\[(\d+)\]\s+#(\d+)\s+\(([^)]+)\)\s+[—\-]\s+(.*)$",
+                line,
+            )
+            if header:
+                if current:
+                    results.append(current)
+
+                current = {
+                    "id": header.group(2),  # ID real de Engram
+                    "index": int(header.group(1)),
+                    "type": header.group(3),
+                    "title": header.group(4).strip(),
+                    "content": "",
+                    "score": 0.0,
+                }
+                continue
+
+            if current is None:
+                continue
+
+            # Línea de contenido (indentada) — ignoramos la línea de fecha/metadata
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            # Saltar líneas de metadata (fecha | project: ... | scope: ...)
+            if re.match(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}", stripped):
+                continue
+            if "project:" in stripped and "scope:" in stripped:
+                continue
+
+            # Contenido real
+            if line.startswith(" ") or line.startswith("\t"):
+                if current["content"]:
+                    current["content"] += " " + stripped
+                else:
+                    current["content"] = stripped
+
+        if current:
+            results.append(current)
+
+        # Si no hay content, usar el title
+        for r in results:
+            if not r.get("content"):
+                r["content"] = r.get("title", "")
+
+        return results[:limit]
 
     def get_context(self, query: str, limit: int = 5) -> str:
         """Recupera memorias y las formatea para inyectarlas en un prompt."""
@@ -206,16 +208,13 @@ class EngramMemory:
 
         lines = ["=== MEMORIA RECUPERADA (Engram) ==="]
         for m in memories:
-            content = m.get("content", "")
-            if not content:
-                continue
+            content = m.get("content") or m.get("title") or ""
             if len(content) > 500:
                 content = content[:497] + "..."
             lines.append(f"- {content}")
         return "\n".join(lines)
 
     def stats(self) -> Optional[Dict[str, Any]]:
-        """Obtiene estadísticas de Engram."""
         if not self._available:
             return None
 
@@ -224,11 +223,7 @@ class EngramMemory:
         if not success or not stdout:
             return None
 
-        # Parsear estadísticas (texto plano)
-        # Ejemplo:
-        #   Total memories: 42
-        #   ...
-        stats = {}
+        stats: Dict[str, Any] = {}
         for line in stdout.splitlines():
             if ":" in line:
                 key, val = line.split(":", 1)
@@ -236,9 +231,6 @@ class EngramMemory:
         return stats
 
     def forget(self, memory_id: str) -> bool:
-        """
-        Elimina una memoria por su ID (observación).
-        """
         if not self._available:
             return False
 
