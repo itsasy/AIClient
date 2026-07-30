@@ -31,28 +31,52 @@ class PlannerAgent(Agent):
         skill_name: str = None,
         skill_params: dict = None,
     ) -> str:
-        """
-        Procesa una tarea de planificación.
-        Si se proporciona una spec (por nombre o ID), la carga y genera un plan.
-        Si no, intenta generar una spec a partir de la tarea.
-        """
-        # 1. Detectar si el usuario menciona una spec existente
+        import re
+
+        is_create_intent = bool(
+            re.search(r"\b(crea|crear|genera|generar|nueva|nuevo|haz|hazme)\b", task, re.IGNORECASE)
+            and re.search(r"\b(spec|especificación|plan)\b", task, re.IGNORECASE)
+        )
+
         spec_name = self._extract_spec_name(task)
+
+        if is_create_intent:
+            logger.info("Intención de crear nueva Spec detectada.")
+            spec = self._generate_spec_from_task(task, context)
+            if not spec:
+                return "❌ No se pudo generar una especificación válida para la tarea."
+
+            if spec_name:
+                spec["name"] = spec_name
+
+            self.spec_manager.save_spec(
+                name=spec["name"],
+                description=spec["description"],
+                objective=spec["objective"],
+                criteria=spec["criteria"],
+                constraints=spec.get("constraints", []),
+                steps=spec.get("steps", []),
+            )
+
+            return (
+                f"✅ **Spec '{spec['name']}'** creada correctamente.\n\n"
+                f"**Objetivo:** {spec.get('objective', '')}\n\n"
+                f"**Descripción:** {spec.get('description', '')}\n\n"
+                f"Usa: `ai \"ejecuta spec {spec['name']}\"` para ejecutarla."
+            )
+
         if spec_name:
             spec = self.spec_manager.load_spec_by_name(spec_name)
             if spec:
                 logger.info("Cargando Spec existente: %s", spec_name)
                 return self._execute_spec(spec, context)
-            else:
-                return f"⚠️ No se encontró la especificación '{spec_name}'. ¿Quieres crearla?"
+            return f"⚠️ No se encontró la especificación '{spec_name}'. ¿Quieres crearla?"
 
-        # 2. Si no hay spec, generar una a partir de la tarea y luego ejecutarla
         logger.info("Generando nueva Spec a partir de la tarea: %s", task[:100])
         spec = self._generate_spec_from_task(task, context)
         if not spec:
             return "❌ No se pudo generar una especificación válida para la tarea."
 
-        # Guardar la spec generada
         self.spec_manager.save_spec(
             name=spec["name"],
             description=spec["description"],
