@@ -1,5 +1,7 @@
 import json
 import logging
+from typing import Optional
+
 from agents.base import Agent
 from core.spec_manager import SpecManager
 from core.engram_memory import EngramMemory
@@ -7,6 +9,7 @@ from llm.provider_manager import ProviderManager
 from llm.provider_selector import ProviderSelector
 from skills.manager import SkillManager
 from agents.self_critic import SelfCriticAgent
+
 
 logger = logging.getLogger(__name__)
 
