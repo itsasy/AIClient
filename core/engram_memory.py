@@ -1,8 +1,10 @@
 import json
 import logging
+import os
 import shutil
 import subprocess
 import threading
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 
 from core.config import Config
@@ -12,35 +14,58 @@ logger = logging.getLogger(__name__)
 
 class EngramMemory:
     """
-    Cliente para Engram v1.20.0 – Memoria persistente para AIClient.
-    Compatible con salida en texto (no JSON) de `engram stats` y `engram search`.
+    Cliente para Engram v1.20+.
+
+    Utiliza los comandos CLI:
+    - save <title> <msg>   → guardar memoria
+    - search <query>       → buscar memorias
+    - stats                → estadísticas
+    - delete <obs_id>      → eliminar memoria
+
+    La base de datos se almacena en el directorio definido por ENGRAM_DATA_DIR.
+    Por defecto, usamos el directorio del proyecto (PROJECT_ROOT).
     """
 
     def __init__(
         self,
-        project: str = "aiclient",
+        data_dir: Optional[Path] = None,
+        project: Optional[str] = None,
         async_save: bool = True,
     ):
-        self.project = project
+        """
+        Inicializa el cliente de Engram.
+
+        Args:
+            data_dir: Directorio donde Engram almacenará sus datos.
+                     Por defecto, Config.PROJECT_ROOT / ".engram".
+            project: Nombre del proyecto (para etiquetar memorias).
+                     Por defecto, nombre del directorio actual.
+            async_save: Si es True, guarda en hilo separado.
+        """
+        self.data_dir = data_dir or Config.PROJECT_ROOT / ".engram"
+        self.project = project or Config.PROJECT_ROOT.name
         self.async_save = async_save
 
+        # Establecer ENGRAM_DATA_DIR para que Engram use este directorio
+        os.environ["ENGRAM_DATA_DIR"] = str(self.data_dir)
+
+        # Verificar disponibilidad
         self._available = self._check_available()
         if not self._available:
             logger.warning(
                 "Engram no está instalado o no se encuentra en el PATH. "
-                "La memoria persistente estará desactivada."
+                "La memoria persistente estará desactivada. "
+                "Instala con: brew install engram (o descarga el binario)."
             )
         else:
-            logger.info("Engram disponible")
+            logger.info("Engram disponible. Data dir: %s", self.data_dir)
 
     def _check_available(self) -> bool:
+        """Verifica que el binario de Engram existe y es ejecutable."""
         return shutil.which("engram") is not None
 
-    def _run_command(
-        self,
-        cmd: List[str],
-        timeout: int = 10,
-    ) -> tuple[bool, str, str]:
+    def _run_command(self, cmd: List[str], timeout: int = 10) -> tuple[bool, str, str]:
+        """Ejecuta un comando de Engram de forma segura."""
         if not self._available:
             return False, "", "Engram no disponible"
 
@@ -53,11 +78,7 @@ class EngramMemory:
                 timeout=timeout,
                 check=False,
             )
-            return (
-                result.returncode == 0,
-                result.stdout.strip(),
-                result.stderr.strip(),
-            )
+            return result.returncode == 0, result.stdout.strip(), result.stderr.strip()
         except subprocess.TimeoutExpired:
             logger.warning("Comando Engram agotó el tiempo de espera: %s", full_cmd)
             return False, "", "Timeout"
@@ -76,113 +97,116 @@ class EngramMemory:
         source: str = "aiclient",
         async_mode: Optional[bool] = None,
     ) -> bool:
+        """
+        Guarda una memoria en Engram.
+
+        Args:
+            content: Texto de la memoria.
+            tags: Lista de etiquetas (se guardan como tipo/scope).
+            source: Fuente (se añade al contenido).
+            async_mode: Si es True, ejecuta en hilo separado.
+
+        Returns:
+            bool: True si se guardó correctamente (o se encoló).
+        """
         if not content or not content.strip():
             return False
-
         if not self._available:
             return False
 
         use_async = async_mode if async_mode is not None else self.async_save
 
-        words = content.split()
-        title = " ".join(words[:6]) if words else "memory"
-        if len(title) > 60:
-            title = title[:57] + "..."
-
         if use_async:
             thread = threading.Thread(
                 target=self._save_sync,
-                args=(title, content, tags, source),
+                args=(content, tags, source),
                 daemon=True,
             )
             thread.start()
-            logger.debug("Memoria encolada: %s", title)
             return True
         else:
-            return self._save_sync(title, content, tags, source)
+            return self._save_sync(content, tags, source)
 
     def _save_sync(
-        self,
-        title: str,
-        content: str,
-        tags: Optional[List[str]] = None,
-        source: str = "aiclient",
+        self, content: str, tags: Optional[List[str]] = None, source: str = "aiclient"
     ) -> bool:
-        cmd = ["save", title, content, "--project", self.project]
+        """Implementación síncrona del guardado."""
+        # Usar las primeras 50 palabras como título
+        title = content[:50] + ("..." if len(content) > 50 else "")
+        msg = content
 
+        cmd = ["save", title, msg, "--project", self.project]
         if tags:
-            cmd.extend(["--tags", ",".join(tags)])
-        if source and source not in (tags or []):
-            cmd.extend(["--tags", source])
+            # Engram usa --type y --scope. Usamos --type para la primera etiqueta y --scope para el resto.
+            # O simplemente pasamos las etiquetas en el contenido.
+            # Como no hay forma directa, añadimos las tags al contenido.
+            msg_with_tags = f"[{', '.join(tags)}] {content}"
+            cmd = ["save", title, msg_with_tags, "--project", self.project]
 
-        success, stdout, stderr = self._run_command(cmd, timeout=15)
+        success, stdout, stderr = self._run_command(cmd)
         if not success:
-            logger.debug("Error guardando: %s", stderr or stdout)
+            logger.debug("Error guardando memoria: %s", stderr or stdout)
         else:
-            logger.debug("Guardado: %s", title)
+            logger.debug("Memoria guardada: %s", title)
         return success
 
-    def recall(
-        self,
-        query: str,
-        limit: int = 5,
-    ) -> List[Dict[str, Any]]:
+    def recall(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+        """
+        Busca memorias en Engram.
+
+        Args:
+            query: Texto de búsqueda.
+            limit: Número máximo de resultados.
+
+        Returns:
+            Lista de memorias, cada una con 'content', 'id' y 'score'.
+        """
         if not query or not query.strip():
             return []
-
         if not self._available:
             return []
 
-        cmd = [
-            "search",
-            query,
-            "--project",
-            self.project,
-            "--limit",
-            str(limit),
-        ]
-
+        cmd = ["search", query, "--limit", str(limit), "--project", self.project]
         success, stdout, stderr = self._run_command(cmd, timeout=15)
+
         if not success or not stdout:
-            logger.debug("Error o sin resultados: %s", stderr)
+            logger.debug("Error o sin resultados en search: %s", stderr)
             return []
 
-        if "No memories found" in stdout:
-            return []
-
+        # Engram devuelve texto plano. Parseamos líneas que empiecen con número o bullet.
+        # Ejemplo:
+        #   1. Mi color favorito es el azul  (score: -0.45)
+        #   2. Otro recuerdo
         results = []
-        current = {}
-        for line in stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            if line.startswith("ID:"):
-                if current:
-                    results.append(current)
-                    current = {}
-                current["id"] = line.replace("ID:", "").strip()
-            elif line.startswith("Title:"):
-                current["title"] = line.replace("Title:", "").strip()
-            elif line.startswith("Content:"):
-                current["content"] = line.replace("Content:", "").strip()
-            elif line.startswith("Score:"):
-                try:
-                    current["score"] = float(line.replace("Score:", "").strip())
-                except ValueError:
-                    current["score"] = 0.0
-        if current:
-            results.append(current)
+        lines = stdout.splitlines()
+        for line in lines:
+            # Intentar extraer número y contenido
+            import re
 
+            match = re.match(r"\s*(\d+)\.\s+(.*?)(?:\s+\(score:\s*([\d.-]+)\))?$", line)
+            if match:
+                idx = int(match.group(1))
+                content = match.group(2).strip()
+                score_str = match.group(3)
+                score = float(score_str) if score_str else 0.0
+                results.append(
+                    {
+                        "id": str(idx),
+                        "content": content,
+                        "score": score,
+                    }
+                )
         return results
 
     def get_context(self, query: str, limit: int = 5) -> str:
+        """Recupera memorias y las formatea para inyectarlas en un prompt."""
         memories = self.recall(query, limit=limit)
         if not memories:
             return ""
 
         lines = ["=== MEMORIA RECUPERADA (Engram) ==="]
         for m in memories:
-            content = m.get("content") or m.get("title", "")
+            content = m.get("content", "")
             if not content:
                 continue
             if len(content) > 500:
@@ -191,39 +215,35 @@ class EngramMemory:
         return "\n".join(lines)
 
     def stats(self) -> Optional[Dict[str, Any]]:
+        """Obtiene estadísticas de Engram."""
         if not self._available:
             return None
 
-        success, stdout, _ = self._run_command(["stats"], timeout=10)
+        cmd = ["stats", "--project", self.project]
+        success, stdout, _ = self._run_command(cmd)
         if not success or not stdout:
             return None
 
+        # Parsear estadísticas (texto plano)
+        # Ejemplo:
+        #   Total memories: 42
+        #   ...
         stats = {}
         for line in stdout.splitlines():
-            line = line.strip()
             if ":" in line:
-                key, value = line.split(":", 1)
-                key = key.strip().lower().replace(" ", "_")
-                value = value.strip()
-                if value.isdigit():
-                    value = int(value)
-                elif value == "none yet":
-                    value = 0
-                stats[key] = value
-
-        # Compatibilidad
-        if "observations" in stats:
-            stats["total_memories"] = stats["observations"]
-        if "sessions" in stats:
-            stats["total_sessions"] = stats["sessions"]
-
+                key, val = line.split(":", 1)
+                stats[key.strip()] = val.strip()
         return stats
 
     def forget(self, memory_id: str) -> bool:
+        """
+        Elimina una memoria por su ID (observación).
+        """
         if not self._available:
             return False
-        # `delete` no soporta --project, pero el ID es global
-        success, _, _ = self._run_command(["delete", memory_id], timeout=10)
+
+        cmd = ["delete", memory_id, "--project", self.project]
+        success, _, _ = self._run_command(cmd)
         return success
 
     def is_available(self) -> bool:
