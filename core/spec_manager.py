@@ -80,35 +80,34 @@ class SpecManager:
         return None
 
     def load_spec_by_name(self, name: str) -> Optional[Dict]:
-        """Carga una spec por su nombre."""
-        memories = self.engram.recall(f"spec_{name}", limit=10)
-        for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec" and data.get("name") == name:
+        for query in (name, f"spec {name}", "spec"):
+            memories = self.engram.recall(query, limit=20)
+            for m in memories:
+                data = self._parse_spec_from_memory(m)
+                if data and data.get("name") == name:
                     return data
-            except json.JSONDecodeError:
-                continue
         return None
 
     def list_specs(self) -> List[Dict]:
-        """Lista todas las specs disponibles."""
         memories = self.engram.recall("spec", limit=50)
+        seen = set()
         specs = []
         for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec":
-                    specs.append(
-                        {
-                            "name": data.get("name"),
-                            "description": data.get("description"),
-                            "status": data.get("status"),
-                            "created_at": data.get("created_at"),
-                        }
-                    )
-            except json.JSONDecodeError:
+            data = self._parse_spec_from_memory(m)
+            if not data:
                 continue
+            name = data.get("name")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            specs.append(
+                {
+                    "name": name,
+                    "description": data.get("description"),
+                    "status": data.get("status"),
+                    "created_at": data.get("created_at"),
+                }
+            )
         return specs
 
     def update_status(self, name: str, status: str):
@@ -140,4 +139,25 @@ class SpecManager:
                     return data.get("created_at")
             except json.JSONDecodeError:
                 continue
+        return None
+
+    def _parse_spec_from_memory(self, m: dict) -> Optional[Dict]:
+        """Intenta reconstruir una spec desde una memoria de Engram."""
+        content = (m.get("content") or "").strip()
+        title = (m.get("title") or "").strip()
+        raw = content or title
+        if not raw:
+            return None
+
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start == -1 or end <= start:
+            return None
+
+        try:
+            data = json.loads(raw[start:end])
+            if data.get("type") == "spec" and data.get("name"):
+                return data
+        except json.JSONDecodeError:
+            return None
         return None
