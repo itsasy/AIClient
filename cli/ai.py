@@ -14,7 +14,6 @@ from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
 
-# Intentar importar rich para salida mejorada
 try:
     from rich.console import Console
     from rich.table import Table
@@ -45,11 +44,9 @@ Ejemplos:
         """,
     )
 
-    # Opciones de control
     parser.add_argument("--chat", action="store_true", help="Modo chat interactivo")
     parser.add_argument("--tui", action="store_true", help="Modo TUI (interfaz en terminal)")
 
-    # Opciones de comandos
     parser.add_argument(
         "--memory", nargs="+", metavar="texto", help="Buscar en memoria persistente"
     )
@@ -61,14 +58,13 @@ Ejemplos:
     parser.add_argument("--tags", default="", help="Etiquetas para --ingest (separadas por coma)")
     parser.add_argument("--forget", metavar="id", help="Eliminar una memoria por ID")
 
-    # Consulta directa (todo lo que no sea opción)
     parser.add_argument("query", nargs="*", help="Tu instrucción")
 
     args = parser.parse_args()
 
-    # ================================================================
+    # =============================================================
     # 0. TUI
-    # ================================================================
+    # =============================================================
     if args.tui:
         try:
             from tui.app import main as tui_main
@@ -80,9 +76,9 @@ Ejemplos:
             )
         return
 
-    # ================================================================
-    # 1. COMANDOS CON OPCIONES
-    # ================================================================
+    # =============================================================
+    # 1. COMANDOS CON OPCIONES (se ejecutan ANTES de la consulta directa)
+    # =============================================================
 
     # --memory
     if args.memory is not None:
@@ -226,9 +222,9 @@ Ejemplos:
                 print(f"❌ No se pudo eliminar la memoria {args.forget}.")
         return
 
-    # ================================================================
-    # 2. CONSULTA DIRECTA (si no se usó ninguna opción)
-    # ================================================================
+    # =============================================================
+    # 2. CONSULTA DIRECTA (solo si NO se usó ninguna opción)
+    # =============================================================
     query = " ".join(args.query).strip()
 
     if not query and not args.chat:
