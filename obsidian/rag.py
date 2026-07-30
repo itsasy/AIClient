@@ -1,4 +1,7 @@
+import logging
 from core.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class RAG:
@@ -13,16 +16,24 @@ class RAG:
 
                 self._search = ObsidianSearch()
             else:
-                # Marcar como "no disponible" para no reintentar
                 self._search = False
         return self._search if self._search is not False else None
 
     def get_relevant_context(self, query: str, max_results: int = 8) -> str:
+        """
+        Obtiene contexto relevante de Obsidian mediante búsqueda híbrida.
+        Si falla, devuelve un mensaje de error informativo.
+        """
         search = self._get_search()
         if not search:
             return ""
 
-        results = search.search(query, max_results=max_results)
+        try:
+            results = search.search(query, max_results=max_results)
+        except Exception as e:
+            logger.warning("Error al buscar en Obsidian: %s", e)
+            return "No se pudo obtener contexto de Obsidian (error interno).\n"
+
         if not results:
             return "No se encontró información relevante en Obsidian.\n"
 

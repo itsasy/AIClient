@@ -1,10 +1,12 @@
 import hashlib
-import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import List, Dict, Any
 
 from core.config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class ObsidianIndex:
@@ -45,31 +47,24 @@ class ObsidianIndex:
         if not self.vault_path.exists():
             return
 
-        # Obtener todos los archivos .md
         current_files = {}
         for md_file in self.vault_path.rglob("*.md"):
             rel_path = str(md_file.relative_to(self.vault_path))
             current_files[rel_path] = md_file
 
         with sqlite3.connect(str(self.DB_PATH)) as conn:
-            # Obtener archivos indexados
             indexed_rows = conn.execute("SELECT path, mtime FROM files_fts").fetchall()
             indexed_files = {row[0]: row[1] for row in indexed_rows}
 
-            # Archivos a añadir o actualizar
             for rel_path, md_file in current_files.items():
                 new_mtime = self._get_file_mtime(md_file)
-                if (
-                    rel_path not in indexed_files
-                    or indexed_files[rel_path] != new_mtime
-                ):
+                if rel_path not in indexed_files or indexed_files[rel_path] != new_mtime:
                     content = md_file.read_text(encoding="utf-8", errors="ignore")
                     conn.execute(
                         "INSERT OR REPLACE INTO files_fts (path, content, mtime) VALUES (?, ?, ?)",
                         (rel_path, content, new_mtime),
                     )
 
-            # Archivos a eliminar
             for rel_path in indexed_files:
                 if rel_path not in current_files:
                     conn.execute("DELETE FROM files_fts WHERE path = ?", (rel_path,))
@@ -77,7 +72,12 @@ class ObsidianIndex:
             conn.commit()
 
     def search(self, query: str, max_results: int = 10) -> List[Dict[str, Any]]:
-        """Busca en el índice FTS5 y devuelve fragmentos relevantes."""
+        """
+        Busca en el índice FTS5 y devuelve fragmentos relevantes.
+
+        La consulta se envuelve entre comillas dobles para evitar que FTS5
+        interprete palabras como nombres de columna.
+        """
         self.sync()
 
         if not query or not query.strip():
@@ -86,10 +86,10 @@ class ObsidianIndex:
         with sqlite3.connect(str(self.DB_PATH)) as conn:
             conn.row_factory = sqlite3.Row
 
-            # Escapar comillas simples para la consulta FTS
+            # Escapar comillas simples y envolver la consulta entre comillas dobles
             clean_query = query.replace("'", "''")
+            clean_query = f'"{clean_query}"'  # <--- SOLUCIÓN: evita "no such column"
 
-            # Usar búsqueda FTS con ranking BM25
             sql = """
                 SELECT
                     path,
@@ -100,11 +100,14 @@ class ObsidianIndex:
                 ORDER BY rank
                 LIMIT ?
             """
-            rows = conn.execute(sql, (clean_query, max_results)).fetchall()
+            try:
+                rows = conn.execute(sql, (clean_query, max_results)).fetchall()
+            except sqlite3.OperationalError as e:
+                logger.warning("Error en búsqueda FTS (tabla vacía o sintaxis): %s", e)
+                return []
 
             results = []
             for row in rows:
-                # Obtener contenido completo para el contexto (opcional)
                 full_content = conn.execute(
                     "SELECT content FROM files_fts WHERE path = ?", (row["path"],)
                 ).fetchone()
@@ -113,7 +116,7 @@ class ObsidianIndex:
                         "path": row["path"],
                         "snippet": row["snippet"],
                         "content": full_content["content"] if full_content else "",
-                        "score": -row["rank"],  # rank es menor = mejor
+                        "score": -row["rank"],
                     }
                 )
             return results
