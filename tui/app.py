@@ -53,7 +53,7 @@ class ContextPanel(Static):
     context_content = reactive("", recompose=True)
 
     def render(self) -> str:
-        return f"[bold]📊 Contexto[/bold]\n\n{self.context_content}"
+        return f"[bold]📊 Contexto[/bold]\n\n{self.context_content or 'Esperando contexto...'}"
 
 
 class TUIApp(App):
@@ -120,9 +120,7 @@ class TUIApp(App):
                     yield ChatLog(id="chat-log", markup=True, wrap=True, highlight=True)
                 # Panel derecho: contexto
                 with Container(id="context-panel"):
-                    yield ContextPanel(
-                        id="context-content", context_content="Esperando contexto..."
-                    )
+                    yield ContextPanel(id="context-content")
             # Área de entrada
             with Container(id="input-area"):
                 yield Input(
@@ -136,6 +134,10 @@ class TUIApp(App):
         self.query_one("#input-field").focus()
         self.log_system("🚀 AIClient TUI iniciado")
         self.log_system("💡 Escribe /help para ver los comandos disponibles")
+
+        # Inicializar el panel de contexto
+        panel = self.query_one("#context-content", ContextPanel)
+        panel.context_content = "Esperando contexto..."
         self.update_context()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -271,7 +273,7 @@ class TUIApp(App):
 
     def update_context(self) -> None:
         """Actualiza el panel de contexto con información relevante."""
-        context_panel = self.query_one("#context-content")
+        context_panel = self.query_one("#context-content", ContextPanel)
         try:
             # Obtener contexto actual (memoria reciente, proyecto, etc.)
             # Usamos una consulta genérica para obtener algunas memorias
