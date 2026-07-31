@@ -43,14 +43,10 @@ class PromptBuilder:
         Returns:
             str: Prompt listo para enviar al LLM.
         """
-        # ------------------------------------------------------------
-        # 1. RECUPERAR Y FILTRAR CONTEXTO (ContextRetriever)
-        # ------------------------------------------------------------
+        # 1. Recuperar y filtrar contexto
         context = ContextRetriever.retrieve(context)
 
-        # ------------------------------------------------------------
-        # 2. INYECTAR ESTÁNDARES APRENDIDOS (ContinuousLearner)
-        # ------------------------------------------------------------
+        # 2. Inyectar estándares aprendidos
         learner = ContinuousLearner()
         standards = learner.get_context()
         if standards:
@@ -58,14 +54,10 @@ class PromptBuilder:
                 context = {}
             context["standards"] = standards
 
-        # ------------------------------------------------------------
-        # 3. FORMATEAR CONTEXTO PARA EL PROMPT (texto plano)
-        # ------------------------------------------------------------
+        # 3. Formatear contexto a texto plano
         context_text = PromptBuilder._format_context(context)
 
-        # ------------------------------------------------------------
-        # 4. SELECCIONAR PLANTILLA SEGÚN EL TIPO DE SKILL
-        # ------------------------------------------------------------
+        # 4. Seleccionar plantilla según skill
         if not skill_name or not skill_result:
             return PromptBuilder._build_general_prompt(task, context_text)
 
@@ -81,16 +73,21 @@ class PromptBuilder:
         if skill_type == "readme":
             return PromptBuilder._build_readme(task, context_text, payload)
 
-        # Fallback seguro: si el tipo de skill no está contemplado
         return PromptBuilder._build_general_prompt(task, context_text)
 
     # ------------------------------------------------------------
-    # MÉTODOS PRIVADOS: CONSTRUCCIÓN DE PROMPTS POR TIPO
+    # Construcción de prompts por tipo
     # ------------------------------------------------------------
 
     @staticmethod
     def _build_general_prompt(task: str, context_text: str) -> str:
         template = PromptBuilder._load_template("general")
+        # Refuerzo si hay estándares aprendidos
+        if context_text and "ESTÁNDARES APRENDIDOS" in context_text:
+            context_text += (
+                "\n\nRECUERDA: Las preferencias del usuario listadas arriba son obligatorias. "
+                "Debes seguirlas en tu respuesta."
+            )
         return template.format(
             task=task,
             context_text=context_text or "No hay contexto adicional relevante.",
@@ -118,9 +115,7 @@ class PromptBuilder:
 
     @staticmethod
     def _build_project_analysis(task: str, context_text: str, payload) -> str:
-        snapshot = (
-            payload.get("snapshot", "") if isinstance(payload, dict) else str(payload)
-        )
+        snapshot = payload.get("snapshot", "") if isinstance(payload, dict) else str(payload)
         template = PromptBuilder._load_template("project_analysis")
         return template.format(
             base_task=task,
@@ -140,7 +135,7 @@ class PromptBuilder:
         )
 
     # ------------------------------------------------------------
-    # FORMATEO DEL CONTEXTO (convierte dict → texto plano)
+    # Formateo del contexto
     # ------------------------------------------------------------
 
     @staticmethod
@@ -156,35 +151,33 @@ class PromptBuilder:
 
         sections = []
 
-        # 1. Proyecto (snapshot)
         if context.get("project"):
             sections.append(f"=== PROYECTO ===\n{context['project']}")
 
-        # 2. Obsidian (RAG)
         if context.get("obsidian"):
             sections.append(f"=== OBSIDIAN ===\n{context['obsidian']}")
 
-        # 3. Memoria conversacional (historial reciente)
         if context.get("memory"):
             sections.append(f"=== MEMORIA CONVERSACIONAL ===\n{context['memory']}")
 
-        # 4. Memoria persistente (Engram)
         if context.get("engram"):
             sections.append(f"=== MEMORIA RECUPERADA (Engram) ===\n{context['engram']}")
 
-        # 5. Estándares aprendidos (ContinuousLearner)
         if context.get("standards"):
-            sections.append(f"=== ESTÁNDARES APRENDIDOS ===\n{context['standards']}")
+            standards_text = context["standards"]
+            if "ESTÁNDARES APRENDIDOS" in standards_text:
+                sections.append(standards_text)
+            else:
+                sections.append(
+                    "=== ESTÁNDARES APRENDIDOS (OBLIGATORIO RESPETAR) ===\n" f"{standards_text}"
+                )
 
-        # 6. Archivos relevantes (si los hubiera)
         if context.get("files"):
             sections.append(f"=== ARCHIVOS RELEVANTES ===\n{context['files']}")
 
-        # 7. Arquitectura (si se proporciona explícitamente)
         if context.get("architecture"):
             sections.append(f"=== ARQUITECTURA ===\n{context['architecture']}")
 
-        # 8. Spec / Plan (para tareas de SDD, futuro)
         if context.get("spec"):
             sections.append(f"=== SPEC / PLAN ===\n{context['spec']}")
 
