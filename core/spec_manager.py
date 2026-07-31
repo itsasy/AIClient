@@ -1,7 +1,10 @@
 import json
 import logging
+from pathlib import Path
 from typing import Optional, Dict, Any, List
 from datetime import datetime
+
+from core.config import Config
 from core.engram_memory import EngramMemory
 
 logger = logging.getLogger(__name__)
@@ -10,11 +13,21 @@ logger = logging.getLogger(__name__)
 class SpecManager:
     """
     Gestiona especificaciones (Specs) para el flujo SDD.
-    Cada Spec es un documento estructurado que se guarda en Engram.
+
+    Fuente de verdad: archivos JSON en PROJECT_ROOT/.specs/
+    Engram se usa solo como índice/referencia corta.
     """
 
     def __init__(self):
         self.engram = EngramMemory()
+        self.specs_dir = Config.PROJECT_ROOT / ".specs"
+        self.specs_dir.mkdir(exist_ok=True)
+
+    def _spec_path(self, name: str) -> Path:
+        safe_name = "".join(c for c in name if c.isalnum() or c in ("-", "_")).strip()
+        if not safe_name:
+            safe_name = "unnamed_spec"
+        return self.specs_dir / f"{safe_name}.json"
 
     def save_spec(
         self,
@@ -26,138 +39,100 @@ class SpecManager:
         steps: List[Dict] = None,
     ) -> str:
         """
-        Guarda una nueva especificación en Engram.
-
-        Args:
-            name: Nombre corto de la spec.
-            description: Descripción detallada.
-            objective: Objetivo principal.
-            criteria: Lista de criterios de éxito.
-            constraints: Lista de restricciones (opcional).
-            steps: Lista de pasos sugeridos (opcional, se generará automáticamente).
+        Guarda una especificación en disco y registra un índice en Engram.
 
         Returns:
-            str: ID de la spec en Engram.
+            str: Nombre de la spec guardada.
         """
         spec = {
             "type": "spec",
             "name": name,
             "description": description,
             "objective": objective,
-            "criteria": criteria,
+            "criteria": criteria or [],
             "constraints": constraints or [],
             "steps": steps or [],
             "created_at": datetime.now().isoformat(),
-            "status": "draft",  # draft, planned, executing, completed, failed
+            "status": "draft",  # draft | planned | executing | completed | failed
         }
-        content = json.dumps(spec, ensure_ascii=False, indent=2)
+
+        path = self._spec_path(name)
+        path.write_text(
+            json.dumps(spec, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
         self.engram.save(
-            content,
+            f"Spec registrada: {name} — {(description or '')[:120]}",
             tags=["spec", f"spec_{name}", "sdd", "planning"],
             source="spec_manager",
+            async_mode=False,
         )
-        # Recuperamos el ID (Engram devuelve True/False, pero no el ID directamente.
-        # Para obtenerlo, hacemos una búsqueda por nombre)
-        spec_id = self._find_spec_id_by_name(name)
-        logger.info("Spec guardada: %s (ID: %s)", name, spec_id)
-        return spec_id
 
-    def load_spec(self, spec_id: str) -> Optional[Dict]:
-        """Carga una spec por su ID (buscando en Engram)."""
-        # Engram no tiene búsqueda por ID directa, así que usamos recall con filtro.
-        # Pero podemos buscar por tags: spec_{name}
-        # Para simplificar, usamos el nombre en lugar del ID.
-        # Mejor: almacenamos el ID en una variable de clase, pero usaremos el enfoque de búsqueda.
-        # Vamos a listar todas las specs y buscar por ID en el contenido.
-        memories = self.engram.recall("spec", limit=50)
-        for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec" and data.get("id") == spec_id:
-                    return data
-            except json.JSONDecodeError:
-                continue
-        return None
+        logger.info("Spec guardada en disco: %s", path)
+        return name
 
     def load_spec_by_name(self, name: str) -> Optional[Dict]:
-        for query in (name, f"spec {name}", "spec"):
-            memories = self.engram.recall(query, limit=20)
-            for m in memories:
-                data = self._parse_spec_from_memory(m)
-                if data and data.get("name") == name:
-                    return data
-        return None
+        """Carga una spec por su nombre desde disco."""
+        path = self._spec_path(name)
+        if not path.exists():
+            logger.debug("Spec no encontrada en disco: %s", path)
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("type") == "spec":
+                return data
+            return None
+        except Exception as e:
+            logger.exception("Error leyendo spec %s: %s", name, e)
+            return None
+
+    def load_spec(self, spec_id: str) -> Optional[Dict]:
+        """
+        Compatibilidad: intenta cargar por nombre (spec_id se trata como name).
+        """
+        return self.load_spec_by_name(spec_id)
 
     def list_specs(self) -> List[Dict]:
-        memories = self.engram.recall("spec", limit=50)
-        seen = set()
+        """Lista todas las specs disponibles en disco."""
         specs = []
-        for m in memories:
-            data = self._parse_spec_from_memory(m)
-            if not data:
+        for path in sorted(self.specs_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data.get("type") == "spec":
+                    specs.append(
+                        {
+                            "name": data.get("name"),
+                            "description": data.get("description"),
+                            "status": data.get("status"),
+                            "created_at": data.get("created_at"),
+                        }
+                    )
+            except Exception as e:
+                logger.debug("No se pudo leer %s: %s", path, e)
                 continue
-            name = data.get("name")
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            specs.append(
-                {
-                    "name": name,
-                    "description": data.get("description"),
-                    "status": data.get("status"),
-                    "created_at": data.get("created_at"),
-                }
-            )
         return specs
 
-    def update_status(self, name: str, status: str):
-        """Actualiza el estado de una spec."""
+    def update_status(self, name: str, status: str) -> None:
+        """Actualiza el estado de una spec en disco."""
         spec = self.load_spec_by_name(name)
         if not spec:
             logger.warning("Spec no encontrada: %s", name)
             return
+
         spec["status"] = status
-        # Guardar actualizada (sobrescribir)
-        self.save_spec(
-            name=spec["name"],
-            description=spec["description"],
-            objective=spec["objective"],
-            criteria=spec["criteria"],
-            constraints=spec.get("constraints"),
-            steps=spec.get("steps"),
+        path = self._spec_path(name)
+        path.write_text(
+            json.dumps(spec, ensure_ascii=False, indent=2),
+            encoding="utf-8",
         )
         logger.info("Spec %s actualizada a estado: %s", name, status)
 
-    def _find_spec_id_by_name(self, name: str) -> Optional[str]:
-        """Busca el ID de una spec por su nombre (usando recall)."""
-        memories = self.engram.recall(f"spec_{name}", limit=5)
-        for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec" and data.get("name") == name:
-                    # Engram no devuelve ID directamente, pero podemos usar el timestamp como ID
-                    return data.get("created_at")
-            except json.JSONDecodeError:
-                continue
-        return None
-
-    def _parse_spec_from_memory(self, m: dict) -> Optional[Dict]:
-        """Intenta reconstruir una spec desde una memoria de Engram."""
-        content = (m.get("content") or "").strip()
-        title = (m.get("title") or "").strip()
-        raw = content or title
-        if not raw:
-            return None
-
-        start = raw.find("{")
-        end = raw.rfind("}") + 1
-        if start == -1 or end <= start:
-            return None
-
-        try:
-            data = json.loads(raw[start:end])
-            if data.get("type") == "spec" and data.get("name"):
-                return data
-        except json.JSONDecodeError:
-            return None
-        return None
+    def delete_spec(self, name: str) -> bool:
+        """Elimina una spec del disco."""
+        path = self._spec_path(name)
+        if path.exists():
+            path.unlink()
+            logger.info("Spec eliminada: %s", name)
+            return True
+        return False
