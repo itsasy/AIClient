@@ -149,21 +149,15 @@ class TUIApp(App):
         if not message:
             return
 
-        # Comandos especiales (empiezan con /)
         if message.startswith("/"):
             await self.handle_command(message)
             return
 
-        # Mensaje normal → procesar con el orquestador
         self.log_user(message)
         self.log_system("⏳ Procesando...")
 
-        # Deshabilitar input mientras se procesa
         input_widget.disabled = True
-
-        # Ejecutar en worker para no bloquear la UI
-        worker = self.run_worker(self.process_query(message))
-        worker.name = "query_worker"
+        self.process_query(message)
 
     @work
     async def process_query(self, message: str) -> None:
