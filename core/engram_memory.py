@@ -196,19 +196,27 @@ class EngramMemory:
         return results[:limit]
 
     def get_context(self, query: str, limit: int = 5) -> str:
-        """Recupera memorias y las formatea para inyectarlas en un prompt."""
         memories = self.recall(query, limit=limit)
         if not memories:
             return ""
 
-        memories = sorted(memories, key=lambda x: x.get("id", 0), reverse=True)
+        def _id_num(m):
+            try:
+                return int(m.get("id") or 0)
+            except (TypeError, ValueError):
+                return 0
 
-        lines = ["=== MEMORIA RECUPERADA (Engram) ==="]
+        memories = sorted(memories, key=_id_num, reverse=True)
+
+        lines = [
+            "=== MEMORIA RECUPERADA (Engram) ===",
+            "Usa la memoria MÁS RECIENTE si hay datos contradictorios sobre el mismo hecho.",
+        ]
         for m in memories:
             content = m.get("content") or m.get("title") or ""
             if len(content) > 500:
                 content = content[:497] + "..."
-            lines.append(f"- {content}")
+            lines.append(f"- [id={m.get('id')}] {content}")
         return "\n".join(lines)
 
     def stats(self) -> Optional[Dict[str, Any]]:
