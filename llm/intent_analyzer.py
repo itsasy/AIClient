@@ -147,28 +147,29 @@ class IntentAnalyzer:
                 return IntentResult("ingest", {"filepath": file_match.group(1)})
 
         # ------------------------------------------------------------
-        # 8. DETECCIÓN DE ESCRITURA DE ARCHIVOS (NUEVO)
+        # 8. NUEVO: DETECCIÓN DE ESCRITURA DE ARCHIVOS (write_file)
         # ------------------------------------------------------------
-        # Detecta cuando el usuario pide crear/guardar/escribir un archivo
-        # con una extensión común (html, js, css, py, json, txt, md, etc.)
         if re.search(
-            r"\b(crea|genera|escribe|guarda|escribir|crear|generar)\b.*\b(archivo|fichero)\b",
+            r"\b(crea|genera|escribe|guarda|exporta)\b.*\b(archivo|fichero|código|codigo|html|js|css|py|json)\b",
             q,
             re.IGNORECASE,
-        ) or re.search(r"\b\w+\.(html|js|css|py|json|txt|md|xml|yaml|yml|sh)\b", q, re.IGNORECASE):
-            # Extraer el nombre del archivo (si tiene extensión)
+        ):
             file_match = re.search(
-                r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml|sh))\b",
-                q,
-                re.IGNORECASE,
+                r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?", q, re.IGNORECASE
             )
-            if file_match:
-                filepath = file_match.group(1)
+            if not file_match:
+                ext_match = re.search(
+                    r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml))\b",
+                    q,
+                    re.IGNORECASE,
+                )
+                if ext_match:
+                    filepath = ext_match.group(1)
+                else:
+                    filepath = "output.html"
             else:
-                # Si no se especifica extensión, usar .html por defecto
-                filepath = "output.html"
+                filepath = file_match.group(1)
 
-            # El contenido lo generará el LLM posteriormente
             return IntentResult("write_file", {"path": filepath, "content": None})
 
         # ------------------------------------------------------------
