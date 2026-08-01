@@ -208,11 +208,36 @@ class EngramMemory:
 
         memories = sorted(memories, key=_id_num, reverse=True)
 
-        lines = [
-            "=== MEMORIA RECUPERADA (Engram) ===",
-            "Usa la memoria MÁS RECIENTE si hay datos contradictorios sobre el mismo hecho.",
-        ]
+        stable_facts = []
+        other_memories = []
         for m in memories:
+            content = m.get("content") or m.get("title") or ""
+            if any(
+                pattern in content.lower()
+                for pattern in ["favorito es", "preferido es", "= ", "es el", "es la"]
+            ):
+                stable_facts.append(m)
+            else:
+                other_memories.append(m)
+
+        if stable_facts:
+            best = stable_facts[0]
+            lines = [
+                "=== MEMORIA RECUPERADA (Engram) ===",
+                "🔵 **HECHO CONFIRMADO (más reciente):**",
+                f"- [id={best.get('id')}] {best.get('content', '')[:500]}",
+                "",
+                "▶️ Otras memorias (para contexto, pero prevalece el HECHO CONFIRMADO):",
+            ]
+            for m in other_memories[:3]:
+                content = m.get("content") or m.get("title") or ""
+                if len(content) > 200:
+                    content = content[:197] + "..."
+                lines.append(f"- [id={m.get('id')}] {content}")
+            return "\n".join(lines)
+
+        lines = ["=== MEMORIA RECUPERADA (Engram) ==="]
+        for m in memories[:limit]:
             content = m.get("content") or m.get("title") or ""
             if len(content) > 500:
                 content = content[:497] + "..."
