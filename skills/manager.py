@@ -9,7 +9,7 @@ from skills.code.sandbox import CodeSandboxSkill
 from skills.code.analyze import AnalyzeCodeSkill
 from skills.tools.docker import DockerTool
 from skills.tools.shell import ShellTool
-
+from skills.tools.write_file import WriteFileSkill
 
 class SkillManager:
     def __init__(self):
@@ -25,6 +25,7 @@ class SkillManager:
             "laravel_project": LaravelProjectSkill(),
             "full_project": FullProjectGeneratorSkill(),
             "ingest": IngestDocumentSkill(),
+            "write_file": WriteFileSkill(),
         }
 
     def execute(self, skill_name: str, **kwargs):
