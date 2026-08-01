@@ -32,6 +32,12 @@ class PlannerAgent(Agent):
             plan.original_task,
         )
 
+        # ------------------------------------------------
+        # Caso especial: crear archivo con contenido generado
+        # ------------------------------------------------
+        if plan.intent == "file_creation_with_generation":
+            return self._handle_file_generation(plan, context or {})
+
         generated_steps = self._generate_steps(
             plan,
             context or {},
@@ -160,3 +166,60 @@ Skills disponibles:
         output.append("", "Estado: listo para ejecución.")
 
         return "\n".join(output)
+
+    def _handle_file_generation(self, plan: ExecutionPlan, context: dict) -> str:
+        """
+        Maneja el caso especial de crear un archivo con contenido generado.
+        Genera el contenido usando el LLM y luego llama a write_file.
+        """
+        filepath = plan.params.get("filepath", "archivo.txt")
+        task_desc = plan.params.get("task_description", plan.original_task)
+
+        logger.info("Generando contenido para archivo: %s", filepath)
+
+        # 1. Generar contenido con el LLM (usando un prompt específico)
+        provider, fallback_chain = ProviderSelector.select(
+            task=task_desc,
+            skill_name="code",
+        )
+
+        content_prompt = f"""
+Genera el contenido para el archivo '{filepath}' basado en la siguiente tarea:
+
+{task_desc}
+
+Contexto adicional:
+{context}
+
+Devuelve SOLO el contenido del archivo, sin explicaciones adicionales, sin markdown, sin comillas. 
+El contenido debe ser directamente usable para el archivo.
+"""
+
+        try:
+            generated_content = self.provider_manager.generate(
+                content_prompt,
+                provider_name=provider,
+                fallback_chain=fallback_chain,
+            )
+        except Exception as e:
+            logger.exception("Error generando contenido")
+            return f"❌ Error generando contenido: {e}"
+
+        # 2. Ahora escribir el archivo con la skill write_file
+        # Primero, importar SkillManager dinámicamente (para evitar dependencia circular)
+        from skills.manager import SkillManager
+
+        skill_manager = SkillManager()
+        try:
+            result = skill_manager.execute(
+                "write_file",
+                path=filepath,
+                content=generated_content,
+            )
+            if result.get("payload", {}).get("ok"):
+                return f"✅ Archivo '{filepath}' creado correctamente con contenido generado.\n\nRuta: {result['payload']['path']}"
+            else:
+                return f"❌ Error al escribir el archivo: {result.get('payload', {}).get('error')}"
+        except Exception as e:
+            logger.exception("Error ejecutando write_file")
+            return f"❌ Error ejecutando write_file: {e}"

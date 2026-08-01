@@ -1,67 +1,35 @@
-import logging
 from pathlib import Path
-
 from skills.base import Skill
-
-logger = logging.getLogger(__name__)
 
 
 class WriteFileSkill(Skill):
-
     name = "write_file"
+    description = "Escribe contenido en un archivo del sistema. No genera contenido."
 
-    description = "Escribe contenido en un archivo del sistema."
-
-    def execute(
-        self,
-        path: str,
-        content: str,
-        **kwargs,
-    ):
-
-        if content is None:
+    def execute(self, path: str, content: str, **kwargs):
+        if not content:
             return {
                 "type": "write_file_result",
-                "payload": {"ok": False, "error": "No se proporcionó contenido"},
+                "payload": {
+                    "ok": False,
+                    "error": "No se proporcionó contenido para escribir. La skill 'write_file' solo escribe, no genera contenido.",
+                },
             }
 
-        filepath = Path.cwd() / path
-        filepath = filepath.expanduser().resolve()
-
+        filepath = Path(path).expanduser().resolve()
         try:
-
-            logger.info(
-                "Creando archivo %s",
-                filepath,
-            )
-
-            filepath.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-
-            filepath.write_text(
-                content,
-                encoding="utf-8",
-            )
-
+            filepath.parent.mkdir(parents=True, exist_ok=True)
+            filepath.write_text(content, encoding="utf-8")
             return {
                 "type": "write_file_result",
                 "payload": {
                     "ok": True,
                     "path": str(filepath),
-                    "message": (f"Archivo creado correctamente " f"en {filepath}"),
+                    "message": f"Archivo creado correctamente en {filepath}",
                 },
             }
-
         except Exception as e:
-
-            logger.exception("Error escribiendo archivo")
-
             return {
                 "type": "write_file_result",
-                "payload": {
-                    "ok": False,
-                    "error": str(e),
-                },
+                "payload": {"ok": False, "error": str(e)},
             }

@@ -142,59 +142,79 @@ class IntentAnalyzer:
             )
 
         # ------------------------------------------------------------
-        # 5. WRITE FILE
+        # 5. ESCRITURA DE ARCHIVOS
         # ------------------------------------------------------------
-
-        if re.search(r"\b(crea|genera|escribe|guarda)\b", q) and re.search(
-            r"\b(archivo|html|js|css|py|json|md|txt)\b", q
+        if re.search(r"\b(crea|genera|escribe|guarda|exporta)\b", q) and re.search(
+            r"\b(archivo|html|js|css|py|json|md|txt|xml|yaml|yml)\b", q
         ):
-
-            # Extraer path del archivo (ej. prueba.txt)
-            file_match = re.search(r"([\w\-]+\.(html|js|css|py|json|md|txt))", query, re.IGNORECASE)
-            filepath = file_match.group(1) if file_match else "archivo.txt"
-
-            # Extraer contenido entre comillas simples o dobles
-            content = None
-            # Buscar comillas simples
-            content_match = re.search(r"'([^']*)'", query)
-            if content_match:
-                content = content_match.group(1)
+            # Extraer nombre de archivo
+            file_match = re.search(
+                r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?", q, re.IGNORECASE
+            )
+            if not file_match:
+                ext_match = re.search(
+                    r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml))\b",
+                    q,
+                    re.IGNORECASE,
+                )
+                if ext_match:
+                    filepath = ext_match.group(1)
+                else:
+                    filepath = "archivo.txt"
             else:
-                # Buscar comillas dobles
-                content_match = re.search(r'"([^"]*)"', query)
+                filepath = file_match.group(1)
+
+            # 5b. ¿El usuario proporcionó contenido explícito?
+            # Buscar "con el texto", "contenido", "contenido:", o texto entre comillas
+            explicit_content = None
+
+            # Patrón 1: "con el texto '...'"
+            content_match = re.search(r"con\s+el\s+texto\s+['\"](.+?)['\"]", q, re.IGNORECASE)
+            if content_match:
+                explicit_content = content_match.group(1)
+
+            # Patrón 2: "contenido:'...'"
+            if not explicit_content:
+                content_match = re.search(r"contenido\s*:\s*['\"](.+?)['\"]", q, re.IGNORECASE)
                 if content_match:
-                    content = content_match.group(1)
+                    explicit_content = content_match.group(1)
 
-            # Si no hay comillas, buscar texto después de "con el texto" o similar
-            if content is None:
-                patterns = [
-                    r"con\s+el\s+texto\s+(.+)$",
-                    r"con\s+contenido\s+(.+)$",
-                    r"dice\s+(.+)$",
-                ]
-                for pattern in patterns:
-                    match = re.search(pattern, query, re.IGNORECASE)
-                    if match:
-                        content = match.group(1).strip()
-                        break
+            # Patrón 3: "que diga '...'"
+            if not explicit_content:
+                content_match = re.search(r"que\s+diga\s+['\"](.+?)['\"]", q, re.IGNORECASE)
+                if content_match:
+                    explicit_content = content_match.group(1)
 
-            # Si aún no hay contenido, usar un valor por defecto
-            if content is None:
-                content = "Contenido por defecto"
+            # 5c. Si hay contenido explícito → write_file directo
+            if explicit_content:
+                return ExecutionPlan(
+                    original_task=query,
+                    intent="file_creation",
+                    objective=f"Crear archivo {filepath} con contenido explícito",
+                    agent="executor",
+                    skill="write_file",
+                    params={"path": filepath, "content": explicit_content},
+                    context_requirements=["project"],
+                    execution_mode="single",
+                )
 
+            # 5d. Si NO hay contenido explícito → planificar generación de contenido
+            # El PlannerAgent generará el contenido y luego llamará a write_file
             return ExecutionPlan(
                 original_task=query,
-                intent="file_creation",
-                objective=f"Crear archivo {filepath}",
-                agent="executor",
-                skill="write_file",
+                intent="file_creation_with_generation",
+                objective=f"Crear archivo {filepath} con contenido generado",
+                agent="planner",
+                skill="plan",
                 params={
-                    "path": filepath,
-                    "content": content,  # ✅ ahora se pasa el contenido real
-                    "task": query,
+                    "filepath": filepath,
+                    "task_description": query,
                 },
-                context_requirements=["project"],
+                context_requirements=["engram", "project", "obsidian"],
+                execution_mode="multi_step",
+                metadata={"requires_content_generation": True},
             )
+
         # ------------------------------------------------------------
         # 6. SPEC / SDD
         # ------------------------------------------------------------
