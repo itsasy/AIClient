@@ -195,7 +195,7 @@ class EngramMemory:
 
         return results[:limit]
 
-    def get_context(self, query: str, limit: int = 5) -> str:
+    def get_context(self, query: str, limit: int = 3) -> str:
         memories = self.recall(query, limit=limit)
         if not memories:
             return ""

@@ -12,7 +12,23 @@ class ProjectInspector:
     MAX_SOURCE_FILES = 20
     CACHE_FILE = Config.PROJECT_ROOT / ".project_cache.json"
 
-    EXCLUDED_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache"}
+    EXCLUDED_DIRS = {
+        ".git",
+        ".venv",
+        "__pycache__",
+        ".pytest_cache",
+        "node_modules",
+        "vendor",
+        "dist",
+        "build",
+        ".next",
+        "target",
+        "public",
+        "storage",
+        "bootstrap/cache",
+        ".idea",
+        ".vscode",
+    }
     INCLUDED_EXTENSIONS = {
         ".py",
         ".toml",
@@ -60,47 +76,74 @@ class ProjectInspector:
         all_files = self._collect_all_files(root)
         for path in all_files[: self.MAX_SOURCE_FILES]:
             try:
-                content = path.read_text(encoding="utf-8", errors="ignore")[
-                    : self.MAX_FILE_CHARS
-                ]
+                content = path.read_text(encoding="utf-8", errors="ignore")[: self.MAX_FILE_CHARS]
                 snapshot.add_file(path=str(path.relative_to(root)), content=content)
             except OSError:
                 continue
         return snapshot
 
     def _collect_all_files(self, root: Path) -> list[Path]:
+        """Recorre el proyecto evitando directorios excluidos."""
         files: list[Path] = []
 
+        # 1. Archivos prioritarios (raíz)
         for filename in self.PRIORITY_FILES:
             path = root / filename
             if path.exists() and path.is_file():
                 files.append(path)
 
+        # 2. Recorrido controlado (evita entrar en excluidos)
         for dir_name in self.SOURCE_DIRS:
             directory = root / dir_name
             if not directory.exists() or not directory.is_dir():
                 continue
-            for path in sorted(directory.rglob("*")):
-                if not path.is_file():
-                    continue
-                relative_parts = path.relative_to(root).parts
-                if any(part in self.EXCLUDED_DIRS for part in relative_parts):
-                    continue
-                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
-                    continue
-                if path not in files:
+
+            for path in self._walk_controlled(directory, root):
+                if path.suffix.lower() in self.INCLUDED_EXTENSIONS:
                     files.append(path)
+
         return files
 
+    def _walk_controlled(self, start_dir: Path, root: Path) -> list[Path]:
+        """Recorre un directorio sin entrar en EXCLUDED_DIRS."""
+        results = []
+        for root_dir, dirs, files in os.walk(start_dir):
+            # Modificar dirs in-place para evitar entrar en excluidos
+            dirs[:] = [d for d in dirs if d not in self.EXCLUDED_DIRS]
+            for f in files:
+                p = Path(root_dir) / f
+                # Verificar que ningún componente de la ruta esté excluido
+                rel_parts = p.relative_to(root).parts
+                if not any(part in self.EXCLUDED_DIRS for part in rel_parts):
+                    results.append(p)
+        return results
+
     def _compute_project_hash(self, root: Path) -> str:
+        """Calcula hash solo de archivos relevantes (rápido)."""
         hasher = hashlib.md5()
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
+
+        # 1. Archivos prioritarios
+        for filename in self.PRIORITY_FILES:
+            path = root / filename
+            if path.exists() and path.is_file():
                 try:
                     stat = path.stat()
                     hasher.update(f"{path}{stat.st_size}{stat.st_mtime}".encode())
                 except OSError:
                     continue
+
+        # 2. Archivos en SOURCE_DIRS (controlado)
+        for dir_name in self.SOURCE_DIRS:
+            directory = root / dir_name
+            if not directory.exists() or not directory.is_dir():
+                continue
+            for path in self._walk_controlled(directory, root):
+                try:
+                    stat = path.stat()
+                    hasher.update(f"{path}{stat.st_size}{stat.st_mtime}".encode())
+                except OSError:
+                    continue
+
         return hasher.hexdigest()
 
     def _load_cache(self) -> dict | None:
