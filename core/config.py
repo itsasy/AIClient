@@ -28,9 +28,7 @@ class Config:
 
     # ----- NVIDIA NIM -----
     NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
-    NVIDIA_BASE_URL = os.getenv(
-        "NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"
-    )
+    NVIDIA_BASE_URL = os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1")
     NVIDIA_MODEL = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-70b-instruct")
 
     # ----- DeepSeek (nuevo) -----
@@ -42,12 +40,8 @@ class Config:
     # ----- Proveedores primarios por categoría -----
     DEFAULT_PROVIDER = os.getenv("DEFAULT_PROVIDER", "gemini").strip().lower()
     CODE_PROVIDER = os.getenv("CODE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
-    ARCHITECTURE_PROVIDER = (
-        os.getenv("ARCHITECTURE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
-    )
-    DOCUMENTATION_PROVIDER = (
-        os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
-    )
+    ARCHITECTURE_PROVIDER = os.getenv("ARCHITECTURE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+    DOCUMENTATION_PROVIDER = os.getenv("DOCUMENTATION_PROVIDER", DEFAULT_PROVIDER).strip().lower()
     FAST_PROVIDER = os.getenv("FAST_PROVIDER", "gemini_flash")
 
     # ----- Fallbacks por categoría (listas separadas por coma) -----
@@ -57,9 +51,7 @@ class Config:
         if p.strip()
     ]
     CODE_FALLBACKS = [
-        p.strip().lower()
-        for p in os.getenv("CODE_FALLBACKS", "nim,gemini").split(",")
-        if p.strip()
+        p.strip().lower() for p in os.getenv("CODE_FALLBACKS", "nim,gemini").split(",") if p.strip()
     ]
     ARCHITECTURE_FALLBACKS = [
         p.strip().lower()
@@ -67,9 +59,7 @@ class Config:
         if p.strip()
     ]
     FAST_FALLBACKS = [
-        p.strip().lower()
-        for p in os.getenv("FAST_FALLBACKS", "deepseek").split(",")
-        if p.strip()
+        p.strip().lower() for p in os.getenv("FAST_FALLBACKS", "deepseek").split(",") if p.strip()
     ]
 
     # FALLBACK_PROVIDERS por compatibilidad con código antiguo
@@ -106,6 +96,9 @@ class Config:
     # ----- Modo de operación: "safe" o "powerful" -----
     POWER_MODE = os.getenv("POWER_MODE", "safe").lower()
 
+    # ----- Hugging Face -----
+    HF_TOKEN = os.getenv("HF_TOKEN", "")
+
     @classmethod
     def validate(cls) -> None:
         """Valida la configuración y genera claves si faltan."""
@@ -117,6 +110,9 @@ class Config:
 
         if not cls.DEEPSEEK_API_KEY:
             logger.warning("DEEPSEEK_API_KEY no configurada.")
+
+        if not cls.HF_TOKEN:
+            logger.warning("HF_TOKEN no configurado. Las descargas de Hugging Face pueden ser más lentas.")
 
         logger.info(
             "Proveedores primarios | default=%s | code=%s | architecture=%s | fast=%s",
