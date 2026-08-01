@@ -150,27 +150,45 @@ class IntentAnalyzer:
         # 8. NUEVO: DETECCIÓN DE ESCRITURA DE ARCHIVOS (write_file)
         # ------------------------------------------------------------
         if re.search(
-            r"\b(crea|genera|escribe|guarda|exporta)\b.*\b(archivo|fichero|código|codigo|html|js|css|py|json)\b",
+            r"\b(crea|genera|escribe|guarda|exporta)\b.*\b(archivo|fichero|html|js|css|py|json|txt|md|xml|yaml|yml)\b",
             q,
-            re.IGNORECASE,
         ):
             file_match = re.search(
-                r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?", q, re.IGNORECASE
+                r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?",
+                query,
+                re.IGNORECASE,
             )
-            if not file_match:
+
+            if file_match:
+                filepath = file_match.group(1)
+            else:
                 ext_match = re.search(
                     r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml))\b",
-                    q,
+                    query,
                     re.IGNORECASE,
                 )
-                if ext_match:
-                    filepath = ext_match.group(1)
-                else:
-                    filepath = "output.html"
-            else:
-                filepath = file_match.group(1)
 
-            return IntentResult("write_file", {"path": filepath, "content": None})
+                if not ext_match:
+                    return IntentResult(None, None)
+
+                filepath = ext_match.group(1)
+
+            content_match = re.search(
+                r"con\s+el\s+texto\s*:?\s*(.+)$",
+                query,
+                re.IGNORECASE | re.DOTALL,
+            )
+
+            content = content_match.group(1).strip() if content_match else None
+
+            return IntentResult(
+                "write_file",
+                {
+                    "path": filepath,
+                    "content": content,
+                    "task": query,
+                },
+            )
 
         # ------------------------------------------------------------
         # 9. SIN INTENCIÓN DETECTADA

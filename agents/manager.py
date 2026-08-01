@@ -32,13 +32,14 @@ class AgentManager:
             # Generación de código
             "code": "coder",
             "generate_proposal": "coder",
-            # Ejecución de comandos y proyectos
+            # Ejecución
             "shell": "executor",
             "docker": "executor",
             "execute_code": "executor",
             "sandbox": "executor",
             "laravel_project": "executor",
             "full_project": "executor",
+            "write_file": "executor",
             # Planificación
             "plan": "planner",
         }
@@ -74,9 +75,8 @@ class AgentManager:
         agent = self.select_agent(skill_name)
 
         logger.info(
-            "Delegando al agente: %s (skill: %s)",
+            "Agente seleccionado: %s",
             agent.name,
-            skill_name or "general",
         )
 
         return agent.process(

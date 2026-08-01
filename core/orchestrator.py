@@ -55,11 +55,9 @@ class Orchestrator:
 
         logger.info("⏱️ IntentAnalyzer: %.3fs", time.time() - t0)
         logger.info(
-            "Intención detectada | skill=%s | params=%s",
+            "Skill detectada: %s",
             intent.skill_name or "general",
-            intent.skill_params or {},
         )
-
         # ------------------------------------------------------------
         # 2. CONSTRUCCIÓN DE CONTEXTO
         # ------------------------------------------------------------

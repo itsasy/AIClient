@@ -1,6 +1,9 @@
+import logging
 from agents.base import Agent
 from llm.router import LLMRouter
 from skills.manager import SkillManager
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutorAgent(Agent):
@@ -14,6 +17,7 @@ class ExecutorAgent(Agent):
         "sandbox",
         "laravel_project",
         "full_project",
+        "write_file",
     }
 
     def __init__(self):
@@ -34,11 +38,16 @@ class ExecutorAgent(Agent):
                 skill_params=skill_params,
             )
 
+        logger.info(
+            "Ejecutando skill %s",
+            skill_name,
+        )
+
         result = self.skill_manager.execute(
             skill_name,
             **(skill_params if skill_params is not None else {}),
         )
-
+        
         result_type = result.get("type")
 
         if result_type in {
@@ -56,6 +65,9 @@ class ExecutorAgent(Agent):
             return self._format_laravel_result(
                 result.get("payload", {}),
             )
+
+        if result_type == "write_file_result":
+            return self._format_write_file_result(result.get("payload", {}))
 
         return str(result)
 
@@ -94,6 +106,14 @@ class ExecutorAgent(Agent):
             )
 
         return (
-            "❌ **Proyecto Laravel** falló al crearse.\n\n"
-            f"Salida de error:\n```\n{output}\n```"
+            "❌ **Proyecto Laravel** falló al crearse.\n\n" f"Salida de error:\n```\n{output}\n```"
         )
+
+    def _format_write_file_result(
+        self,
+        payload: dict,
+    ) -> str:
+        if payload.get("ok"):
+            return "✅ Archivo creado correctamente.\n\n" f"Ruta: {payload.get('path')}"
+
+        return "❌ No se pudo crear el archivo.\n\n" f"Error: {payload.get('error')}"
