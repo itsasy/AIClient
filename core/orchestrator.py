@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from typing import Optional
 
 from core.config import Config
@@ -40,9 +41,7 @@ class Orchestrator:
         logger.info("Orchestrator iniciado con Engram + Self-Critic + SpecManager")
 
     def process(self, task: str, verbose: bool = False) -> str:
-        """
-        Procesa una tarea completa del usuario.
-        """
+        """Procesa una tarea completa del usuario."""
 
         # ------------------------------------------------------------
         # 0. CONSULTA TRIVIAL → responder sin contexto pesado
@@ -74,12 +73,20 @@ class Orchestrator:
         context = self.context_builder.build(task)
 
         # ------------------------------------------------------------
-        # 3. INYECCIÓN DE MEMORIA DE ENGRAM (persistente)
+        # 3. INYECCIÓN DE MEMORIA DE ENGRAM (query reducida para FTS)
         # ------------------------------------------------------------
         limit = 8 if verbose else 5
-        engram_ctx = self.engram.get_context(task, limit=limit)
+        search_query = self._engram_query(task)
+        engram_ctx = self.engram.get_context(search_query, limit=limit)
         if engram_ctx:
             context["engram"] = engram_ctx
+            logger.info(
+                "Engram query=%r → %d chars de contexto",
+                search_query,
+                len(engram_ctx),
+            )
+        else:
+            logger.debug("Engram sin resultados para query=%r", search_query)
 
         # ------------------------------------------------------------
         # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
@@ -176,15 +183,88 @@ class Orchestrator:
     # MÉTODOS PRIVADOS
     # ================================================================
 
-    def _find_relevant_spec(self, task: str) -> Optional[dict]:
+    def _engram_query(self, task: str) -> str:
         """
-        Busca una Spec relevante para la tarea.
-        Primero por nombre explícito (ej. 'spec mi_proyecto').
-        Luego por búsqueda semántica en Engram.
-        """
-        import re
+        Reduce la pregunta del usuario a términos útiles para FTS de Engram.
 
-        # 1. Búsqueda por nombre explícito
+        Evita que queries largas del tipo
+        "¿puedes decirme mi color favorito?" solo recuperen ecos de user_query
+        en lugar de los hechos guardados ("el color favorito es púrpura").
+        """
+        cleaned = re.sub(r"[¿?¡!.,;:\"'()\[\]{}]", " ", task)
+        stop = {
+            "el",
+            "la",
+            "los",
+            "las",
+            "un",
+            "una",
+            "unos",
+            "unas",
+            "de",
+            "del",
+            "en",
+            "y",
+            "o",
+            "u",
+            "a",
+            "al",
+            "que",
+            "qué",
+            "cual",
+            "cuál",
+            "como",
+            "cómo",
+            "mi",
+            "tu",
+            "su",
+            "mis",
+            "tus",
+            "sus",
+            "me",
+            "te",
+            "se",
+            "le",
+            "lo",
+            "les",
+            "puedes",
+            "puedo",
+            "puede",
+            "pueden",
+            "decir",
+            "decirme",
+            "dime",
+            "diga",
+            "digame",
+            "es",
+            "son",
+            "está",
+            "estan",
+            "están",
+            "hay",
+            "por",
+            "para",
+            "con",
+            "sin",
+            "sobre",
+            "entre",
+            "este",
+            "esta",
+            "estos",
+            "estas",
+            "ese",
+            "esa",
+            "hola",
+            "gracias",
+            "porfa",
+            "porfavor",
+            "por favor",
+        }
+        tokens = [t.lower() for t in cleaned.split() if len(t) > 2 and t.lower() not in stop]
+        return " ".join(tokens) if tokens else task.strip()
+
+    def _find_relevant_spec(self, task: str) -> Optional[dict]:
+        """Busca una Spec relevante por nombre explícito o por contenido."""
         match = re.search(
             r"(?:spec|especificación|plan)\s+['\"]?([a-zA-Z0-9_-]+)['\"]?",
             task,
@@ -197,33 +277,26 @@ class Orchestrator:
                 logger.info("Spec encontrada por nombre: %s", spec_name)
                 return spec
 
-        # 2. Búsqueda semántica en Engram
-        memories = self.engram.recall(task, limit=3)
-        for m in memories:
-            try:
-                data = json.loads(m.get("content", "{}"))
-                if data.get("type") == "spec":
-                    logger.info("Spec encontrada por búsqueda semántica: %s", data.get("name"))
-                    return data
-            except json.JSONDecodeError:
-                continue
+        # Búsqueda en disco por nombre suelto al final (ej. auth_module)
+        words = task.split()
+        if words:
+            last = words[-1].strip(".,;:!?\"'")
+            if re.match(r"^[a-zA-Z0-9_-]+$", last):
+                spec = self.spec_manager.load_spec_by_name(last)
+                if spec:
+                    return spec
 
         return None
 
     def _should_critic(self, task: str) -> bool:
-        """
-        Heurística para decidir si la tarea merece auto-evaluación.
-        """
-        # 1. Verificar si está habilitado globalmente
+        """Heurística para decidir si la tarea merece auto-evaluación."""
         if not getattr(Config, "ENABLE_SELF_CRITIC", True):
             return False
 
-        # 2. Si la tarea es muy corta (< 5 palabras), no criticar
         words = task.split()
         if len(words) < 5:
             return False
 
-        # 3. Palabras clave que activan el crítico
         keywords = [
             "plan",
             "planifica",
