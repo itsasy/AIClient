@@ -52,6 +52,14 @@ class EngramMemory:
             )
 
     def _check_available(self) -> bool:
+        import os
+        import shutil
+
+        print("=" * 60)
+        print("PATH =", os.environ.get("PATH"))
+        print("ENGRAM =", shutil.which("engram"))
+        print("=" * 60)
+
         return shutil.which("engram") is not None
 
     def _run_command(self, cmd: List[str], timeout: int = 10) -> tuple[bool, str, str]:
