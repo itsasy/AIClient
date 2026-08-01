@@ -4,6 +4,7 @@
 import argparse
 import sys
 from pathlib import Path
+import logging
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -13,6 +14,10 @@ from core.orchestrator import Orchestrator
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
 
 try:
     from rich.console import Console
@@ -27,6 +32,8 @@ console = Console() if RICH_AVAILABLE else None
 
 def main():
     Config.validate()
+
+    logger.info("🚀 AIClient iniciado con logs INFO activados")
 
     parser = argparse.ArgumentParser(
         description="AIClient – Asistente de Desarrollo Inteligente",
