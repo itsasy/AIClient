@@ -24,21 +24,12 @@ class ExecutionStep:
 
 @dataclass(slots=True)
 class ExecutionPlan:
-    """
-    Representa la intención ya interpretada del usuario.
-
-    Este objeto reemplaza:
-    - IntentResult
-    - skill_name
-    - skill_params
-    - parte de la lógica del Orchestrator
-
-    Todo el sistema trabaja sobre este contrato.
-    """
 
     original_task: str
 
     intent: str | None = None
+
+    intent_category: str | None = None
 
     objective: str | None = None
 
@@ -55,6 +46,10 @@ class ExecutionPlan:
     steps: list[ExecutionStep] = field(default_factory=list)
 
     execution_mode: str = "single"
+
+    preferred_provider: str | None = None
+
+    requires_confirmation: bool = False
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
@@ -80,18 +75,33 @@ class ExecutionPlan:
     ) -> bool:
         return provider in self.context_requirements
 
+    def has_steps(self) -> bool:
+        return len(self.steps) > 0
+
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "task": self.original_task,
+            "created_at": self.created_at.isoformat(),
+            # Información original
+            "original_task": self.original_task,
+            # Clasificación de intención
             "intent": self.intent,
+            "intent_category": self.intent_category,
+            # Ejecución
             "objective": self.objective,
             "agent": self.agent,
             "skill": self.skill,
+            # Datos de ejecución
             "params": self.params,
+            # Contexto requerido
             "context_requirements": self.context_requirements,
+            # Reglas
             "constraints": self.constraints,
+            # Control
             "execution_mode": self.execution_mode,
+            "preferred_provider": self.preferred_provider,
+            "requires_confirmation": self.requires_confirmation,
+            # Pasos SDD
             "steps": [
                 {
                     "description": step.description,

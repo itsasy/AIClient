@@ -1,20 +1,21 @@
 from agents.base import Agent
+from core.execution_plan import ExecutionPlan
 from llm.router import LLMRouter
 
 
 class TaskAgent(Agent):
+
     name = "task"
+
+    role = "Agente general de resolución"
 
     def process(
         self,
-        task: str,
+        plan: ExecutionPlan,
         context: dict | None = None,
-        skill_name: str | None = None,
-        skill_params: dict | None = None,
     ) -> str:
+
         return LLMRouter.generate(
-            task=task,
+            plan=plan,
             context=context or {},
-            skill_name=skill_name,
-            skill_params=skill_params,
         )

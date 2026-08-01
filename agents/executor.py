@@ -1,119 +1,133 @@
 import logging
+
 from agents.base import Agent
-from llm.router import LLMRouter
+from core.execution_plan import ExecutionPlan
 from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
 
 class ExecutorAgent(Agent):
-    name = "executor"
-    role = "Ejecutor Autónomo de Tareas"
 
-    AVAILABLE_SKILLS = {
-        "shell",
-        "docker",
-        "execute_code",
-        "sandbox",
-        "laravel_project",
-        "full_project",
-        "write_file",
-    }
+    name = "executor"
+
+    role = "Ejecutor autónomo de tareas"
 
     def __init__(self):
         self.skill_manager = SkillManager()
 
     def process(
         self,
-        task: str,
-        context: dict[str, object] | None = None,
-        skill_name: str | None = None,
-        skill_params: dict[str, object] | None = None,
+        plan: ExecutionPlan,
+        context: dict | None = None,
     ) -> str:
-        if not skill_name or skill_name not in self.AVAILABLE_SKILLS:
-            return LLMRouter.generate(
-                task=task,
-                context=context if context is not None else {},
-                skill_name=skill_name,
-                skill_params=skill_params,
+
+        if plan.steps:
+
+            return self._execute_steps(
+                plan,
+                context or {},
             )
 
-        logger.info(
-            "Ejecutando skill %s",
-            skill_name,
-        )
+        if plan.skill:
 
-        result = self.skill_manager.execute(
-            skill_name,
-            **(skill_params if skill_params is not None else {}),
-        )
-        
-        result_type = result.get("type")
-
-        if result_type in {
-            "shell_result",
-            "docker_result",
-            "execution_result",
-            "sandbox_result",
-        }:
-            return self._format_execution_result(
-                skill_name,
-                result.get("payload", {}),
+            return self._execute_skill(
+                plan.skill,
+                plan.params,
             )
 
-        if result_type == "laravel_result":
-            return self._format_laravel_result(
-                result.get("payload", {}),
+        return "⚠️ ExecutionPlan recibido sin " "skill ni pasos ejecutables."
+
+    def _execute_steps(
+        self,
+        plan: ExecutionPlan,
+        context: dict,
+    ) -> str:
+
+        results = []
+
+        for index, step in enumerate(plan.steps, start=1):
+
+            logger.info(
+                "Ejecutando paso %s: %s",
+                index,
+                step.description,
             )
 
-        if result_type == "write_file_result":
-            return self._format_write_file_result(result.get("payload", {}))
+            try:
 
-        return str(result)
+                result = self.skill_manager.execute(
+                    step.skill,
+                    **step.params,
+                )
 
-    def _format_execution_result(
+                step.status = "completed"
+
+                results.append(
+                    self._format_result(
+                        index,
+                        step.description,
+                        result,
+                    )
+                )
+
+            except Exception as e:
+
+                logger.exception(
+                    "Error ejecutando paso %s",
+                    step.description,
+                )
+
+                step.status = "failed"
+
+                results.append(f"❌ Paso {index} falló: {e}")
+
+        return "\n\n".join(results)
+
+    def _execute_skill(
         self,
         skill_name: str,
-        payload: dict,
+        params: dict,
     ) -> str:
-        if payload.get("ok"):
-            output = payload.get(
-                "output",
-                "Comando ejecutado correctamente (sin salida).",
-            )
-            return f"✅ **{skill_name}** ejecutado:\n```\n{output}\n```"
 
-        error = (
-            payload.get("message")
-            or payload.get("output")
-            or payload.get("error")
-            or "Error desconocido."
-        )
+        try:
 
-        return f"❌ **{skill_name}** falló:\n```\n{error}\n```"
-
-    def _format_laravel_result(
-        self,
-        payload: dict,
-    ) -> str:
-        project_name = payload.get("project_name", "proyecto")
-        output = payload.get("output", "")
-
-        if payload.get("ok"):
-            return (
-                f"✅ **Proyecto Laravel '{project_name}'** creado correctamente.\n\n"
-                f"Salida:\n```\n{output}\n```"
+            result = self.skill_manager.execute(
+                skill_name,
+                **params,
             )
 
-        return (
-            "❌ **Proyecto Laravel** falló al crearse.\n\n" f"Salida de error:\n```\n{output}\n```"
+            return self._format_result(
+                1,
+                skill_name,
+                result,
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                "Error ejecutando skill %s",
+                skill_name,
+            )
+
+            return f"❌ Error ejecutando " f"{skill_name}: {e}"
+
+    def _format_result(
+        self,
+        index: int,
+        description: str,
+        result: dict,
+    ) -> str:
+
+        if not isinstance(result, dict):
+
+            return f"✅ Paso {index}: " f"{description}\n" f"{result}"
+
+        payload = result.get(
+            "payload",
+            {},
         )
 
-    def _format_write_file_result(
-        self,
-        payload: dict,
-    ) -> str:
-        if payload.get("ok"):
-            return "✅ Archivo creado correctamente.\n\n" f"Ruta: {payload.get('path')}"
+        message = payload.get("message") or payload.get("output") or str(payload)
 
-        return "❌ No se pudo crear el archivo.\n\n" f"Error: {payload.get('error')}"
+        return f"✅ Paso {index}: " f"{description}\n\n" f"{message}"

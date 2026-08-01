@@ -8,28 +8,39 @@ from agents.multi_turn import MultiTurnAgent
 from agents.planner import PlannerAgent
 from agents.task_agent import TaskAgent
 
+from core.execution_plan import ExecutionPlan
+
 logger = logging.getLogger(__name__)
 
 
 class AgentManager:
+    """
+    Responsable de seleccionar y ejecutar agentes.
+
+    No analiza intención.
+    No crea planes.
+    No ejecuta skills.
+    """
+
     def __init__(self):
+
         self.agents: dict[str, Agent] = {
             "architect": ArchitectAgent(),
             "coder": CoderAgent(),
-            "task": TaskAgent(),
-            "multi_turn": MultiTurnAgent(),
             "executor": ExecutorAgent(),
             "planner": PlannerAgent(),
+            "multi_turn": MultiTurnAgent(),
+            "task": TaskAgent(),
         }
 
         self.skill_agent_map: dict[str, str] = {
-            # Arquitectura y análisis
+            # Arquitectura
             "analyze": "architect",
             "analyze_project": "architect",
             "readme": "architect",
-            "migrate_project": "architect",
             "refactor_code": "architect",
-            # Generación de código
+            "migrate_project": "architect",
+            # Código
             "code": "coder",
             "generate_proposal": "coder",
             # Ejecución
@@ -37,42 +48,72 @@ class AgentManager:
             "docker": "executor",
             "execute_code": "executor",
             "sandbox": "executor",
+            "write_file": "executor",
             "laravel_project": "executor",
             "full_project": "executor",
-            "write_file": "executor",
-            # Planificación
+            # SDD
             "plan": "planner",
         }
 
     def select_agent(
         self,
-        skill_name: str | None = None,
+        plan: ExecutionPlan,
     ) -> Agent:
         """
-        Selecciona el agente basado en la skill detectada.
-        La detección de skill está centralizada en IntentAnalyzer.
+        Selecciona agente basado en el ExecutionPlan.
+
+        Prioridad:
+
+        1. Agente definido explícitamente.
+        2. Skill asociada.
+        3. Agente task por defecto.
         """
-        if skill_name:
-            agent_name = self.skill_agent_map.get(skill_name)
+
+        # -----------------------------------
+        # 1. Agente explícito
+        # -----------------------------------
+
+        if plan.agent:
+
+            agent = self.agents.get(plan.agent)
+
+            if agent:
+
+                return agent
+
+        # -----------------------------------
+        # 2. Resolver por skill
+        # -----------------------------------
+
+        if plan.skill:
+
+            agent_name = self.skill_agent_map.get(plan.skill)
 
             if agent_name:
+
                 return self.agents.get(
                     agent_name,
                     self.agents["task"],
                 )
 
-        logger.debug("Sin skill específica, usando agente 'task' por defecto.")
+        # -----------------------------------
+        # 3. Fallback
+        # -----------------------------------
+
+        logger.debug("ExecutionPlan sin agente definido. " "Usando TaskAgent.")
 
         return self.agents["task"]
 
     def delegate(
         self,
-        task: str,
-        context: dict[str, object] | None = None,
-        skill_name: str | None = None,
-        skill_params: dict[str, object] | None = None,
+        plan: ExecutionPlan,
+        context: dict | None = None,
     ) -> str:
-        agent = self.select_agent(skill_name)
+        """
+        Ejecuta el agente seleccionado.
+        """
+
+        agent = self.select_agent(plan)
 
         logger.info(
             "Agente seleccionado: %s",
@@ -80,8 +121,6 @@ class AgentManager:
         )
 
         return agent.process(
-            task=task,
-            context=context if context is not None else {},
-            skill_name=skill_name,
-            skill_params=skill_params,
+            plan=plan,
+            context=context or {},
         )
