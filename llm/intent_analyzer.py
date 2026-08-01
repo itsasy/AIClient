@@ -145,30 +145,56 @@ class IntentAnalyzer:
         # 5. WRITE FILE
         # ------------------------------------------------------------
 
-        if re.search(
-            r"\b(crea|genera|escribe|guarda)\b",
-            q,
-        ) and re.search(
-            r"\b(archivo|html|js|css|py|json|md|txt)\b",
-            q,
+        if re.search(r"\b(crea|genera|escribe|guarda)\b", q) and re.search(
+            r"\b(archivo|html|js|css|py|json|md|txt)\b", q
         ):
 
-            filepath = IntentAnalyzer._extract_file(query)
+            # Extraer path del archivo (ej. prueba.txt)
+            file_match = re.search(r"([\w\-]+\.(html|js|css|py|json|md|txt))", query, re.IGNORECASE)
+            filepath = file_match.group(1) if file_match else "archivo.txt"
+
+            # Extraer contenido entre comillas simples o dobles
+            content = None
+            # Buscar comillas simples
+            content_match = re.search(r"'([^']*)'", query)
+            if content_match:
+                content = content_match.group(1)
+            else:
+                # Buscar comillas dobles
+                content_match = re.search(r'"([^"]*)"', query)
+                if content_match:
+                    content = content_match.group(1)
+
+            # Si no hay comillas, buscar texto después de "con el texto" o similar
+            if content is None:
+                patterns = [
+                    r"con\s+el\s+texto\s+(.+)$",
+                    r"con\s+contenido\s+(.+)$",
+                    r"dice\s+(.+)$",
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, query, re.IGNORECASE)
+                    if match:
+                        content = match.group(1).strip()
+                        break
+
+            # Si aún no hay contenido, usar un valor por defecto
+            if content is None:
+                content = "Contenido por defecto"
 
             return ExecutionPlan(
                 original_task=query,
                 intent="file_creation",
-                objective="Crear archivo",
+                objective=f"Crear archivo {filepath}",
                 agent="executor",
                 skill="write_file",
                 params={
                     "path": filepath,
-                    "content": None,
+                    "content": content,  # ✅ ahora se pasa el contenido real
                     "task": query,
                 },
                 context_requirements=["project"],
             )
-
         # ------------------------------------------------------------
         # 6. SPEC / SDD
         # ------------------------------------------------------------

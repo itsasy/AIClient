@@ -19,6 +19,12 @@ class WriteFileSkill(Skill):
         **kwargs,
     ):
 
+        if content is None:
+            return {
+                "type": "write_file_result",
+                "payload": {"ok": False, "error": "No se proporcionó contenido"},
+            }
+
         filepath = Path.cwd() / path
         filepath = filepath.expanduser().resolve()
 
