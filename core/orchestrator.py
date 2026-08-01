@@ -1,280 +1,110 @@
-from __future__ import annotations
-
-import re
 import logging
+import time
 
+from llm.intent_analyzer import IntentAnalyzer
 from core.execution_plan import ExecutionPlan
+from core.context.provider import ContextProvider
+from agents.manager import AgentManager
+from core.memory import ConversationMemory
+from core.engram_memory import EngramMemory
+from core.learner import ContinuousLearner
+from agents.self_critic import SelfCriticAgent
 
 logger = logging.getLogger(__name__)
 
 
-class IntentAnalyzer:
+class Orchestrator:
     """
-    Convierte una solicitud del usuario en un ExecutionPlan.
+    Orquestador principal.
 
-    Este componente es el único responsable de interpretar
-    la intención inicial.
+    Responsabilidades:
+    - Analizar intención → ExecutionPlan
+    - Construir contexto bajo demanda
+    - Delegar ejecución al agente
+    - Persistir aprendizaje y memoria
 
-    Ningún Router ni Agent debe volver a analizar la intención.
+    No ejecuta skills.
+    No construye prompts.
+    No decide proveedores LLM.
     """
 
-    @staticmethod
-    def analyze(query: str) -> ExecutionPlan:
-        if not query:
-            return ExecutionPlan(original_task="")
+    def __init__(self):
+        self.agent_manager = AgentManager()
+        self.context_provider = ContextProvider()
+        self.memory = ConversationMemory()
+        self.engram = EngramMemory()
+        self.learner = ContinuousLearner()
+        self.critic = SelfCriticAgent()
 
-        q = query.lower().strip()
-        logger.info("🔍 Analizando consulta: %s", query)
+        logger.info("Orchestrator inicializado con ExecutionPlan + ContextProvider")
 
-        # ------------------------------------------------------------
-        # 1. CREACIÓN DE PROYECTOS
-        # ------------------------------------------------------------
+    def process(self, task: str, verbose: bool = False) -> str:
+        start = time.time()
 
-        if re.search(
-            r"\b(laravel|react|vue|django|fullstack)\b",
-            q,
-        ) and re.search(
-            r"\b(crea|crear|genera|nuevo|proyecto)\b",
-            q,
-        ):
+        # ==================================================
+        # 1. INTENT ANALYSIS → ExecutionPlan
+        # ==================================================
+        plan = IntentAnalyzer.analyze(task)  # ✅ ya es ExecutionPlan
+        logger.info(
+            "Plan creado: intent=%s, skill=%s, agent=%s", plan.intent, plan.skill, plan.agent
+        )
 
-            framework = (
-                "react"
-                if "react" in q
-                else (
-                    "vue"
-                    if "vue" in q
-                    else "django" if "django" in q else "laravel" if "laravel" in q else "fullstack"
+        # ==================================================
+        # 2. CONTEXT BUILDING (bajo demanda)
+        # ==================================================
+        context = self.context_provider.build(plan)
+        logger.info("Contexto construido (requerimientos: %s)", plan.context_requirements)
+
+        # ==================================================
+        # 3. DELEGACIÓN AL AGENTE
+        # ==================================================
+        response = self.agent_manager.delegate(
+            plan=plan,
+            context=context,
+        )
+
+        # ==================================================
+        # 4. SELF-CRITIC (solo si el plan lo requiere)
+        # ==================================================
+        if plan.requires_self_critic:  # ✅ CORREGIDO
+            try:
+                evaluation = self.critic.process(
+                    plan.original_task,  # ✅ usar plan.original_task
+                    context,
+                    response,
                 )
+                if evaluation:
+                    self.engram.save(
+                        str(evaluation),
+                        tags=["reflection", "self_critic"],
+                    )
+                    logger.info("Self-Critic ejecutado")
+            except Exception as e:
+                logger.warning("Self-Critic falló: %s", e)
+
+        # ==================================================
+        # 5. APRENDIZAJE CONTINUO
+        # ==================================================
+        learned = self.learner.extract_and_learn(plan.original_task, response)
+        if learned:
+            self.engram.save(
+                f"Nuevo estándar aprendido: {plan.original_task[:200]}",
+                tags=["learning", "standard"],
             )
+            logger.info("Nuevo estándar aprendido")
 
-            name = IntentAnalyzer._extract_name(query)
-
-            skill = "laravel_project" if framework == "laravel" else "full_project"
-
-            logger.info("✅ Intención detectada: project_creation (%s)", framework)
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="project_creation",
-                objective=f"Crear proyecto {framework}",
-                agent="executor",
-                skill=skill,
-                params={
-                    "framework": framework,
-                    "name": name,
-                },
-                context_requirements=[
-                    "engram",
-                    "standards",
-                    "documents",
-                ],
-            )
-
-        # ------------------------------------------------------------
-        # 2. EJECUCIÓN DE COMANDOS
-        # ------------------------------------------------------------
-
-        if re.search(
-            r"\b(ejecuta|corre|run)\b",
-            q,
-        ):
-
-            command = re.sub(
-                r"^(ejecuta|corre|run)\s+",
-                "",
-                q,
-            )
-
-            logger.info("✅ Intención detectada: command_execution")
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="command_execution",
-                objective="Ejecutar comando",
-                agent="executor",
-                skill="shell",
-                params={"command": command},
-                context_requirements=["project"],
-            )
-
-        # ------------------------------------------------------------
-        # 3. DOCKER
-        # ------------------------------------------------------------
-
-        if "docker" in q and re.search(
-            r"\b(ps|images|logs|start|stop|restart)\b",
-            q,
-        ):
-
-            logger.info("✅ Intención detectada: docker_operation")
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="docker_operation",
-                objective="Ejecutar operación Docker",
-                agent="executor",
-                skill="docker",
-                params={"command": query},
-                context_requirements=["project"],
-            )
-
-        # ------------------------------------------------------------
-        # 4. ANALIZAR PROYECTO
-        # ------------------------------------------------------------
-
-        if re.search(
-            r"\b(analiza|revisa)\b",
-            q,
-        ) and re.search(
-            r"\b(proyecto|repo|codigo|código)\b",
-            q,
-        ):
-
-            logger.info("✅ Intención detectada: project_analysis")
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="project_analysis",
-                objective="Analizar proyecto",
-                agent="architect",
-                skill="analyze_project",
-                params={},
-                context_requirements=[
-                    "project",
-                    "engram",
-                    "standards",
-                ],
-            )
-
-        # ------------------------------------------------------------
-        # 5. WRITE FILE (VERSIÓN MEJORADA)
-        # ------------------------------------------------------------
-
-        if re.search(r"\b(crea|genera|escribe|guarda|haz|crear|escribir)\b", q) and (
-            re.search(r"\b(archivo|fichero)\b", q)
-            or re.search(r"\b\w+\.(txt|html|js|css|py|json|md|xml|yaml|yml)\b", q)
-        ):
-
-            filepath = IntentAnalyzer._extract_file(query)
-
-            logger.info("✅ Intención detectada: file_creation (archivo: %s)", filepath)
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="file_creation",
-                objective=f"Crear archivo {filepath}",
-                agent="executor",
-                skill="write_file",
-                params={
-                    "path": filepath,
-                    "content": None,
-                    "task": query,
-                },
-                context_requirements=["project"],
-            )
-
-        # ------------------------------------------------------------
-        # 6. SPEC / SDD
-        # ------------------------------------------------------------
-
-        if re.search(
-            r"\b(spec|sdd|especificacion|especificación)\b",
-            q,
-        ) and re.search(
-            r"\b(crea|genera|nuevo)\b",
-            q,
-        ):
-
-            logger.info("✅ Intención detectada: spec_creation")
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="spec_creation",
-                objective="Crear especificación",
-                agent="planner",
-                skill="plan",
-                params={"mode": "spec"},
-                context_requirements=[
-                    "engram",
-                    "obsidian",
-                    "standards",
-                ],
-            )
-
-        # ------------------------------------------------------------
-        # 7. PLANIFICACIÓN
-        # ------------------------------------------------------------
-
-        if re.search(
-            r"\b(plan|planifica|complejo|multi-paso)\b",
-            q,
-        ):
-
-            logger.info("✅ Intención detectada: planning")
-
-            return ExecutionPlan(
-                original_task=query,
-                intent="planning",
-                objective="Crear plan de ejecución",
-                agent="planner",
-                skill="plan",
-                params={},
-                context_requirements=[
-                    "engram",
-                    "obsidian",
-                ],
-            )
-
-        # ------------------------------------------------------------
-        # 8. GENERAL (FALLBACK)
-        # ------------------------------------------------------------
-
-        logger.info("ℹ️ Intención general (conversation)")
-
-        return ExecutionPlan(
-            original_task=query,
-            intent="conversation",
-            objective=query,
-            agent="task",
-            skill=None,
-            params={},
-            context_requirements=["engram"],
+        # ==================================================
+        # 6. PERSISTENCIA (Engram + Memoria conversacional)
+        # ==================================================
+        self.engram.save(
+            f"Usuario: {plan.original_task}",
+            tags=["interaction", "user"],
         )
-
-    # ------------------------------------------------------------
-    # MÉTODOS AUXILIARES
-    # ------------------------------------------------------------
-
-    @staticmethod
-    def _extract_name(query: str) -> str:
-        patterns = [
-            r"llamado\s+(\w+)",
-            r"nombre\s+(\w+)",
-            r"proyecto\s+(\w+)$",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, query, re.IGNORECASE)
-            if match:
-                return match.group(1)
-
-        return "mi_proyecto"
-
-    @staticmethod
-    def _extract_file(query: str) -> str:
-        # Buscar "archivo X" o "fichero X"
-        match = re.search(r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?", query, re.IGNORECASE)
-        if match:
-            return match.group(1)
-
-        # Buscar cualquier palabra con extensión soportada
-        match = re.search(
-            r"\b([\w\-\.]+\.(txt|html|js|css|py|json|md|xml|yaml|yml))\b",
-            query,
-            re.IGNORECASE,
+        self.engram.save(
+            f"Asistente: {response[:500]}",
+            tags=["interaction", "assistant"],
         )
-        if match:
-            return match.group(1)
+        self.memory.add(plan.original_task, response)
 
-        return "archivo.txt"
+        logger.info("Tiempo total: %.3fs", time.time() - start)
+        return response
