@@ -51,6 +51,8 @@ class ExecutionPlan:
 
     requires_confirmation: bool = False
 
+    requires_self_critic: bool = False
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     created_at: datetime = field(default_factory=datetime.utcnow)
@@ -101,6 +103,7 @@ class ExecutionPlan:
             "execution_mode": self.execution_mode,
             "preferred_provider": self.preferred_provider,
             "requires_confirmation": self.requires_confirmation,
+            "requires_self_critic": self.requires_self_critic,
             # Pasos SDD
             "steps": [
                 {
