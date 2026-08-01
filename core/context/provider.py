@@ -105,7 +105,7 @@ class ContextProvider:
         if plan.requires_context("gentleman"):
             try:
                 relevant = self.gentleman.find_relevant(plan.original_task)
-                logger.info(f"🔍 Skills relevantes encontradas: {relevant}")  # <--- LOG
+                logger.info(f"🔍 Skills relevantes encontradas: {relevant}")
                 if relevant:
                     skills_text = "\n\n".join(
                         [f"## Skill: {name}\n{self.gentleman.get_skill(name)}" for name in relevant]

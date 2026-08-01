@@ -13,7 +13,7 @@ class PromptBuilder:
     Responsabilidades:
 
     - Transformar ExecutionPlan en instrucciones LLM.
-    - Integrar contexto externo.
+    - Integrar contexto externo (Engram, Obsidian, proyecto, Gentleman Skills).
     - Mantener separación entre planificación y generación.
 
     No:
@@ -30,10 +30,13 @@ class PromptBuilder:
 
         context = context or {}
 
+        # Log para depuración
+        logger.info(f"📦 Contexto recibido en PromptBuilder: {list(context.keys())}")
+
         sections = []
 
         # --------------------------------------------------
-        # SYSTEM ROLE
+        # 1. SYSTEM ROLE
         # --------------------------------------------------
 
         sections.append("""
@@ -50,7 +53,23 @@ Reglas:
 """)
 
         # --------------------------------------------------
-        # EXECUTION PLAN
+        # 2. GENTLEMAN SKILLS (prioridad máxima)
+        # --------------------------------------------------
+        if "gentleman_skills" in context:
+            sections.append(f"""
+# ⚠️ ATENCIÓN: DEBES SEGUIR ESTAS INSTRUCCIONES OBLIGATORIAMENTE
+
+{context.pop('gentleman_skills')}
+
+**REGLAS ESTRICTAS:**
+- **NO** generes código que no siga estas prácticas.
+- **NO** uses patrones antiguos o desactualizados.
+- **SIEMPRE** prioriza lo que dice la skill por encima de tu conocimiento general.
+- Si la skill menciona una versión específica de un framework, usa ESA versión.
+""")
+
+        # --------------------------------------------------
+        # 3. EXECUTION PLAN
         # --------------------------------------------------
 
         sections.append(
@@ -63,7 +82,7 @@ Reglas:
         )
 
         # --------------------------------------------------
-        # USER TASK
+        # 4. USER TASK
         # --------------------------------------------------
 
         sections.append(f"""
@@ -73,15 +92,14 @@ Reglas:
 """)
 
         # --------------------------------------------------
-        # CONTEXTO DEL SISTEMA
+        # 5. CONTEXTO DEL SISTEMA (resto)
         # --------------------------------------------------
 
         if context:
-
             sections.append("## Contexto disponible\n" + PromptBuilder._serialize_context(context))
 
         # --------------------------------------------------
-        # INSTRUCCIONES SEGÚN MODO
+        # 6. INSTRUCCIONES SEGÚN MODO
         # --------------------------------------------------
 
         if plan.execution_mode == "multi_step":
@@ -125,6 +143,8 @@ Entrega directamente la solución solicitada.
         - documentos
         - proyecto
         - memoria conversacional
+        - estándares
+        - (gentleman_skills ya se ha extraído)
         """
 
         output = []
