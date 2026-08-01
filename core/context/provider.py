@@ -101,16 +101,17 @@ class ContextProvider:
             except Exception as e:
                 logger.warning("Error cargando estándares: %s", e)
 
-        # 7. Estándares aprendidos (ContinuousLearner)
+        # 7. Gentleman-Skills (contexto de frameworks)
         if plan.requires_context("gentleman"):
-            relevant = self.gentleman.find_relevant(plan.original_task)
-            if relevant:
-                skills_text = "\n\n".join(
-                    [f"## Skill: {name}\n{self.gentleman.get_skill(name)}" for name in relevant[:3]]
-                )
-                context["gentleman_skills"] = (
-                    f"=== SKILLS DE GENTLEMAN (contexto) ===\n{skills_text}"
-                )
+            try:
+                relevant = self.gentleman.find_relevant(plan.original_task)
+                if relevant:
+                    skills_text = "\n\n".join(
+                        [f"## Skill: {name}\n{self.gentleman.get_skill(name)}" for name in relevant]
+                    )
+                    context["gentleman_skills"] = f"=== GENTLEMAN SKILLS ===\n{skills_text}"
+                    logger.debug("Gentleman-Skills cargadas: %s", relevant)
+            except Exception as e:
+                logger.warning("Error cargando Gentleman-Skills: %s", e)
 
-                logger.info("Contexto construido con: %s", list(context.keys()))
         return context

@@ -29,15 +29,12 @@ class IntentAnalyzer:
         q = query.lower().strip()
 
         # ------------------------------------------------------------
-        # 1. CREACIÓN DE PROYECTOS
+        # 1. CREACIÓN DE PROYECTOS (solo si NO es generación de código)
         # ------------------------------------------------------------
-
-        if re.search(
-            r"\b(laravel|react|vue|django|fullstack)\b",
-            q,
-        ) and re.search(
-            r"\b(crea|crear|genera|nuevo|proyecto)\b",
-            q,
+        if (
+            re.search(r"\b(laravel|react|vue|django|fullstack)\b", q)
+            and re.search(r"\b(proyecto|crea|crear|genera|nuevo)\b", q)
+            and not re.search(r"\b(componente|funcion|función|clase|script|hook)\b", q)
         ):
 
             framework = (
@@ -51,7 +48,6 @@ class IntentAnalyzer:
             )
 
             name = IntentAnalyzer._extract_name(query)
-
             skill = "laravel_project" if framework == "laravel" else "full_project"
 
             return ExecutionPlan(
@@ -60,15 +56,42 @@ class IntentAnalyzer:
                 objective=f"Crear proyecto {framework}",
                 agent="executor",
                 skill=skill,
-                params={
-                    "framework": framework,
-                    "name": name,
-                },
-                context_requirements=[
-                    "engram",
-                    "standards",
-                    "documents",
-                ],
+                params={"framework": framework, "name": name},
+                context_requirements=["engram", "standards", "documents", "gentleman"],
+            )
+
+        # ------------------------------------------------------------
+        # 2. GENERACIÓN DE CÓDIGO (componentes, funciones, clases)
+        # ------------------------------------------------------------
+        if re.search(r"\b(componente|funcion|función|clase|script|genera|crea)\b", q) and re.search(
+            r"\b(react|vue|python|javascript|typescript|js|ts|php)\b", q
+        ):
+
+            # Detectar lenguaje
+            language = "javascript"
+            if "python" in q:
+                language = "python"
+            elif "typescript" in q or "ts" in q:
+                language = "typescript"
+            elif "php" in q:
+                language = "php"
+            elif "vue" in q:
+                language = "vue"
+            elif "react" in q:
+                language = "react"
+
+            context_requirements = ["engram", "gentleman"]
+            if "proyecto" in q or "repo" in q:
+                context_requirements.append("project")
+
+            return ExecutionPlan(
+                original_task=query,
+                intent="code_generation",
+                objective="Generar código siguiendo mejores prácticas",
+                agent="coder",
+                skill="code",
+                params={"task": query, "language": language},
+                context_requirements=context_requirements,
             )
 
         # ------------------------------------------------------------
@@ -211,7 +234,7 @@ class IntentAnalyzer:
                     "task_description": query,
                 },
                 context_requirements=["engram", "project", "obsidian"],
-                execution_mode="multi_step"
+                execution_mode="multi_step",
             )
 
         # ------------------------------------------------------------

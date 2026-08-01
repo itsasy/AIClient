@@ -44,7 +44,7 @@ class Orchestrator:
         # ==================================================
         # 1. INTENT ANALYSIS → ExecutionPlan
         # ==================================================
-        plan = IntentAnalyzer.analyze(task)  # ✅ ya es ExecutionPlan
+        plan = IntentAnalyzer.analyze(task) 
         logger.info(
             "Plan creado: intent=%s, skill=%s, agent=%s", plan.intent, plan.skill, plan.agent
         )

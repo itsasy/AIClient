@@ -30,6 +30,9 @@ class ShellTool(Skill):
         "docker compose",
         "docker run",
         "docker exec",
+        "npx ",
+        "npm ",
+        "yarn ",
     ]
 
     def execute(self, command: str, timeout: int | None = None, **kwargs):
