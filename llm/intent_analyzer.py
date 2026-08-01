@@ -40,9 +40,7 @@ class IntentAnalyzer:
                 framework = "laravel"
 
             # Extraer el nombre
-            name_match = re.search(
-                r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q
-            )
+            name_match = re.search(r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q)
             if name_match:
                 name = (
                     name_match.group(1)
@@ -57,9 +55,7 @@ class IntentAnalyzer:
             if framework == "laravel":
                 return IntentResult("laravel_project", {"name": name})
             else:
-                return IntentResult(
-                    "full_project", {"framework": framework, "name": name}
-                )
+                return IntentResult("full_project", {"framework": framework, "name": name})
 
         # ------------------------------------------------------------
         # 2. DETECCIÓN DE SHELL / COMANDOS (extrae el comando real)
@@ -151,6 +147,31 @@ class IntentAnalyzer:
                 return IntentResult("ingest", {"filepath": file_match.group(1)})
 
         # ------------------------------------------------------------
-        # 8. SIN INTENCIÓN DETECTADA
+        # 8. DETECCIÓN DE ESCRITURA DE ARCHIVOS (NUEVO)
+        # ------------------------------------------------------------
+        # Detecta cuando el usuario pide crear/guardar/escribir un archivo
+        # con una extensión común (html, js, css, py, json, txt, md, etc.)
+        if re.search(
+            r"\b(crea|genera|escribe|guarda|escribir|crear|generar)\b.*\b(archivo|fichero)\b",
+            q,
+            re.IGNORECASE,
+        ) or re.search(r"\b\w+\.(html|js|css|py|json|txt|md|xml|yaml|yml|sh)\b", q, re.IGNORECASE):
+            # Extraer el nombre del archivo (si tiene extensión)
+            file_match = re.search(
+                r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml|sh))\b",
+                q,
+                re.IGNORECASE,
+            )
+            if file_match:
+                filepath = file_match.group(1)
+            else:
+                # Si no se especifica extensión, usar .html por defecto
+                filepath = "output.html"
+
+            # El contenido lo generará el LLM posteriormente
+            return IntentResult("write_file", {"path": filepath, "content": None})
+
+        # ------------------------------------------------------------
+        # 9. SIN INTENCIÓN DETECTADA
         # ------------------------------------------------------------
         return IntentResult(None, None)
