@@ -211,8 +211,7 @@ class IntentAnalyzer:
                     "task_description": query,
                 },
                 context_requirements=["engram", "project", "obsidian"],
-                execution_mode="multi_step",
-                metadata={"requires_content_generation": True},
+                execution_mode="multi_step"
             )
 
         # ------------------------------------------------------------
