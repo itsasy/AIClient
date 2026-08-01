@@ -6,7 +6,7 @@ from core.document_ingestor import DocumentIngestor
 class ContextBuilder:
     """
     Construye el contexto para el orquestador.
-    No inspecciona proyecto ni activa RAG en consultas triviales.
+    Ahora evita inspeccionar el proyecto en consultas triviales o de memoria.
     """
 
     def __init__(self):
@@ -76,11 +76,27 @@ class ContextBuilder:
 
         words = t.split()
         if len(words) < 6:
-            memory_keywords = {"mi", "color", "favorito", "preferido", "recuerdas", "memoria"}
+            memory_keywords = {"color", "favorito", "preferido", "recuerdas", "memoria", "olvidé"}
             if any(k in t for k in memory_keywords):
                 return False
             return True
         return False
+
+    def _wants_memory(self, query: str) -> bool:
+        """Detecta si la consulta es puramente sobre memoria (no necesita proyecto/obsidian)."""
+        q = query.lower()
+        keys = {
+            "color",
+            "favorito",
+            "preferido",
+            "recuerdas",
+            "memoria",
+            "qué prefiero",
+            "que prefiero",
+            "olvidé",
+            "dónde está",
+        }
+        return any(k in q for k in keys)
 
     def _wants_obsidian(self, query: str) -> bool:
         q = query.lower()
@@ -95,11 +111,14 @@ class ContextBuilder:
         return any(k in q for k in keys)
 
     def build(self, query: str) -> dict:
-        if self._is_trivial(query):
+        # 1. Si es trivial o solo consulta de memoria → contexto mínimo
+        if self._is_trivial(query) or self._wants_memory(query):
             return {"query": query}
 
+        # 2. Consulta de código / proyecto → inspeccionar
         project = self.inspector.inspect()
 
+        # 3. Obsidian solo si se pide explícitamente
         obsidian_context = ""
         if self._wants_obsidian(query):
             obsidian_context = self.rag.get_relevant_context(query)

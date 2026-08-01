@@ -1,6 +1,8 @@
 import json
 import logging
+import time
 import re
+
 from typing import Optional
 
 from core.config import Config
@@ -42,25 +44,16 @@ class Orchestrator:
 
     def process(self, task: str, verbose: bool = False) -> str:
         """Procesa una tarea completa del usuario."""
-
-        # ------------------------------------------------------------
-        # 0. CONSULTA TRIVIAL → responder sin contexto pesado
-        # ------------------------------------------------------------
-        if self._is_trivial(task):
-            logger.info("Consulta trivial: saltando contexto pesado.")
-            response = self.agent_manager.delegate(
-                task=task,
-                context={"query": task},
-                skill_name=None,
-                skill_params=None,
-            )
-            self.memory.add(task, response)
-            return response
+        start_total = time.time()
 
         # ------------------------------------------------------------
         # 1. ANÁLISIS DE INTENCIÓN
         # ------------------------------------------------------------
+        t0 = time.time()
+
         intent = IntentAnalyzer.analyze(task)
+
+        logger.info("⏱️ IntentAnalyzer: %.3fs", time.time() - t0)
         logger.info(
             "Intención detectada | skill=%s | params=%s",
             intent.skill_name or "general",
@@ -68,47 +61,78 @@ class Orchestrator:
         )
 
         # ------------------------------------------------------------
-        # 2. CONSTRUCCIÓN DE CONTEXTO (Proyecto + Obsidian)
+        # 2. CONSTRUCCIÓN DE CONTEXTO
         # ------------------------------------------------------------
+        t0 = time.time()
+
         context = self.context_builder.build(task)
 
-        # ------------------------------------------------------------
-        # 3. INYECCIÓN DE MEMORIA DE ENGRAM (query reducida para FTS)
-        # ------------------------------------------------------------
-        limit = 8 if verbose else 5
-        search_query = self._engram_query(task)
-        engram_ctx = self.engram.get_context(search_query, limit=limit)
-        if engram_ctx:
-            context["engram"] = engram_ctx
-            logger.info(
-                "Engram query=%r → %d chars de contexto",
-                search_query,
-                len(engram_ctx),
-            )
-        else:
-            logger.debug("Engram sin resultados para query=%r", search_query)
+        logger.info(
+            "⏱️ ContextBuilder.build(): %.3fs",
+            time.time() - t0,
+        )
 
         # ------------------------------------------------------------
-        # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
+        # 3. INYECCIÓN DE MEMORIA DE ENGRAM
         # ------------------------------------------------------------
+        t0 = time.time()
+
+        limit = 8 if verbose else 3
+        engram_ctx = self.engram.get_context(task, limit=limit)
+
+        if engram_ctx:
+            context["engram"] = engram_ctx
+
+        logger.info(
+            "⏱️ Engram.get_context(): %.3fs (limit=%d)",
+            time.time() - t0,
+            limit,
+        )
+
+        # ------------------------------------------------------------
+        # 4. INYECCIÓN DE MEMORIA CONVERSACIONAL
+        # ------------------------------------------------------------
+        t0 = time.time()
+
+        memory = self.memory.get_context()
+
+        if memory:
+            context["memory"] = memory
+
+        logger.info(
+            "⏱️ ConversationMemory.get_context(): %.3fs",
+            time.time() - t0,
+        )
+
+        # ------------------------------------------------------------
+        # 5. INYECCIÓN DE ESPECIFICACIONES (SPECS)
+        # ------------------------------------------------------------
+        t0 = time.time()
+
         spec = self._find_relevant_spec(task)
+
         if spec:
-            context["spec"] = json.dumps(spec, ensure_ascii=False, indent=2)
+            context["spec"] = json.dumps(
+                spec,
+                ensure_ascii=False,
+                indent=2,
+            )
+
             logger.info(
                 "Spec encontrada y añadida al contexto: %s",
                 spec.get("name"),
             )
 
-        # ------------------------------------------------------------
-        # 5. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
-        # ------------------------------------------------------------
-        memory = self.memory.get_context()
-        if memory:
-            context["memory"] = memory
+        logger.info(
+            "⏱️ SpecManager._find_relevant_spec(): %.3fs",
+            time.time() - t0,
+        )
 
         # ------------------------------------------------------------
-        # 6. DELEGACIÓN AL AGENTE (genera la respuesta)
+        # 6. DELEGACIÓN AL AGENTE (LLM PRINCIPAL)
         # ------------------------------------------------------------
+        t0 = time.time()
+
         response = self.agent_manager.delegate(
             task=task,
             context=context,
@@ -116,21 +140,35 @@ class Orchestrator:
             skill_params=intent.skill_params,
         )
 
+        logger.info(
+            "⏱️ AgentManager.delegate(): %.3fs",
+            time.time() - t0,
+        )
+
         # ------------------------------------------------------------
-        # 7. SELF-CRITIC (auto-evaluación de la respuesta)
+        # 7. SELF-CRITIC (AUTO-EVALUACIÓN)
         # ------------------------------------------------------------
+        t0 = time.time()
+
         if self._should_critic(task):
-            eval_result = self.critic.process(task, context, response)
+            eval_result = self.critic.process(
+                task,
+                context,
+                response,
+            )
+
             if eval_result:
                 self.engram.save(
-                    json.dumps(eval_result, ensure_ascii=False),
+                    json.dumps(
+                        eval_result,
+                        ensure_ascii=False,
+                    ),
                     tags=[
                         "reflection",
                         "self_critic",
                         f"score_{eval_result.get('alignment_score', 0)}",
                         f"risk_{eval_result.get('hallucination_risk', 'unknown')}",
                     ],
-                    async_mode=False,
                 )
 
                 logger.info(
@@ -139,43 +177,85 @@ class Orchestrator:
                     eval_result.get("hallucination_risk"),
                 )
 
-                summary = eval_result.get("summary", "Evaluación no disponible.")
+                summary = eval_result.get(
+                    "summary",
+                    "Evaluación no disponible.",
+                )
+
                 critic_footer = f"\n\n---\n🤖 **Self-Critic:** {summary}"
 
                 if eval_result.get("hallucination_risk") == "high":
                     critic_footer += (
-                        "\n⚠️ **Alerta:** Alto riesgo de alucinación. Verifica el contexto."
+                        "\n⚠️ **Alerta:** Alto riesgo de alucinación. " "Verifica el contexto."
                     )
                 elif eval_result.get("alignment_score", 0) < 5:
                     critic_footer += (
-                        "\n⚠️ **Desviación detectada.** Revisa la recomendación de corrección."
+                        "\n⚠️ **Desviación detectada.** " "Revisa la recomendación de corrección."
                     )
 
-                response = response + critic_footer
+                response += critic_footer
+
+        logger.info(
+            "⏱️ Self-Critic (si aplica): %.3fs",
+            time.time() - t0,
+        )
 
         # ------------------------------------------------------------
-        # 8. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
+        # 8. APRENDIZAJE CONTINUO
         # ------------------------------------------------------------
+        t0 = time.time()
+
         if self.learner.extract_and_learn(task, response):
-            logger.info("Nuevo estándar aprendido.")
+            logger.info("Nuevo estándar aprendido. Guardando también en Engram.")
 
-        # ------------------------------------------------------------
-        # 9. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
-        # ------------------------------------------------------------
-        if not self._is_trivial(task):
             self.engram.save(
-                f"Usuario: {task}",
-                tags=["user_query", "interaction", "raw"],
-            )
-            self.engram.save(
-                f"Asistente: {response[:500]}",
-                tags=["assistant_response", "interaction", "raw"],
+                f"Estándar aprendido: {task[:200]}",
+                tags=[
+                    "learning",
+                    "standard",
+                    "continuous_learning",
+                ],
             )
 
+        logger.info(
+            "⏱️ ContinuousLearner: %.3fs",
+            time.time() - t0,
+        )
+
         # ------------------------------------------------------------
-        # 10. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
+        # 9. PERSISTENCIA (ENGRAM + MEMORIA)
         # ------------------------------------------------------------
+        t0 = time.time()
+
+        self.engram.save(
+            f"Usuario: {task}",
+            tags=[
+                "user_query",
+                "interaction",
+                "raw",
+            ],
+        )
+
+        self.engram.save(
+            f"Asistente: {response[:500]}",
+            tags=[
+                "assistant_response",
+                "interaction",
+                "raw",
+            ],
+        )
+
         self.memory.add(task, response)
+
+        logger.info(
+            "⏱️ Persistencia (Engram + Memory): %.3fs",
+            time.time() - t0,
+        )
+
+        logger.info(
+            "⏱️ TOTAL process(): %.3fs",
+            time.time() - start_total,
+        )
 
         return response
 
