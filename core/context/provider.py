@@ -7,6 +7,7 @@ from core.engram_memory import EngramMemory
 from core.memory import ConversationMemory
 from obsidian.rag import RAG
 from core.document_ingestor import DocumentIngestor
+from core.gentleman_skills import GentlemanSkills
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class ContextProvider:
         self.memory = ConversationMemory()
         self.rag = RAG()
         self.ingestor = DocumentIngestor()
+        self.gentleman = GentlemanSkills()
 
     def build(self, plan: ExecutionPlan) -> Dict[str, Any]:
         """
@@ -99,5 +101,16 @@ class ContextProvider:
             except Exception as e:
                 logger.warning("Error cargando estándares: %s", e)
 
-        logger.info("Contexto construido con: %s", list(context.keys()))
+        # 7. Estándares aprendidos (ContinuousLearner)
+        if plan.requires_context("gentleman"):
+            relevant = self.gentleman.find_relevant(plan.original_task)
+            if relevant:
+                skills_text = "\n\n".join(
+                    [f"## Skill: {name}\n{self.gentleman.get_skill(name)}" for name in relevant[:3]]
+                )
+                context["gentleman_skills"] = (
+                    f"=== SKILLS DE GENTLEMAN (contexto) ===\n{skills_text}"
+                )
+
+                logger.info("Contexto construido con: %s", list(context.keys()))
         return context
