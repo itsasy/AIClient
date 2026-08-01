@@ -18,16 +18,24 @@ class ObsidianSearch:
         if not self.vault_path.exists():
             return []
 
-        # 1. Obtener resultados de FTS (contenido completo)
+        words = query.split()
+        # Solo usar semántica si la consulta tiene >= 3 palabras
+        # Y si contiene palabras que sugieren búsqueda en notas
+        semantic_keywords = {"busca", "encuentra", "en mis notas", "obsidian", "nota", "apunte"}
+        use_semantic = len(words) >= 3 and any(k in query.lower() for k in semantic_keywords)
+
+        # 1. FTS (siempre)
         fts_results = self.fts_index.search(query, max_results=max_results * 2)
 
-        # 2. Obtener resultados semánticos (solo paths y scores)
-        semantic_results = self.semantic_index.search(query, top_k=max_results * 2)
+        # 2. Semántica (solo si corresponde)
+        semantic_results = []
+        if use_semantic:
+            semantic_results = self.semantic_index.search(query, top_k=max_results * 2)
 
-        # 3. Fusionar resultados con puntuación combinada
+        # 3. Fusionar resultados
         combined = {}
         for r in fts_results:
-            score_fts = -r["rank"]  # rank es negativo para mejores resultados
+            score_fts = -r["rank"]
             combined[r["path"]] = {
                 "path": r["path"],
                 "score_fts": score_fts,
@@ -41,16 +49,15 @@ class ObsidianSearch:
             if path in combined:
                 combined[path]["score_semantic"] = r["score"]
             else:
-                # Si solo aparece en semántica, asignamos score_fts = 0
                 combined[path] = {
                     "path": path,
                     "score_fts": 0.0,
                     "score_semantic": r["score"],
                     "snippet": "",
-                    "content": "",  # Se rellenará después si es necesario
+                    "content": "",
                 }
 
-        # 4. Normalizar y calcular puntuación final (ponderada)
+        # 4. Normalizar y calcular final_score
         max_fts = max([d["score_fts"] for d in combined.values()], default=1)
         max_sem = max([d["score_semantic"] for d in combined.values()], default=1)
 
@@ -59,22 +66,16 @@ class ObsidianSearch:
             norm_sem = data["score_semantic"] / max_sem if max_sem > 0 else 0
             data["final_score"] = (1 - alpha) * norm_fts + alpha * norm_sem
 
-        # 5. Ordenar y limitar
-        sorted_items = sorted(
-            combined.values(), key=lambda x: x["final_score"], reverse=True
-        )
+        sorted_items = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
         top_results = sorted_items[:max_results]
 
-        # 6. Rellenar contenido para los que faltan (por si solo aparecen en semántica)
+        # 5. Rellenar contenido faltante
         for r in top_results:
             if not r["content"] and r["path"]:
-                # Recuperar contenido del archivo
                 try:
                     filepath = self.vault_path / r["path"]
                     if filepath.exists():
-                        r["content"] = filepath.read_text(
-                            encoding="utf-8", errors="ignore"
-                        )[:1200]
+                        r["content"] = filepath.read_text(encoding="utf-8", errors="ignore")[:1200]
                 except Exception:
                     pass
 

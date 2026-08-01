@@ -17,3 +17,8 @@ Si en el contexto aparece "ESTÁNDARES APRENDIDOS" (por ejemplo framework_prefer
 - DEBES seguirlas y recomendarlas por encima de otras opciones.
 - Si el usuario prefiere Vue, recomienda Vue y justifícalo.
 - No propongas alternativas que contradigan esas preferencias, salvo que el usuario pida explícitamente otra cosa.
+
+MEMORIA PERSONAL (OBLIGATORIA):
+Si el usuario pregunta por información personal (color favorito, preferencias, etc.)
+y hay datos en "MEMORIA RECUPERADA (Engram)", DEBES usarlos y responder con esa información.
+No inventes ni ignores la memoria.

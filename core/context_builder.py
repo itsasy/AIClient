@@ -5,13 +5,8 @@ from core.document_ingestor import DocumentIngestor
 
 class ContextBuilder:
     """
-    Construye el contexto completo para el orquestador.
-
-    Combina:
-    - Proyecto (ProjectInspector)
-    - Obsidian (RAG híbrido con FTS + semántica) -> Carga perezosa (lazy loading)
-    - Memoria persistente (Engram)
-    - Documentos ingeridos (metadatos y fragmentos relevantes)
+    Construye el contexto para el orquestador.
+    No inspecciona proyecto ni activa RAG en consultas triviales.
     """
 
     def __init__(self):
@@ -22,33 +17,92 @@ class ContextBuilder:
 
     @property
     def rag(self):
-        """Carga RAG solo cuando se accede a él (lazy loading)."""
+        """Lazy load: aquí aparecen los weights de HF la primera vez."""
         if self._rag is None:
             from obsidian.rag import RAG
 
             self._rag = RAG()
         return self._rag
 
+    def _is_trivial(self, query: str) -> bool:
+        t = query.strip().lower()
+        trivial_phrases = {
+            "hola",
+            "hi",
+            "hello",
+            "hey",
+            "buenas",
+            "buenos días",
+            "buenos dias",
+            "qué tal",
+            "que tal",
+            "gracias",
+            "ok",
+            "vale",
+            "adios",
+            "adiós",
+            "chao",
+            "¿cómo estás?",
+            "como estas",
+            "cómo estás",
+        }
+        if t in trivial_phrases:
+            return True
+
+        code_keywords = {
+            "proyecto",
+            "código",
+            "codigo",
+            "archivo",
+            "función",
+            "funcion",
+            "clase",
+            "script",
+            "endpoint",
+            "repo",
+            "api",
+            "docker",
+            "composer",
+            "laravel",
+            "react",
+            "vue",
+            "django",
+            "refactor",
+            "migra",
+            "spec",
+        }
+        if any(k in t for k in code_keywords):
+            return False
+
+        words = t.split()
+        if len(words) < 6:
+            memory_keywords = {"mi", "color", "favorito", "preferido", "recuerdas", "memoria"}
+            if any(k in t for k in memory_keywords):
+                return False
+            return True
+        return False
+
+    def _wants_obsidian(self, query: str) -> bool:
+        q = query.lower()
+        keys = [
+            "busca",
+            "encuentra",
+            "en mis notas",
+            "obsidian",
+            "segunda mente",
+            "segundo cerebro",
+        ]
+        return any(k in q for k in keys)
+
     def build(self, query: str) -> dict:
-        """
-        Construye el diccionario de contexto para la consulta actual.
-        Solo carga Obsidian si la consulta es relevante (largo > 3 palabras o keywords).
-        """
-        # 1. Proyecto (snapshot) - SIEMPRE
+        if self._is_trivial(query):
+            return {"query": query}
+
         project = self.inspector.inspect()
 
-        # 2. Obsidian (RAG híbrido) - SOLO si la consulta lo merece
         obsidian_context = ""
-        if len(query.split()) > 3 or any(
-            k in query.lower() for k in ["busca", "encuentra", "en mis notas"]
-        ):
+        if self._wants_obsidian(query):
             obsidian_context = self.rag.get_relevant_context(query)
-
-        # 3. Memoria persistente (Engram)
-        engram_context = self.engram.get_context(query)
-
-        # 4. Documentos ingeridos (lista de metadatos)
-        ingested_docs = self.ingestor.list_ingested()
 
         context = {
             "project": project,
@@ -56,17 +110,8 @@ class ContextBuilder:
             "query": query,
         }
 
-        if engram_context:
-            context["engram"] = engram_context
-
-        if ingested_docs:
-            doc_list = "\n".join(
-                [f"- {doc['name']} ({doc['chunks']} fragmentos)" for doc in ingested_docs]
-            )
-            context["ingested_docs"] = f"=== DOCUMENTOS INGERIDOS ===\n{doc_list}"
-
+        # Engram lo inyecta el Orchestrator (evitar duplicar)
         return context
 
     def get_ingested_docs(self) -> list:
-        """Devuelve la lista de documentos ingeridos."""
         return self.ingestor.list_ingested()

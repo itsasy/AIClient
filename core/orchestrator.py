@@ -42,14 +42,22 @@ class Orchestrator:
     def process(self, task: str, verbose: bool = False) -> str:
         """
         Procesa una tarea completa del usuario.
-
-        Args:
-            task (str): Instrucción o consulta del usuario.
-            verbose (bool): Si es True, recupera más contexto (memoria y specs).
-
-        Returns:
-            str: Respuesta generada por el agente/LLM.
         """
+
+        # ------------------------------------------------------------
+        # 0. CONSULTA TRIVIAL → responder sin contexto pesado
+        # ------------------------------------------------------------
+        if self._is_trivial(task):
+            logger.info("Consulta trivial: saltando contexto pesado.")
+            response = self.agent_manager.delegate(
+                task=task,
+                context={"query": task},
+                skill_name=None,
+                skill_params=None,
+            )
+            self.memory.add(task, response)
+            return response
+
         # ------------------------------------------------------------
         # 1. ANÁLISIS DE INTENCIÓN
         # ------------------------------------------------------------
@@ -68,16 +76,10 @@ class Orchestrator:
         # ------------------------------------------------------------
         # 3. INYECCIÓN DE MEMORIA DE ENGRAM (persistente)
         # ------------------------------------------------------------
-        # Progressive disclosure: más contexto si verbose=True
-        limit = 8 if verbose else 3
+        limit = 8 if verbose else 5
         engram_ctx = self.engram.get_context(task, limit=limit)
         if engram_ctx:
             context["engram"] = engram_ctx
-            logger.info(
-                "Contexto recuperado de Engram (%d caracteres, límite=%d)",
-                len(engram_ctx),
-                limit,
-            )
 
         # ------------------------------------------------------------
         # 4. INYECCIÓN DE ESPECIFICACIONES (Specs) si existen
@@ -85,7 +87,10 @@ class Orchestrator:
         spec = self._find_relevant_spec(task)
         if spec:
             context["spec"] = json.dumps(spec, ensure_ascii=False, indent=2)
-            logger.info("Spec encontrada y añadida al contexto: %s", spec.get("name"))
+            logger.info(
+                "Spec encontrada y añadida al contexto: %s",
+                spec.get("name"),
+            )
 
         # ------------------------------------------------------------
         # 5. INYECCIÓN DE MEMORIA CONVERSACIONAL (sesión actual)
@@ -110,7 +115,6 @@ class Orchestrator:
         if self._should_critic(task):
             eval_result = self.critic.process(task, context, response)
             if eval_result:
-                # 7a. Guardar evaluación en Engram
                 self.engram.save(
                     json.dumps(eval_result, ensure_ascii=False),
                     tags=[
@@ -119,21 +123,26 @@ class Orchestrator:
                         f"score_{eval_result.get('alignment_score', 0)}",
                         f"risk_{eval_result.get('hallucination_risk', 'unknown')}",
                     ],
+                    async_mode=False,
                 )
+
                 logger.info(
                     "Self-Critic guardado | score=%s | risk=%s",
                     eval_result.get("alignment_score"),
                     eval_result.get("hallucination_risk"),
                 )
 
-                # 7b. Enriquecer la respuesta con el resumen del crítico
                 summary = eval_result.get("summary", "Evaluación no disponible.")
                 critic_footer = f"\n\n---\n🤖 **Self-Critic:** {summary}"
 
                 if eval_result.get("hallucination_risk") == "high":
-                    critic_footer += "\n⚠️ **Alerta:** Alto riesgo de alucinación. Verifica el contexto."
+                    critic_footer += (
+                        "\n⚠️ **Alerta:** Alto riesgo de alucinación. Verifica el contexto."
+                    )
                 elif eval_result.get("alignment_score", 0) < 5:
-                    critic_footer += "\n⚠️ **Desviación detectada.** Revisa la recomendación de corrección."
+                    critic_footer += (
+                        "\n⚠️ **Desviación detectada.** Revisa la recomendación de corrección."
+                    )
 
                 response = response + critic_footer
 
@@ -141,34 +150,26 @@ class Orchestrator:
         # 8. APRENDIZAJE CONTINUO (detectar correcciones del usuario)
         # ------------------------------------------------------------
         if self.learner.extract_and_learn(task, response):
-            logger.info("Nuevo estándar aprendido. Guardando también en Engram.")
-            self.engram.save(
-                f"Estándar aprendido: {task[:200]}",
-                tags=["learning", "standard", "continuous_learning"],
-            )
+            logger.info("Nuevo estándar aprendido.")
 
         # ------------------------------------------------------------
         # 9. PERSISTENCIA EN ENGRAM (guardar la interacción completa)
         # ------------------------------------------------------------
-        # Guardar la consulta del usuario
-        self.engram.save(
-            f"Usuario: {task}",
-            tags=["user_query", "interaction", "raw"],
-        )
-        # Guardar la respuesta del asistente (acortada para no saturar)
-        self.engram.save(
-            f"Asistente: {response[:500]}",
-            tags=["assistant_response", "interaction", "raw"],
-        )
+        if not self._is_trivial(task):
+            self.engram.save(
+                f"Usuario: {task}",
+                tags=["user_query", "interaction", "raw"],
+            )
+            self.engram.save(
+                f"Asistente: {response[:500]}",
+                tags=["assistant_response", "interaction", "raw"],
+            )
 
         # ------------------------------------------------------------
         # 10. PERSISTENCIA EN MEMORIA CONVERSACIONAL (.history.json)
         # ------------------------------------------------------------
         self.memory.add(task, response)
 
-        # ------------------------------------------------------------
-        # 11. DEVOLVER RESPUESTA AL USUARIO
-        # ------------------------------------------------------------
         return response
 
     # ================================================================
@@ -202,9 +203,7 @@ class Orchestrator:
             try:
                 data = json.loads(m.get("content", "{}"))
                 if data.get("type") == "spec":
-                    logger.info(
-                        "Spec encontrada por búsqueda semántica: %s", data.get("name")
-                    )
+                    logger.info("Spec encontrada por búsqueda semántica: %s", data.get("name"))
                     return data
             except json.JSONDecodeError:
                 continue
@@ -241,3 +240,28 @@ class Orchestrator:
             "estructura",
         ]
         return any(k in task.lower() for k in keywords)
+
+    def _is_trivial(self, task: str) -> bool:
+        t = task.strip().lower()
+        trivial_phrases = {
+            "hola",
+            "hi",
+            "hello",
+            "hey",
+            "buenas",
+            "buenos días",
+            "buenos dias",
+            "qué tal",
+            "que tal",
+            "gracias",
+            "ok",
+            "vale",
+            "adios",
+            "adiós",
+            "chao",
+        }
+        if t in trivial_phrases:
+            return True
+        if len(t.split()) <= 2:
+            return True
+        return False
