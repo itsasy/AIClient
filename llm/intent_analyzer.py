@@ -40,9 +40,7 @@ class IntentAnalyzer:
                 framework = "laravel"
 
             # Extraer el nombre
-            name_match = re.search(
-                r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q
-            )
+            name_match = re.search(r"llamado\s+(\S+)|nombre\s+(\S+)|proyecto\s+(\S+)$", q)
             if name_match:
                 name = (
                     name_match.group(1)
@@ -57,9 +55,7 @@ class IntentAnalyzer:
             if framework == "laravel":
                 return IntentResult("laravel_project", {"name": name})
             else:
-                return IntentResult(
-                    "full_project", {"framework": framework, "name": name}
-                )
+                return IntentResult("full_project", {"framework": framework, "name": name})
 
         # ------------------------------------------------------------
         # 2. DETECCIÓN DE SHELL / COMANDOS (extrae el comando real)
@@ -151,6 +147,32 @@ class IntentAnalyzer:
                 return IntentResult("ingest", {"filepath": file_match.group(1)})
 
         # ------------------------------------------------------------
-        # 8. SIN INTENCIÓN DETECTADA
+        # 8. NUEVO: DETECCIÓN DE ESCRITURA DE ARCHIVOS (write_file)
+        # ------------------------------------------------------------
+        if re.search(
+            r"\b(crea|genera|escribe|guarda|exporta)\b.*\b(archivo|fichero|código|codigo|html|js|css|py|json)\b",
+            q,
+            re.IGNORECASE,
+        ):
+            file_match = re.search(
+                r"(?:archivo|fichero)\s+['\"]?([\w\-\.]+)['\"]?", q, re.IGNORECASE
+            )
+            if not file_match:
+                ext_match = re.search(
+                    r"\b([\w\-\.]+\.(html|js|css|py|json|txt|md|xml|yaml|yml))\b",
+                    q,
+                    re.IGNORECASE,
+                )
+                if ext_match:
+                    filepath = ext_match.group(1)
+                else:
+                    filepath = "output.html"
+            else:
+                filepath = file_match.group(1)
+
+            return IntentResult("write_file", {"path": filepath, "content": None})
+
+        # ------------------------------------------------------------
+        # 9. SIN INTENCIÓN DETECTADA
         # ------------------------------------------------------------
         return IntentResult(None, None)
