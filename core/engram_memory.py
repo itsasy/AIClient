@@ -201,6 +201,8 @@ class EngramMemory:
         if not memories:
             return ""
 
+        memories = sorted(memories, key=lambda x: x.get("id", 0), reverse=True)
+
         lines = ["=== MEMORIA RECUPERADA (Engram) ==="]
         for m in memories:
             content = m.get("content") or m.get("title") or ""
