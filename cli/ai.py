@@ -62,6 +62,11 @@ Ejemplos:
 
     args = parser.parse_args()
 
+    print("=" * 60)
+    print("sys.argv =", sys.argv)
+    print("args.query =", args.query)
+    print("=" * 60)
+    
     # =============================================================
     # 0. TUI
     # =============================================================
