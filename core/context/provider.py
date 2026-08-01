@@ -105,12 +105,18 @@ class ContextProvider:
         if plan.requires_context("gentleman"):
             try:
                 relevant = self.gentleman.find_relevant(plan.original_task)
+                logger.info(f"🔍 Skills relevantes encontradas: {relevant}")  # <--- LOG
                 if relevant:
                     skills_text = "\n\n".join(
                         [f"## Skill: {name}\n{self.gentleman.get_skill(name)}" for name in relevant]
                     )
                     context["gentleman_skills"] = f"=== GENTLEMAN SKILLS ===\n{skills_text}"
-                    logger.debug("Gentleman-Skills cargadas: %s", relevant)
+                    logger.info(f"✅ Gentleman-Skills cargadas: {relevant}")
+                else:
+                    logger.info(
+                        "❌ No se encontraron Gentleman-Skills relevantes para: %s",
+                        plan.original_task,
+                    )
             except Exception as e:
                 logger.warning("Error cargando Gentleman-Skills: %s", e)
 
