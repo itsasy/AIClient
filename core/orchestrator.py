@@ -7,8 +7,6 @@ from typing import Optional
 
 from core.config import Config
 from core.context_builder import ContextBuilder
-from core.memory import ConversationMemory
-from core.engram_memory import EngramMemory
 from core.learner import ContinuousLearner
 from core.spec_manager import SpecManager
 from agents.manager import AgentManager
@@ -33,11 +31,9 @@ class Orchestrator:
 
     def __init__(self):
         self.context_builder = ContextBuilder()
-        self.memory = ConversationMemory()
         self.agent_manager = AgentManager()
         self.learner = ContinuousLearner()
         self.critic = SelfCriticAgent()
-        self.engram = EngramMemory()
         self.spec_manager = SpecManager()
 
         logger.info("Orchestrator iniciado con Engram + Self-Critic + SpecManager")
@@ -67,62 +63,6 @@ class Orchestrator:
 
         logger.info(
             "⏱️ ContextBuilder.build(): %.3fs",
-            time.time() - t0,
-        )
-
-        # ------------------------------------------------------------
-        # 3. INYECCIÓN DE MEMORIA DE ENGRAM
-        # ------------------------------------------------------------
-        t0 = time.time()
-
-        limit = 8 if verbose else 3
-        engram_ctx = self.engram.get_context(task, limit=limit)
-
-        if engram_ctx:
-            context["engram"] = engram_ctx
-
-        logger.info(
-            "⏱️ Engram.get_context(): %.3fs (limit=%d)",
-            time.time() - t0,
-            limit,
-        )
-
-        # ------------------------------------------------------------
-        # 4. INYECCIÓN DE MEMORIA CONVERSACIONAL
-        # ------------------------------------------------------------
-        t0 = time.time()
-
-        memory = self.memory.get_context()
-
-        if memory:
-            context["memory"] = memory
-
-        logger.info(
-            "⏱️ ConversationMemory.get_context(): %.3fs",
-            time.time() - t0,
-        )
-
-        # ------------------------------------------------------------
-        # 5. INYECCIÓN DE ESPECIFICACIONES (SPECS)
-        # ------------------------------------------------------------
-        t0 = time.time()
-
-        spec = self._find_relevant_spec(task)
-
-        if spec:
-            context["spec"] = json.dumps(
-                spec,
-                ensure_ascii=False,
-                indent=2,
-            )
-
-            logger.info(
-                "Spec encontrada y añadida al contexto: %s",
-                spec.get("name"),
-            )
-
-        logger.info(
-            "⏱️ SpecManager._find_relevant_spec(): %.3fs",
             time.time() - t0,
         )
 

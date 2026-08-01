@@ -1,34 +1,53 @@
 from agents.base import Agent
 from llm.router import LLMRouter
+from core.execution_plan import ExecutionPlan
 
 
 class MultiTurnAgent(Agent):
+
     name = "multi_turn"
-    role = "Agente conversacional con memoria"
+
+    role = "Agente conversacional"
 
     def process(
         self,
-        task: str,
-        context: dict[str, object] | None = None,
-        skill_name: str | None = None,
-        skill_params: dict[str, object] | None = None,
+        plan: ExecutionPlan,
+        context: dict | None = None,
     ) -> str:
+
         history = ""
 
-        if context is not None:
-            history = str(context.get("memory", ""))
+        if context:
+            history = context.get("memory", "")
 
-        prompt = f"""Historial:
+        prompt = f"""
+Historial
+
 {history}
 
-Nueva tarea:
-{task}
+Nueva tarea
 
-Mantén coherencia y contexto."""
+{plan.task}
+
+Mantén coherencia.
+"""
+
+        cloned = ExecutionPlan(
+            task=prompt,
+            skill_name=plan.skill_name,
+            skill_params=plan.skill_params,
+            needs_project=plan.needs_project,
+            needs_obsidian=plan.needs_obsidian,
+            needs_memory=plan.needs_memory,
+            needs_engram=plan.needs_engram,
+            needs_spec=plan.needs_spec,
+            requires_llm=plan.requires_llm,
+            requires_execution=plan.requires_execution,
+            requires_self_critic=plan.requires_self_critic,
+            metadata=plan.metadata.copy(),
+        )
 
         return LLMRouter.generate(
-            task=prompt,
-            context=context if context is not None else {},
-            skill_name=skill_name,
-            skill_params=skill_params,
+            plan=cloned,
+            context=context or {},
         )

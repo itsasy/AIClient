@@ -1,15 +1,16 @@
 from abc import ABC, abstractmethod
 
+from core.execution_plan import ExecutionPlan
+
 
 class Agent(ABC):
-    name: str = "base"
+
+    name = "base"
 
     @abstractmethod
     def process(
         self,
-        task: str,
-        context: dict[str, object] | None = None,
-        skill_name: str | None = None,
-        skill_params: dict[str, object] | None = None,
+        plan: ExecutionPlan,
+        context: dict | None = None,
     ) -> str:
         raise NotImplementedError("Los agentes deben implementar process()")
