@@ -7,12 +7,12 @@ from agents.base import Agent
 
 from core.execution_plan import ExecutionPlan
 
-from runtime.execution_unit import ExecutionUnit
+from core.execution_result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
 
-class AgentRuntime(ExecutionUnit):
+class AgentRuntime:
     """
     Runtime de ejecución de agentes.
 
@@ -31,6 +31,10 @@ class AgentRuntime(ExecutionUnit):
     """
 
     name = "agent_runtime"
+
+    # ==========================================================
+    # Public execution
+    # ==========================================================
 
     def execute(
         self,
@@ -81,11 +85,11 @@ class AgentRuntime(ExecutionUnit):
                 result,
             )
 
-            return {
-                "success": True,
-                "agent": agent.name,
-                "result": result,
-            }
+            return ExecutionResult.ok(
+                output=result,
+                executor=f"agent:{agent.name}",
+                plan_id=plan.id,
+            )
 
         except Exception as exc:
 
@@ -98,9 +102,8 @@ class AgentRuntime(ExecutionUnit):
                 str(exc),
             )
 
-            return {
-                "success": False,
-                "agent": agent.name,
-                "error": str(exc),
-                "plan_id": plan.id,
-            }
+            return ExecutionResult.fail(
+                error=str(exc),
+                executor=f"agent:{agent.name}",
+                plan_id=plan.id,
+            )

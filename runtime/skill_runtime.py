@@ -8,6 +8,8 @@ from core.execution_plan import (
     ExecutionStep,
 )
 
+from core.execution_result import ExecutionResult
+
 from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
@@ -19,7 +21,7 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Resolver Skill.
+    - Resolver Skills.
     - Ejecutar SkillManager.
     - Gestionar lifecycle del step.
     - Aplicar retries.
@@ -44,9 +46,17 @@ class SkillRuntime:
         plan: ExecutionPlan,
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> ExecutionResult:
 
         context = context or {}
+
+        if step.unit_type != "skill":
+
+            return ExecutionResult.fail(
+                error=("SkillRuntime recibió unidad inválida: " f"{step.unit_type}"),
+                executor="skill_runtime",
+                plan_id=plan.id,
+            )
 
         retries = 0
 
@@ -58,14 +68,14 @@ class SkillRuntime:
 
                 logger.info(
                     "Ejecutando skill=%s step=%s",
-                    step.skill,
+                    step.unit_name,
                     step.description,
                 )
 
                 step.mark_running()
 
                 result = self.skills.execute(
-                    step.skill,
+                    step.unit_name,
                     **step.params,
                 )
 
@@ -73,10 +83,11 @@ class SkillRuntime:
                     result,
                 )
 
-                return {
-                    "success": True,
-                    "result": result,
-                }
+                return ExecutionResult.ok(
+                    output=result,
+                    executor=f"skill:{step.unit_name}",
+                    plan_id=plan.id,
+                )
 
             except Exception as exc:
 
@@ -84,7 +95,7 @@ class SkillRuntime:
 
                 logger.exception(
                     "Error ejecutando skill=%s intento=%s",
-                    step.skill,
+                    step.unit_name,
                     retries,
                 )
 
@@ -94,12 +105,14 @@ class SkillRuntime:
                         str(exc),
                     )
 
-                    return {
-                        "success": False,
-                        "error": str(exc),
-                    }
+                    return ExecutionResult.fail(
+                        error=str(exc),
+                        executor=f"skill:{step.unit_name}",
+                        plan_id=plan.id,
+                    )
 
-        return {
-            "success": False,
-            "error": "Max retries alcanzado.",
-        }
+        return ExecutionResult.fail(
+            error="Max retries alcanzado.",
+            executor=f"skill:{step.unit_name}",
+            plan_id=plan.id,
+        )
