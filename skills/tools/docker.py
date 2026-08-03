@@ -1,6 +1,7 @@
 from skills.base import Skill
 from core.config import Config
 import subprocess
+import time
 
 
 class DockerTool(Skill):
@@ -30,6 +31,7 @@ class DockerTool(Skill):
             "docker info",
             "docker inspect",
         ]
+
         if not any(command.startswith(sc) for sc in safe_commands):
             return {
                 "type": "docker_result",
@@ -42,6 +44,9 @@ class DockerTool(Skill):
 
         try:
             cwd = Config.TARGET_PROJECT_ROOT
+
+            start = time.time()
+
             result = subprocess.run(
                 command,
                 shell=True,
@@ -50,15 +55,21 @@ class DockerTool(Skill):
                 timeout=Config.DOCKER_TIMEOUT,
                 cwd=cwd,
             )
+
+            duration = round(time.time() - start, 3)
+
             output = result.stdout.strip() or result.stderr.strip()
+
             return {
                 "type": "docker_result",
                 "payload": {
                     "ok": result.returncode == 0,
                     "command": command,
                     "output": output[:1000],
+                    "duration": duration,
                 },
             }
+
         except Exception as e:
             return {
                 "type": "docker_result",

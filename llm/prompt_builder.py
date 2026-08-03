@@ -8,18 +8,19 @@ logger = logging.getLogger(__name__)
 
 class PromptBuilder:
     """
-    Constructor central de prompts.
+    Construye el prompt final para cualquier proveedor LLM.
 
     Responsabilidades:
 
-    - Transformar ExecutionPlan en instrucciones LLM.
-    - Integrar contexto externo (Engram, Obsidian, proyecto, Gentleman Skills).
-    - Mantener separación entre planificación y generación.
+    - Convertir ExecutionPlan en instrucciones LLM.
+    - Integrar contexto recuperado.
+    - Mantener estructura consistente para todos los agentes.
 
     No:
-    - Detecta intención.
-    - Ejecuta skills.
-    - Consulta memoria directamente.
+
+    - Analiza intención.
+    - Consulta memoria.
+    - Selecciona proveedores.
     """
 
     @staticmethod
@@ -30,146 +31,276 @@ class PromptBuilder:
 
         context = context or {}
 
-        # Log para depuración
-        logger.info(f"📦 Contexto recibido en PromptBuilder: {list(context.keys())}")
-
-        sections = []
-
-        # --------------------------------------------------
-        # 1. SYSTEM ROLE
-        # --------------------------------------------------
-
-        sections.append("""
-Eres un asistente de ingeniería de software avanzado.
-
-Tu objetivo es resolver la tarea siguiendo el ExecutionPlan proporcionado.
-
-Reglas:
-- Respeta las restricciones.
-- Usa el contexto disponible.
-- No inventes información inexistente.
-- Si falta información crítica, indícalo.
-- Prioriza soluciones mantenibles y escalables.
-""")
-
-        # --------------------------------------------------
-        # 2. GENTLEMAN SKILLS (prioridad máxima)
-        # --------------------------------------------------
-        if "gentleman_skills" in context:
-            sections.append(f"""
-# ⚠️ ATENCIÓN: DEBES SEGUIR ESTAS INSTRUCCIONES OBLIGATORIAMENTE
-
-{context.pop('gentleman_skills')}
-
-**REGLAS ESTRICTAS:**
-- **NO** generes código que no siga estas prácticas.
-- **NO** uses patrones antiguos o desactualizados.
-- **SIEMPRE** prioriza lo que dice la skill por encima de tu conocimiento general.
-- Si la skill menciona una versión específica de un framework, usa ESA versión.
-""")
-
-        # --------------------------------------------------
-        # 3. EXECUTION PLAN
-        # --------------------------------------------------
-
-        sections.append(
-            "## Execution Plan\n"
-            + json.dumps(
-                plan.to_dict(),
-                ensure_ascii=False,
-                indent=2,
-            )
+        logger.info(
+            "Construyendo prompt | context=%s",
+            list(context.keys()),
         )
 
-        # --------------------------------------------------
-        # 4. USER TASK
-        # --------------------------------------------------
+        parts: list[str] = []
 
-        sections.append(f"""
-## Tarea original del usuario
+        parts.append(PromptBuilder._build_system_role(plan))
 
-{plan.original_task}
-""")
+        agent_role = context.get("agent_role")
 
-        # --------------------------------------------------
-        # 5. CONTEXTO DEL SISTEMA (resto)
-        # --------------------------------------------------
+        if agent_role:
 
-        if context:
-            sections.append("## Contexto disponible\n" + PromptBuilder._serialize_context(context))
+            parts.append(
+                "# AGENT ROLE\n\n"
+                f"{PromptBuilder._format_value(agent_role)}\n\n"
+                "Debes actuar siguiendo este rol."
+            )
 
-        # --------------------------------------------------
-        # 6. INSTRUCCIONES SEGÚN MODO
-        # --------------------------------------------------
+        if plan.objective:
 
-        if plan.execution_mode == "multi_step":
+            parts.append(f"# OBJECTIVE\n\n{plan.objective}")
 
-            sections.append("""
-Modo de ejecución:
-MULTI PASO
+        parts.append(f"# USER REQUEST\n\n{plan.original_task}")
 
-Analiza cada paso del plan antes de responder.
-Mantén consistencia entre las etapas.
-""")
+        constraints = PromptBuilder._build_constraints(plan)
 
-        else:
+        if constraints:
+            parts.append(constraints)
 
-            sections.append("""
-Modo de ejecución:
-TAREA ÚNICA
+        parts.append(PromptBuilder._build_execution_plan(plan))
 
-Entrega directamente la solución solicitada.
-""")
+        steps = PromptBuilder._build_steps(plan)
 
-        prompt = "\n\n".join(sections)
+        if steps:
+            parts.append(steps)
 
-        logger.debug(
-            "Prompt generado | chars=%d",
+        parts.extend(PromptBuilder._build_context(context))
+
+        settings = PromptBuilder._build_llm_settings(plan)
+
+        if settings:
+            parts.append(settings)
+
+        parts.append(PromptBuilder._build_execution_mode(plan))
+
+        prompt = "\n\n".join(parts)
+
+        logger.info(
+            "Prompt construido (%d caracteres)",
             len(prompt),
         )
 
         return prompt
 
+    # ==========================================================
+    # SYSTEM
+    # ==========================================================
+
     @staticmethod
-    def _serialize_context(
-        context: dict,
+    def _build_system_role(
+        plan: ExecutionPlan,
     ) -> str:
-        """
-        Serializa contexto externo.
 
-        Preparado para:
-        - Engram
-        - Obsidian
-        - documentos
-        - proyecto
-        - memoria conversacional
-        - estándares
-        - (gentleman_skills ya se ha extraído)
-        """
+        if plan.system_role:
+            return plan.system_role
 
-        output = []
+        return """
+Eres AIClient.
 
-        for key, value in context.items():
+Eres un ingeniero de software senior especializado en:
 
-            output.append(f"""
-### {key}
+- Arquitectura
+- Clean Architecture
+- Domain Driven Design (DDD)
+- Laravel
+- NestJS
+- Python
+- Docker
+- DevOps
+- Inteligencia Artificial
 
-{PromptBuilder._format_value(value)}
-""")
+Objetivo:
 
-        return "\n".join(output)
+Resolver la tarea utilizando TODO el contexto disponible.
+
+Reglas:
+
+- Nunca ignores Gentleman Skills.
+- Nunca inventes información.
+- Prioriza el contexto antes que conocimiento general.
+- Mantén consistencia entre respuestas.
+- Reutiliza conocimiento previo cuando exista.
+- Usa Engram, Obsidian y documentos cuando estén disponibles.
+"""
+
+    # ==========================================================
+    # EXECUTION PLAN
+    # ==========================================================
 
     @staticmethod
-    def _format_value(value):
+    def _build_execution_plan(
+        plan: ExecutionPlan,
+    ) -> str:
+
+        plan_dict = plan.to_dict()
+
+        plan_dict.pop(
+            "steps",
+            None,
+        )
+
+        return "# EXECUTION PLAN\n" + json.dumps(
+            plan_dict,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # ==========================================================
+    # STEPS
+    # ==========================================================
+
+    @staticmethod
+    def _build_steps(
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        if not plan.steps:
+            return None
+
+        return "# EXECUTION STEPS\n" + json.dumps(
+            [
+                {
+                    "description": step.description,
+                    "skill": step.skill,
+                    "tool": step.tool,
+                    "provider": step.provider,
+                    "params": step.params,
+                    "status": step.status,
+                }
+                for step in plan.steps
+            ],
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # ==========================================================
+    # CONSTRAINTS
+    # ==========================================================
+
+    @staticmethod
+    def _build_constraints(
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        if not plan.constraints:
+            return None
+
+        return "# CONSTRAINTS\n\n" + "\n".join(f"- {constraint}" for constraint in plan.constraints)
+
+    # ==========================================================
+    # CONTEXT
+    # ==========================================================
+
+    @staticmethod
+    def _build_context(
+        context: dict,
+    ) -> list[str]:
+
+        sections: list[str] = []
+
+        titles = {
+            "project": "PROJECT CONTEXT",
+            "memory": "CONVERSATION MEMORY",
+            "obsidian": "OBSIDIAN KNOWLEDGE",
+            "documents": "RELATED DOCUMENTS",
+            "spec": "SPECIFICATION",
+            "standards": "PROJECT STANDARDS",
+            "gentleman": "GENTLEMAN SKILLS",
+        }
+
+        for key, title in titles.items():
+
+            value = context.get(key)
+
+            if not value:
+                continue
+
+            block = f"# {title}\n\n" f"{PromptBuilder._format_value(value)}"
+
+            if key == "gentleman":
+
+                block += "\n\nEstas instrucciones tienen prioridad " "sobre conocimiento general."
+
+            sections.append(block)
+
+        # Engram separado en memoria y skills
+
+        engram = context.get("engram")
+
+        if isinstance(engram, dict):
+
+            memory = engram.get("memory")
+
+            if memory:
+
+                sections.append("# ENGRAM MEMORY\n\n" f"{PromptBuilder._format_value(memory)}")
+
+            skills = engram.get("skills")
+
+            if skills:
+
+                sections.append("# ENGRAM SKILLS\n\n" f"{PromptBuilder._format_value(skills)}")
+
+        return sections
+
+    # ==========================================================
+    # LLM SETTINGS
+    # ==========================================================
+
+    @staticmethod
+    def _build_llm_settings(
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        values = []
+
+        if plan.preferred_provider:
+            values.append(f"Provider: {plan.preferred_provider}")
+
+        if plan.temperature is not None:
+            values.append(f"Temperature: {plan.temperature}")
+
+        if plan.max_tokens is not None:
+            values.append(f"Max Tokens: {plan.max_tokens}")
+
+        if not values:
+            return None
+
+        return "# LLM SETTINGS\n\n" + "\n".join(values)
+
+    # ==========================================================
+    # EXECUTION MODE
+    # ==========================================================
+
+    @staticmethod
+    def _build_execution_mode(
+        plan: ExecutionPlan,
+    ) -> str:
+
+        return "# EXECUTION MODE\n\n" f"{plan.execution_mode}"
+
+    # ==========================================================
+    # FORMAT
+    # ==========================================================
+
+    @staticmethod
+    def _format_value(
+        value,
+    ):
 
         if isinstance(value, str):
             return value
 
         try:
+
             return json.dumps(
                 value,
-                ensure_ascii=False,
                 indent=2,
+                ensure_ascii=False,
             )
 
         except Exception:

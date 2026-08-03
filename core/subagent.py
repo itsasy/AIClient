@@ -1,34 +1,48 @@
 import logging
 
-from core.execution_plan import ExecutionStep
-from skills.manager import SkillManager
 from agents.self_critic import SelfCriticAgent
+
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
+from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
 
 class Subagent:
     """
-    Ejecuta pasos individuales de un ExecutionPlan.
+    Ejecuta un ExecutionStep.
 
-    Responsabilidades:
-    - Ejecutar skills.
-    - Validar resultado.
-    - Aplicar retry.
+    En el futuro podrá ejecutar:
+
+    - Skills
+    - Agentes
+    - Workflows
+    - Plugins
+    - MCP Servers
     """
 
     def __init__(self):
-        self.skill_manager = SkillManager()
+
+        self.skills = SkillManager()
         self.critic = SelfCriticAgent()
 
-    def execute_step(
+    # ---------------------------------------------------------
+
+    def execute(
         self,
+        plan: ExecutionPlan,
         step: ExecutionStep,
         context: dict | None = None,
-        max_retries: int = 2,
     ) -> dict:
 
+        context = context or {}
+
         retries = 0
+        max_retries = plan.max_retries
 
         while retries <= max_retries:
 
@@ -39,51 +53,68 @@ class Subagent:
                     step.description,
                 )
 
-                result = self.skill_manager.execute(
+                step.status = "running"
+
+                result = self.skills.execute(
                     step.skill,
                     **step.params,
                 )
 
                 output = self._extract_output(result)
 
-                evaluation = self.critic.process(
-                    task=step.description,
-                    context=context or {},
-                    draft_response=output,
-                )
+                if plan.requires_self_critic:
 
-                score = evaluation.get(
-                    "alignment_score",
-                    0,
-                )
+                    evaluation = self.critic.process(
+                        plan=plan,
+                        context=context,
+                        draft_response=output,
+                    )
 
-                if score >= 5:
+                    score = evaluation.get(
+                        "alignment_score",
+                        10,
+                    )
 
-                    step.status = "completed"
+                    if score < 5:
 
-                    return {
-                        "success": True,
-                        "result": result,
-                        "evaluation": evaluation,
-                    }
+                        retries += 1
 
-                logger.warning(
-                    "Step rechazado score=%s",
-                    score,
-                )
+                        logger.warning(
+                            "Self-Critic rechazó el step (%s/%s)",
+                            retries,
+                            max_retries,
+                        )
 
-                retries += 1
+                        advice = evaluation.get(
+                            "course_correction_advice",
+                        )
+
+                        if advice:
+
+                            self._apply_correction(
+                                step,
+                                advice,
+                            )
+
+                        continue
+
+                step.status = "completed"
+
+                return {
+                    "success": True,
+                    "result": result,
+                }
 
             except Exception as e:
 
-                logger.exception(
-                    "Error ejecutando step %s",
-                    step.description,
-                )
-
                 retries += 1
 
+                logger.exception(
+                    "Error ejecutando step.",
+                )
+
                 if retries > max_retries:
+
                     step.status = "failed"
 
                     return {
@@ -91,14 +122,38 @@ class Subagent:
                         "error": str(e),
                     }
 
+        step.status = "failed"
+
         return {
             "success": False,
-            "error": "Max retries exceeded",
+            "error": "Max retries alcanzado.",
         }
 
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _apply_correction(
+        step: ExecutionStep,
+        advice: str,
+    ):
+
+        for field in (
+            "task",
+            "prompt",
+            "content",
+        ):
+
+            if field in step.params:
+
+                step.params[field] += "\n\n" "[SELF-CRITIC]\n" f"{advice}"
+
+                return
+
+    # ---------------------------------------------------------
+
+    @staticmethod
     def _extract_output(
-        self,
-        result: dict,
+        result,
     ) -> str:
 
         if not isinstance(result, dict):

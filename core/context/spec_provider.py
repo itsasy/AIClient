@@ -1,8 +1,10 @@
 from core.spec_manager import SpecManager
-from core.context.provider import ContextProvider
+from core.context.base import BaseContextProvider
 
 
-class SpecProvider(ContextProvider):
+class SpecProvider(BaseContextProvider):
+
+    key = "spec"
 
     def __init__(self):
 
@@ -12,13 +14,16 @@ class SpecProvider(ContextProvider):
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
         if not plan.spec_name:
             return
 
-        spec = self.specs.load_spec_by_name(plan.spec_name)
+        spec = self.specs.load_spec_by_name(
+            plan.spec_name,
+        )
 
-        if spec:
+        if not spec:
+            return
 
-            context["spec"] = spec
+        context[self.key] = spec

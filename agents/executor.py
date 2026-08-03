@@ -1,8 +1,12 @@
 import logging
 
 from agents.base import Agent
-from core.execution_plan import ExecutionPlan
-from skills.manager import SkillManager
+from agents.subagent import Subagent
+
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -11,10 +15,13 @@ class ExecutorAgent(Agent):
 
     name = "executor"
 
-    role = "Ejecutor autónomo de tareas"
+    role = "Execution Engine"
 
     def __init__(self):
-        self.skill_manager = SkillManager()
+
+        self.subagent = Subagent()
+
+    # ---------------------------------------------------------
 
     def process(
         self,
@@ -22,112 +29,156 @@ class ExecutorAgent(Agent):
         context: dict | None = None,
     ) -> str:
 
-        if plan.steps:
+        context = context or {}
 
-            return self._execute_steps(
+        if not plan.steps:
+
+            return self._execute_single(
                 plan,
-                context or {},
+                context,
             )
 
-        if plan.skill:
+        return self._execute_plan(
+            plan,
+            context,
+        )
 
-            return self._execute_skill(
-                plan.skill,
-                plan.params,
-            )
+    # ---------------------------------------------------------
 
-        return "⚠️ ExecutionPlan recibido sin " "skill ni pasos ejecutables."
-
-    def _execute_steps(
+    def _execute_plan(
         self,
         plan: ExecutionPlan,
         context: dict,
     ) -> str:
 
-        results = []
+        outputs = []
 
-        for index, step in enumerate(plan.steps, start=1):
+        completed = 0
+
+        failed = 0
+
+        logger.info(
+            "Ejecutando plan (%s pasos)",
+            len(plan.steps),
+        )
+
+        for index, step in enumerate(
+            plan.steps,
+            start=1,
+        ):
 
             logger.info(
-                "Ejecutando paso %s: %s",
+                "Step %s/%s -> %s",
                 index,
+                len(plan.steps),
                 step.description,
             )
 
-            try:
+            result = self.subagent.execute(
+                plan=plan,
+                step=step,
+                context=context,
+            )
 
-                result = self.skill_manager.execute(
-                    step.skill,
-                    **step.params,
-                )
+            if result["success"]:
 
-                step.status = "completed"
+                completed += 1
 
-                results.append(
-                    self._format_result(
+                outputs.append(
+                    self._format_success(
                         index,
-                        step.description,
+                        step,
                         result,
                     )
                 )
 
-            except Exception as e:
+                continue
 
-                logger.exception(
-                    "Error ejecutando paso %s",
-                    step.description,
+            failed += 1
+
+            outputs.append(
+                self._format_failure(
+                    index,
+                    step,
+                    result,
                 )
-
-                step.status = "failed"
-
-                results.append(f"❌ Paso {index} falló: {e}")
-
-        return "\n\n".join(results)
-
-    def _execute_skill(
-        self,
-        skill_name: str,
-        params: dict,
-    ) -> str:
-
-        try:
-
-            result = self.skill_manager.execute(
-                skill_name,
-                **params,
             )
 
-            return self._format_result(
+            if not plan.continue_on_error:
+
+                logger.warning("Plan detenido por fallo.")
+
+                break
+
+        outputs.append("")
+
+        outputs.append(f"Resumen: {completed} completados | {failed} fallidos")
+
+        return "\n".join(outputs)
+
+    # ---------------------------------------------------------
+
+    def _execute_single(
+        self,
+        plan: ExecutionPlan,
+        context: dict,
+    ) -> str:
+
+        if not plan.skill:
+
+            return "No existe ninguna Skill para ejecutar."
+
+        step = ExecutionStep(
+            description=plan.objective,
+            skill=plan.skill,
+            params=plan.params,
+        )
+
+        result = self.subagent.execute(
+            plan=plan,
+            step=step,
+            context=context,
+        )
+
+        if result["success"]:
+
+            return self._format_success(
                 1,
-                skill_name,
+                step,
                 result,
             )
 
-        except Exception as e:
+        return self._format_failure(
+            1,
+            step,
+            result,
+        )
 
-            logger.exception(
-                "Error ejecutando skill %s",
-                skill_name,
-            )
+    # ---------------------------------------------------------
 
-            return f"❌ Error ejecutando " f"{skill_name}: {e}"
-
-    def _format_result(
-        self,
+    @staticmethod
+    def _format_success(
         index: int,
-        description: str,
+        step: ExecutionStep,
         result: dict,
     ) -> str:
 
-        if not isinstance(result, dict):
-
-            return f"✅ Paso {index}: " f"{description}\n" f"{result}"
-
-        payload = result.get(
+        payload = result["result"].get(
             "payload",
             {},
         )
 
-        message = payload.get("message") or payload.get("output") or str(payload)
+        output = payload.get("message") or payload.get("output") or str(payload)
 
-        return f"✅ Paso {index}: " f"{description}\n\n" f"{message}"
+        return f"✅ Paso {index}\n" f"{step.description}\n\n" f"{output}"
+
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _format_failure(
+        index: int,
+        step: ExecutionStep,
+        result: dict,
+    ) -> str:
+
+        return f"❌ Paso {index}\n" f"{step.description}\n\n" f"{result.get('error')}"

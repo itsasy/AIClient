@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from core.config import Config
 from llm.base import LLMProvider
 from llm.exceptions import (
     AllProvidersFailedError,
@@ -15,103 +14,155 @@ logger = logging.getLogger(__name__)
 
 class ProviderManager:
     """
-    Gestiona los proveedores LLM y ejecuta la cadena de fallbacks.
+    Responsable de ejecutar proveedores LLM.
 
-    Registra fábricas de proveedores y permite ejecutar generaciones
-    con una cadena de fallbacks personalizada o por defecto.
+    Responsabilidades:
+
+    - Registrar proveedores.
+    - Ejecutar fallback automático.
+    - Mantener estadísticas.
+    - Futuro soporte para ejecución paralela.
     """
 
     def __init__(self):
-        self._factories: dict[str, Callable[[], LLMProvider]] = {}
+
+        self._factories: dict[
+            str,
+            Callable[[], LLMProvider],
+        ] = {}
+
+        self._stats = {}
+
         self._register_default_providers()
 
-    def _register_default_providers(self) -> None:
-        """Registra los proveedores disponibles en el sistema."""
+    # ---------------------------------------------------------
+
+    def _register_default_providers(self):
+
         from llm.gemini import GeminiProvider
-        from llm.nim import NVIDIAProvider
         from llm.deepseek import DeepSeekProvider
+        from llm.nim import NVIDIAProvider
 
-        self.register("gemini", GeminiProvider)
-        self.register("nim", NVIDIAProvider)
-        self.register("deepseek", DeepSeekProvider)
+        self.register(
+            "gemini",
+            GeminiProvider,
+        )
 
-        logger.info("Proveedores registrados: gemini, nim, deepseek")
+        self.register(
+            "deepseek",
+            DeepSeekProvider,
+        )
 
-    def register(self, name: str, factory: Callable[[], LLMProvider]) -> None:
-        """Registra un nuevo proveedor LLM."""
-        normalized_name = name.strip().lower()
-        self._factories[normalized_name] = factory
+        self.register(
+            "nim",
+            NVIDIAProvider,
+        )
+
+    # ---------------------------------------------------------
+
+    def register(
+        self,
+        name: str,
+        factory,
+    ):
+
+        self._factories[name.lower()] = factory
+
+        self._stats.setdefault(
+            name.lower(),
+            {
+                "calls": 0,
+                "success": 0,
+                "errors": 0,
+            },
+        )
+
+    # ---------------------------------------------------------
 
     def generate(
         self,
         prompt: str,
-        provider_name: str | None = None,
+        provider_name: str,
         fallback_chain: list[str] | None = None,
         **kwargs,
     ) -> str:
-        """
-        Genera una respuesta usando el proveedor primario y sus fallbacks.
 
-        Args:
-            prompt: El prompt a enviar.
-            provider_name: Proveedor primario solicitado (opcional).
-            fallback_chain: Lista ordenada de proveedores de respaldo.
-                           Si es None, se usa la cadena por defecto de Config.
-            **kwargs: Argumentos adicionales para el proveedor.
+        providers = [provider_name]
 
-        Returns:
-            str: Respuesta generada.
+        if fallback_chain:
 
-        Raises:
-            AllProvidersFailedError: Si todos los proveedores fallan.
-        """
-        # Construir la cadena de proveedores
-        if fallback_chain is None:
-            # Cadena por defecto: primario + fallbacks globales
-            primary = (provider_name or Config.DEFAULT_PROVIDER).strip().lower()
-            chain = [primary]
-            for fallback in Config.FALLBACK_PROVIDERS:
-                norm_fallback = fallback.strip().lower()
-                if norm_fallback and norm_fallback not in chain:
-                    chain.append(norm_fallback)
-        else:
-            # Usar la cadena personalizada, asegurando que el primario esté primero
-            if provider_name:
-                # Asegurar que el primario está al inicio
-                if provider_name not in fallback_chain:
-                    chain = [provider_name] + fallback_chain
-                else:
-                    # Mover el primario al inicio
-                    chain = [provider_name] + [
-                        p for p in fallback_chain if p != provider_name
-                    ]
-            else:
-                chain = fallback_chain
+            for provider in fallback_chain:
 
-        logger.info("Cadena de proveedores: %s", " -> ".join(chain))
+                if provider not in providers:
 
-        errors: dict[str, Exception] = {}
+                    providers.append(provider)
 
-        for name in chain:
+        logger.info(
+            "Cadena LLM: %s",
+            " -> ".join(providers),
+        )
+
+        errors = {}
+
+        for provider in providers:
+
             try:
-                logger.info("Intentando proveedor: %s", name)
-                provider = self._create_provider(name)
-                response = provider.generate(prompt, **kwargs)
-                logger.info("Proveedor completado: %s", name)
-                return response
 
-            except ProviderError as exc:
-                errors[name] = exc
-                logger.warning("Proveedor %s falló: %s", name, exc)
-            except Exception as exc:
-                errors[name] = exc
-                logger.exception("Error inesperado en proveedor %s.", name)
+                result = self._execute(
+                    provider,
+                    prompt,
+                    **kwargs,
+                )
+
+                self._stats[provider]["success"] += 1
+
+                return result
+
+            except Exception as e:
+
+                logger.exception(
+                    "Proveedor %s falló.",
+                    provider,
+                )
+
+                self._stats[provider]["errors"] += 1
+
+                errors[provider] = e
 
         raise AllProvidersFailedError(errors)
 
-    def _create_provider(self, name: str) -> LLMProvider:
-        """Crea una instancia del proveedor solicitado."""
-        factory = self._factories.get(name)
+    # ---------------------------------------------------------
+
+    def _execute(
+        self,
+        provider_name: str,
+        prompt: str,
+        **kwargs,
+    ) -> str:
+
+        provider_name = provider_name.lower()
+
+        factory = self._factories.get(
+            provider_name,
+        )
+
         if factory is None:
-            raise ProviderError(f"Proveedor desconocido: {name}")
-        return factory()
+
+            raise ProviderError(f"Proveedor desconocido: {provider_name}")
+
+        self._stats[provider_name]["calls"] += 1
+
+        provider = factory()
+
+        return provider.generate(
+            prompt,
+            **kwargs,
+        )
+
+    # ---------------------------------------------------------
+
+    def get_stats(
+        self,
+    ) -> dict:
+
+        return self._stats

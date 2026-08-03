@@ -1,8 +1,11 @@
 from obsidian.rag import RAG
-from core.context.provider import ContextProvider
+
+from core.context.base import BaseContextProvider
 
 
-class ObsidianProvider(ContextProvider):
+class ObsidianProvider(BaseContextProvider):
+
+    key = "obsidian"
 
     def __init__(self):
 
@@ -12,9 +15,8 @@ class ObsidianProvider(ContextProvider):
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
-        if not plan.needs_obsidian:
-            return
-
-        context["obsidian"] = self.rag.get_relevant_context(plan.task)
+        context[self.key] = self.rag.get_relevant_context(
+            plan.original_task,
+        )

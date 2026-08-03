@@ -1,8 +1,10 @@
 from core.memory import ConversationMemory
-from core.context.provider import ContextProvider
+from core.context.base import BaseContextProvider
 
 
-class MemoryProvider(ContextProvider):
+class MemoryProvider(BaseContextProvider):
+
+    key = "memory"
 
     def __init__(self):
 
@@ -12,9 +14,6 @@ class MemoryProvider(ContextProvider):
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
-        if not plan.needs_memory:
-            return
-
-        context["memory"] = self.memory.get_context()
+        context[self.key] = self.memory.get_context()

@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+import time
 
 from skills.base import Skill
 from core.config import Config
@@ -63,6 +64,8 @@ class ShellTool(Skill):
             cwd = Config.TARGET_PROJECT_ROOT
             timeout_value = timeout if timeout is not None else Config.SHELL_TIMEOUT
 
+            start = time.time()
+
             result = subprocess.run(
                 command,
                 shell=True,
@@ -71,7 +74,11 @@ class ShellTool(Skill):
                 timeout=timeout_value,
                 cwd=cwd,
             )
+
+            duration = round(time.time() - start, 3)
+
             output = result.stdout.strip() or result.stderr.strip()
+
             return {
                 "type": "shell_result",
                 "payload": {
@@ -79,8 +86,10 @@ class ShellTool(Skill):
                     "command": command,
                     "output": output[:1500],
                     "returncode": result.returncode,
+                    "duration": duration,
                 },
             }
+
         except Exception as e:
             return {
                 "type": "shell_result",

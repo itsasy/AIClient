@@ -7,19 +7,23 @@ class GenerateCodeSkill(Skill):
 
     name = "code"
 
-    description = "Genera instrucciones de código para el agente desarrollador."
+    description = "Solicita generación de código al agente desarrollador."
 
     def execute(
         self,
-        task: str = "",
+        task: str,
         language: str = "python",
+        framework: str | None = None,
+        filepath: str | None = None,
         **kwargs: Any,
-    ) -> dict:
+    ):
 
         return {
             "type": "code_generation",
             "payload": {
                 "task": task,
                 "language": language,
+                "framework": framework,
+                "filepath": filepath,
             },
         }

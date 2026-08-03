@@ -123,7 +123,11 @@ class EngramMemory:
             logger.debug("Memoria guardada: %s", title)
         return success
 
-    def recall(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def recall(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
         """
         Busca memorias en Engram v1.20 (salida en texto plano).
 
@@ -135,27 +139,45 @@ class EngramMemory:
         """
         if not query or not query.strip():
             return []
+
         if not self._available:
             return []
 
-        cmd = ["search", query, "--limit", str(limit), "--project", self.project]
-        success, stdout, stderr = self._run_command(cmd, timeout=15)
+        cmd = [
+            "search",
+            query,
+            "--limit",
+            str(limit),
+            "--project",
+            self.project,
+        ]
+
+        success, stdout, stderr = self._run_command(
+            cmd,
+            timeout=15,
+        )
 
         if not success or not stdout:
-            logger.debug("Error o sin resultados en search: %s", stderr)
+            logger.debug(
+                "Error o sin resultados en search: %s",
+                stderr,
+            )
             return []
 
         results: List[Dict[str, Any]] = []
         current: Optional[Dict[str, Any]] = None
 
         for raw_line in stdout.splitlines():
+
             line = raw_line.rstrip()
 
             header = re.match(
                 r"^\[(\d+)\]\s+#(\d+)\s+\(([^)]+)\)\s+[—\-]\s+(.*)$",
                 line,
             )
+
             if header:
+
                 if current:
                     results.append(current)
 
@@ -167,17 +189,23 @@ class EngramMemory:
                     "content": "",
                     "score": 0.0,
                 }
+
                 continue
 
             if current is None:
                 continue
 
             stripped = line.strip()
+
             if not stripped:
                 continue
 
-            if re.match(r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}", stripped):
+            if re.match(
+                r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}",
+                stripped,
+            ):
                 continue
+
             if "project:" in stripped and "scope:" in stripped:
                 continue
 
@@ -189,11 +217,31 @@ class EngramMemory:
         if current:
             results.append(current)
 
-        for r in results:
-            if not r.get("content"):
-                r["content"] = r.get("title", "")
+        for result in results:
+
+            if not result.get("content"):
+                result["content"] = result.get(
+                    "title",
+                    "",
+                )
 
         return results[:limit]
+
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Alias semántico de recall().
+
+        Permite una API consistente para búsquedas
+        de memoria persistente.
+        """
+        return self.recall(
+            query=query,
+            limit=limit,
+        )
 
     def get_context(self, query: str, limit: int = 3) -> str:
         memories = self.recall(query, limit=limit)

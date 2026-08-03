@@ -1,9 +1,10 @@
 from core.document_ingestor import DocumentIngestor
+from core.context.base import BaseContextProvider
 
-from core.context.provider import ContextProvider
 
+class DocumentsProvider(BaseContextProvider):
 
-class DocumentsProvider(ContextProvider):
+    key = "documents"
 
     def __init__(self):
 
@@ -13,9 +14,11 @@ class DocumentsProvider(ContextProvider):
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
-        if not plan.needs_documents:
+        documents = self.ingestor.list_ingested()
+
+        if not documents:
             return
 
-        context["documents"] = self.ingestor.list_ingested()
+        context[self.key] = documents

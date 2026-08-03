@@ -1,136 +1,196 @@
-from __future__ import annotations
-
 import logging
 
 from core.config import Config
+from core.execution_plan import ExecutionPlan
 
 logger = logging.getLogger(__name__)
 
 
 class ProviderSelector:
     """
-    Selecciona el proveedor LLM y la cadena de fallbacks según el tipo de tarea.
+    Selecciona el proveedor LLM adecuado para un ExecutionPlan.
 
-    Categorías:
-    - Código: generación, análisis, refactor
-    - Arquitectura: análisis de proyectos, planificación, SDD, Self-Critic
-    - Documentación: README, propuestas
-    - Rápido: consultas simples, chat
-    - General: resto de tareas
+    Prioridad:
+
+        preferred_provider
+                ↓
+        intent_category
+                ↓
+             skill
+                ↓
+        execution_mode
+                ↓
+            default
     """
 
-    # Skills que requieren precisión en código
-    CODE_SKILLS = {
-        "analyze",
-        "analyze_code",
-        "code",
-        "create_project",
-        "execute_code",
-        "sandbox",
-        "refactor_code",
+    CATEGORY_MAP = {
+        "code": (
+            Config.CODE_PROVIDER,
+            Config.CODE_FALLBACKS,
+        ),
+        "architecture": (
+            Config.ARCHITECTURE_PROVIDER,
+            Config.ARCHITECTURE_FALLBACKS,
+        ),
+        "documentation": (
+            getattr(
+                Config,
+                "DOCUMENTATION_PROVIDER",
+                Config.DEFAULT_PROVIDER,
+            ),
+            getattr(
+                Config,
+                "DOCUMENTATION_FALLBACKS",
+                Config.DEFAULT_FALLBACKS,
+            ),
+        ),
+        "fast": (
+            getattr(
+                Config,
+                "FAST_PROVIDER",
+                Config.DEFAULT_PROVIDER,
+            ),
+            getattr(
+                Config,
+                "FAST_FALLBACKS",
+                Config.DEFAULT_FALLBACKS,
+            ),
+        ),
     }
 
-    # Skills que requieren razonamiento profundo
-    ARCHITECTURE_SKILLS = {
-        "analyze_project",
-        "plan",
-        "reflection",
-        "self_critic",
-        "critique",
-        "architecture",
-    }
-
-    # Skills de documentación
-    DOCUMENTATION_SKILLS = {
-        "readme",
-        "generate_proposal",
-    }
-
-    # Skills rápidas (consultas simples)
-    FAST_SKILLS = {
-        "general",
-        "chat",
-        "quick",
+    SKILL_CATEGORY = {
+        # -------------------------
+        # Código
+        # -------------------------
+        "code": "code",
+        "execute_code": "code",
+        "sandbox": "code",
+        "refactor_code": "code",
+        "analyze_code": "code",
+        # -------------------------
+        # Arquitectura
+        # -------------------------
+        "plan": "architecture",
+        "architecture": "architecture",
+        "analyze_project": "architecture",
+        "reflection": "architecture",
+        "self_critic": "architecture",
+        "critique": "architecture",
+        # -------------------------
+        # Documentación
+        # -------------------------
+        "readme": "documentation",
+        "generate_proposal": "documentation",
+        # -------------------------
+        # Conversación
+        # -------------------------
+        "conversation": "fast",
+        "chat": "fast",
+        "general": "fast",
+        "quick": "fast",
+        # -------------------------
+        # Aprendizaje
+        # -------------------------
+        "learning": "fast",
     }
 
     @classmethod
     def select(
         cls,
-        task: str,
-        skill_name: str | None = None,
-        requested_provider: str | None = None,
+        plan: ExecutionPlan,
     ) -> tuple[str, list[str]]:
-        """
-        Determina el proveedor primario y la cadena de fallbacks.
 
-        Prioridad:
-        1. Proveedor solicitado explícitamente (por CLI o parámetro).
-        2. Proveedor configurado para la categoría de la skill.
-        3. Proveedor por defecto.
+        # =====================================================
+        # Provider forzado
+        # =====================================================
 
-        Returns:
-            tuple[str, list[str]]: (proveedor_primario, lista_de_fallbacks)
-        """
-        # 1. Si se solicita un proveedor específico, usarlo
-        if requested_provider:
-            primary = requested_provider.strip().lower()
-            # Obtener fallbacks según la skill (o por defecto)
-            fallbacks = cls._get_fallbacks_for_skill(skill_name)
-            return primary, fallbacks
+        if plan.preferred_provider:
 
-        # 2. Detectar la categoría según la skill
-        if skill_name:
-            normalized_skill = skill_name.strip().lower()
+            provider = plan.preferred_provider.lower()
 
-            if normalized_skill in cls.CODE_SKILLS:
-                primary = Config.CODE_PROVIDER
-                fallbacks = Config.CODE_FALLBACKS
-            elif normalized_skill in cls.ARCHITECTURE_SKILLS:
-                primary = Config.ARCHITECTURE_PROVIDER
-                fallbacks = Config.ARCHITECTURE_FALLBACKS
-            elif normalized_skill in cls.DOCUMENTATION_SKILLS:
-                primary = getattr(
-                    Config, "DOCUMENTATION_PROVIDER", Config.DEFAULT_PROVIDER
-                )
-                fallbacks = getattr(
-                    Config, "DEFAULT_FALLBACKS", Config.FALLBACK_PROVIDERS
-                )
-            elif normalized_skill in cls.FAST_SKILLS:
-                primary = getattr(Config, "FAST_PROVIDER", Config.DEFAULT_PROVIDER)
-                fallbacks = getattr(Config, "FAST_FALLBACKS", Config.FALLBACK_PROVIDERS)
-            else:
-                primary = Config.DEFAULT_PROVIDER
-                fallbacks = Config.DEFAULT_FALLBACKS
-        else:
-            # Sin skill, usar valores por defecto
-            primary = Config.DEFAULT_PROVIDER
-            fallbacks = Config.DEFAULT_FALLBACKS
+            logger.info(
+                "Provider forzado: %s",
+                provider,
+            )
 
-        # Asegurar que el primario no esté duplicado en fallbacks
-        fallbacks = [p for p in fallbacks if p != primary]
+            return (
+                provider,
+                cls._clean_chain(
+                    provider,
+                    Config.DEFAULT_FALLBACKS,
+                ),
+            )
 
-        logger.info(
-            "Seleccionado | skill=%s | primary=%s | fallbacks=%s",
-            skill_name or "general",
-            primary,
-            fallbacks,
+        # =====================================================
+        # Intent category
+        # =====================================================
+
+        category = plan.intent_category
+
+        # =====================================================
+        # Primera skill del plan
+        # =====================================================
+
+        skill = plan.skills[0] if plan.skills else None
+
+        # =====================================================
+        # Skill -> Category
+        # =====================================================
+
+        if category is None and skill is not None:
+            category = cls.SKILL_CATEGORY.get(skill)
+
+        # =====================================================
+        # MultiStep
+        # =====================================================
+
+        if category is None and plan.execution_mode == "multi_step":
+            category = "architecture"
+
+        # =====================================================
+        # Default
+        # =====================================================
+
+        if category is None:
+            category = "fast"
+
+        provider, fallbacks = cls.CATEGORY_MAP.get(
+            category,
+            (
+                Config.DEFAULT_PROVIDER,
+                Config.DEFAULT_FALLBACKS,
+            ),
         )
 
-        return primary, fallbacks
+        logger.info(
+            "Provider=%s | Category=%s | Skill=%s",
+            provider,
+            category,
+            skill,
+        )
 
-    @classmethod
-    def _get_fallbacks_for_skill(cls, skill_name: str | None) -> list[str]:
-        """Obtiene los fallbacks por defecto según la skill."""
-        if not skill_name:
-            return Config.DEFAULT_FALLBACKS
+        return (
+            provider,
+            cls._clean_chain(
+                provider,
+                fallbacks,
+            ),
+        )
 
-        normalized_skill = skill_name.strip().lower()
+    @staticmethod
+    def _clean_chain(
+        provider: str,
+        chain: list[str],
+    ) -> list[str]:
 
-        if normalized_skill in cls.CODE_SKILLS:
-            return Config.CODE_FALLBACKS
-        if normalized_skill in cls.ARCHITECTURE_SKILLS:
-            return Config.ARCHITECTURE_FALLBACKS
-        if normalized_skill in cls.FAST_SKILLS:
-            return getattr(Config, "FAST_FALLBACKS", Config.FALLBACK_PROVIDERS)
+        clean = []
 
-        return Config.DEFAULT_FALLBACKS
+        for item in chain:
+
+            if item == provider:
+                continue
+
+            if item not in clean:
+                clean.append(item)
+
+        return clean

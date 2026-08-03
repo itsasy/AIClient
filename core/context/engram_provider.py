@@ -1,8 +1,10 @@
 from core.engram_memory import EngramMemory
-from core.context.provider import ContextProvider
+from core.context.base import BaseContextProvider
 
 
-class EngramProvider(ContextProvider):
+class EngramProvider(BaseContextProvider):
+
+    key = "engram"
 
     def __init__(self):
 
@@ -12,12 +14,14 @@ class EngramProvider(ContextProvider):
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
-        if not plan.needs_engram:
-            return
-
-        context["engram"] = self.engram.get_context(
-            plan.task,
-            limit=plan.engram_limit,
-        )
+        context[self.key] = {
+            "memory": self.engram.get_context(
+                plan.original_task,
+                limit=5,
+            ),
+            "skills": self.engram.find_skills(
+                plan.original_task,
+            ),
+        }

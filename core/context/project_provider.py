@@ -1,19 +1,19 @@
 from core.project_inspector import ProjectInspector
-from core.context.provider import ContextProvider
+from core.context.base import BaseContextProvider
 
 
-class ProjectProvider(ContextProvider):
+class ProjectProvider(BaseContextProvider):
+
+    key = "project"
 
     def __init__(self):
+
         self.inspector = ProjectInspector()
 
     def load(
         self,
         plan,
         context,
-    ):
+    ) -> None:
 
-        if not plan.needs_project:
-            return
-
-        context["project"] = self.inspector.inspect()
+        context[self.key] = self.inspector.inspect()

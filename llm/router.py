@@ -11,13 +11,23 @@ logger = logging.getLogger(__name__)
 
 class LLMRouter:
     """
-    Router responsable únicamente de comunicación con modelos LLM.
+    Responsable únicamente de comunicarse con los modelos LLM.
 
-    No analiza intención.
-    No ejecuta skills.
-    No modifica planes.
+    Flujo:
 
-    Recibe un ExecutionPlan ya preparado.
+        ExecutionPlan
+              │
+              ▼
+      ProviderSelector
+              │
+              ▼
+       PromptBuilder
+              │
+              ▼
+      ProviderManager
+              │
+              ▼
+            Respuesta
     """
 
     provider_manager = ProviderManager()
@@ -29,45 +39,28 @@ class LLMRouter:
         context: dict | None = None,
         **kwargs,
     ) -> str:
-        """
-        Genera una respuesta usando el ExecutionPlan.
 
-        Flujo:
+        context = context or {}
 
-        ExecutionPlan
-              |
-              ↓
-        ProviderSelector
-              |
-              ↓
-        PromptBuilder
-              |
-              ↓
-        ProviderManager
-        """
+        provider, fallbacks = ProviderSelector.select(
+            plan,
+        )
 
-        primary_provider, fallback_chain = ProviderSelector.select(
-            task=plan.original_task,
-            skill_name=plan.skill,
-            requested_provider=plan.preferred_provider,
+        logger.info(
+            "LLM Router | provider=%s | skill=%s | intent=%s",
+            provider,
+            plan.skill,
+            plan.intent,
         )
 
         prompt = PromptBuilder.build(
             plan=plan,
-            context=context or {},
-        )
-
-        logger.info(
-            "LLM Routing | intent=%s | skill=%s | provider=%s | fallback=%s",
-            plan.intent,
-            plan.skill,
-            primary_provider,
-            fallback_chain,
+            context=context,
         )
 
         return cls.provider_manager.generate(
             prompt=prompt,
-            provider_name=primary_provider,
-            fallback_chain=fallback_chain,
+            provider_name=provider,
+            fallback_chain=fallbacks,
             **kwargs,
         )
