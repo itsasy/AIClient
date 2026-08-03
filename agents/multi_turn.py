@@ -1,9 +1,30 @@
+from __future__ import annotations
+
+from typing import Any
+
 from agents.base import Agent
+
 from core.execution_plan import ExecutionPlan
+
 from llm.router import LLMRouter
 
 
 class MultiTurnAgent(Agent):
+    """
+    Agente conversacional con soporte de historial.
+
+    Responsabilidades:
+
+    - Consumir memoria proporcionada por ContextManager.
+    - Enriquecer contexto conversacional.
+    - Delegar generación al LLMRouter.
+
+    No:
+
+    - Guarda memoria.
+    - Recupera contexto directamente.
+    - Modifica ExecutionPlan.
+    """
 
     name = "multi_turn"
 
@@ -12,19 +33,18 @@ class MultiTurnAgent(Agent):
     def process(
         self,
         plan: ExecutionPlan,
-        context: dict | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
 
-        history = ""
+        context = context or {}
 
-        if context:
-            history = context.get(
-                "memory",
-                "",
-            )
+        history = context.get(
+            "memory",
+            "",
+        )
 
         enriched_context = {
-            **(context or {}),
+            **context,
             "conversation_history": history,
         }
 

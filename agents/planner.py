@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import logging
+from typing import Any
 
 from agents.base import Agent
 
@@ -14,22 +17,26 @@ class PlannerAgent(Agent):
 
     name = "planner"
 
-    role = "Planificador"
+    role = "Planificador de ejecución"
 
     def process(
         self,
         plan: ExecutionPlan,
-        context: dict | None = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
 
-        context = context or {}
+        context = dict(context or {})
 
         logger.info(
             "Generando plan para '%s'",
             plan.original_task,
         )
 
-        planning_context = self._build_planning_context(context)
+        plan.execution_mode = "multi_step"
+
+        planning_context = self._build_planning_context(
+            context,
+        )
 
         response = LLMRouter.generate(
             plan=plan,
@@ -41,81 +48,106 @@ class PlannerAgent(Agent):
             response,
         )
 
-        plan.execution_mode = "multi_step"
+        if not plan.steps:
 
-        return self._format_plan(plan)
+            logger.warning("Planner no generó pasos.")
 
-    # ---------------------------------------------------------
+        return self._format_plan(
+            plan,
+        )
+
+    # ==========================================================
+    # Context
+    # ==========================================================
 
     def _build_planning_context(
         self,
-        context: dict,
-    ) -> dict:
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
 
         planning = {}
 
+        allowed = [
+            "project",
+            "documents",
+            "obsidian",
+            "gentleman",
+            "standards",
+            "spec",
+        ]
+
+        for key in allowed:
+
+            value = context.get(
+                key,
+            )
+
+            if value:
+
+                planning[key] = value
+
         if "engram" in context:
 
-            planning["engram_memory"] = context["engram"].get("memory")
-
-            planning["engram_skills"] = context["engram"].get("skills")
-
-        if "gentleman" in context:
-
-            planning["gentleman"] = context["gentleman"]
-
-        if "standards" in context:
-
-            planning["standards"] = context["standards"]
-
-        if "project" in context:
-
-            planning["project"] = context["project"]
-
-        if "documents" in context:
-
-            planning["documents"] = context["documents"]
-
-        if "obsidian" in context:
-
-            planning["obsidian"] = context["obsidian"]
+            planning["engram"] = context["engram"]
 
         return planning
 
-    # ---------------------------------------------------------
+    # ==========================================================
+    # Steps parser
+    # ==========================================================
 
     def _load_steps(
         self,
         plan: ExecutionPlan,
         response: str,
-    ):
+    ) -> None:
 
         try:
 
-            start = response.find("[")
-            end = response.rfind("]") + 1
+            plan.steps.clear()
 
-            if start == -1:
+            data = self._extract_json(
+                response,
+            )
 
-                logger.warning("El planner no devolvió pasos.")
+            if not isinstance(
+                data,
+                list,
+            ):
+
+                logger.warning("Planner no devolvió lista de pasos.")
 
                 return
 
-            steps = json.loads(
-                response[start:end],
-            )
+            for item in data:
 
-            for step in steps:
+                if not isinstance(
+                    item,
+                    dict,
+                ):
+
+                    continue
+
+                description = item.get(
+                    "description",
+                )
+
+                if not description:
+
+                    continue
 
                 plan.add_step(
-                    description=step.get(
-                        "description",
-                        "Paso sin descripción",
-                    ),
-                    skill=step.get(
+                    description=description,
+                    skill=item.get(
                         "skill",
                     ),
-                    params=step.get(
+                    tool=item.get(
+                        "tool",
+                    ),
+                    provider=item.get(
+                        "provider",
+                    ),
+                    params=item.get(
                         "params",
                         {},
                     ),
@@ -123,9 +155,51 @@ class PlannerAgent(Agent):
 
         except Exception:
 
-            logger.exception("No fue posible cargar los pasos.")
+            logger.exception("Error cargando pasos del planner.")
 
-    # ---------------------------------------------------------
+    def _extract_json(
+        self,
+        response: str,
+    ) -> list | dict | None:
+
+        start = response.find(
+            "[",
+        )
+
+        end = response.rfind(
+            "]",
+        )
+
+        if start == -1 or end == -1:
+
+            return None
+
+        payload = response[start : end + 1]
+
+        return json.loads(
+            payload,
+        )
+
+    # ==========================================================
+    # Validation
+    # ==========================================================
+
+    def validate_plan(
+        self,
+        plan: ExecutionPlan,
+    ) -> list[str]:
+
+        errors = []
+
+        if not plan.original_task:
+
+            errors.append("Planner requiere una tarea.")
+
+        return errors
+
+    # ==========================================================
+    # Output
+    # ==========================================================
 
     def _format_plan(
         self,
@@ -135,18 +209,28 @@ class PlannerAgent(Agent):
         output = [
             "# Plan de ejecución",
             "",
-            f"Objetivo: {plan.objective}",
+            f"Objetivo: {plan.objective or plan.original_task}",
             "",
             "Pasos:",
         ]
 
-        for i, step in enumerate(
+        for index, step in enumerate(
             plan.steps,
             start=1,
         ):
 
-            skill = f" [{step.skill}]" if step.skill else ""
+            suffix = ""
 
-            output.append(f"{i}. {step.description}{skill}")
+            if step.skill:
 
-        return "\n".join(output)
+                suffix += f" [{step.skill}]"
+
+            if step.tool:
+
+                suffix += f" ({step.tool})"
+
+            output.append(f"{index}. {step.description}{suffix}")
+
+        return "\n".join(
+            output,
+        )

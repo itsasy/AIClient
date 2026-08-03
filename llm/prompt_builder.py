@@ -8,19 +8,20 @@ logger = logging.getLogger(__name__)
 
 class PromptBuilder:
     """
-    Construye el prompt final para cualquier proveedor LLM.
+    Construye el prompt final para proveedores LLM.
 
     Responsabilidades:
 
-    - Convertir ExecutionPlan en instrucciones LLM.
+    - Convertir ExecutionPlan en instrucciones.
     - Integrar contexto recuperado.
-    - Mantener estructura consistente para todos los agentes.
+    - Priorizar conocimiento interno.
+    - Mantener contrato estable entre agentes.
 
     No:
 
     - Analiza intención.
-    - Consulta memoria.
-    - Selecciona proveedores.
+    - Recupera contexto.
+    - Selecciona modelos.
     """
 
     @staticmethod
@@ -36,25 +37,29 @@ class PromptBuilder:
             list(context.keys()),
         )
 
-        parts: list[str] = []
+        parts = []
 
-        parts.append(PromptBuilder._build_system_role(plan))
-
-        agent_role = context.get("agent_role")
-
-        if agent_role:
-
-            parts.append(
-                "# AGENT ROLE\n\n"
-                f"{PromptBuilder._format_value(agent_role)}\n\n"
-                "Debes actuar siguiendo este rol."
+        parts.append(
+            PromptBuilder._build_system_role(
+                plan,
+                context,
             )
+        )
+
+        identity = PromptBuilder._build_identity(plan)
+
+        if identity:
+            parts.append(identity)
 
         if plan.objective:
-
             parts.append(f"# OBJECTIVE\n\n{plan.objective}")
 
         parts.append(f"# USER REQUEST\n\n{plan.original_task}")
+
+        required = PromptBuilder._build_context_requirements(plan)
+
+        if required:
+            parts.append(required)
 
         constraints = PromptBuilder._build_constraints(plan)
 
@@ -80,7 +85,7 @@ class PromptBuilder:
         prompt = "\n\n".join(parts)
 
         logger.info(
-            "Prompt construido (%d caracteres)",
+            "Prompt construido chars=%s",
             len(prompt),
         )
 
@@ -93,19 +98,38 @@ class PromptBuilder:
     @staticmethod
     def _build_system_role(
         plan: ExecutionPlan,
+        context: dict | None = None,
     ) -> str:
 
+        context = context or {}
+
+        role = context.get(
+            "agent_role",
+        )
+
+        if role:
+
+            return (
+                "Eres AIClient.\n\n"
+                "Rol actual:\n"
+                f"{json.dumps(role, indent=2, ensure_ascii=False)}\n\n"
+                "Actúa siguiendo estrictamente esta responsabilidad."
+            )
+
         if plan.system_role:
+
             return plan.system_role
 
         return """
 Eres AIClient.
 
-Eres un ingeniero de software senior especializado en:
+Actúas como ingeniero de software senior.
 
-- Arquitectura
+Especialidades:
+
+- Arquitectura de software
 - Clean Architecture
-- Domain Driven Design (DDD)
+- Domain Driven Design
 - Laravel
 - NestJS
 - Python
@@ -113,19 +137,63 @@ Eres un ingeniero de software senior especializado en:
 - DevOps
 - Inteligencia Artificial
 
-Objetivo:
-
-Resolver la tarea utilizando TODO el contexto disponible.
-
 Reglas:
 
-- Nunca ignores Gentleman Skills.
-- Nunca inventes información.
-- Prioriza el contexto antes que conocimiento general.
-- Mantén consistencia entre respuestas.
-- Reutiliza conocimiento previo cuando exista.
-- Usa Engram, Obsidian y documentos cuando estén disponibles.
+- Usa primero el contexto proporcionado.
+- Respeta estándares internos.
+- Respeta Gentleman Skills.
+- No inventes información.
+- Mantén consistencia con decisiones anteriores.
+- Prioriza conocimiento confirmado.
 """
+
+    # ==========================================================
+    # IDENTITY
+    # ==========================================================
+
+    @staticmethod
+    def _build_identity(
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        data = {}
+
+        if plan.intent:
+            data["intent"] = plan.intent
+
+        if plan.intent_category:
+            data["category"] = plan.intent_category
+
+        if plan.agent:
+            data["agent"] = plan.agent
+
+        if plan.skills:
+            data["skills"] = plan.skills
+
+        if not data:
+            return None
+
+        return "# TASK IDENTITY\n\n" + json.dumps(
+            data,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    # ==========================================================
+    # CONTEXT REQUIREMENTS
+    # ==========================================================
+
+    @staticmethod
+    def _build_context_requirements(
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        if not plan.context_requirements:
+            return None
+
+        return "# REQUIRED CONTEXT\n\n" + "\n".join(
+            f"- {item}" for item in plan.context_requirements
+        )
 
     # ==========================================================
     # EXECUTION PLAN
@@ -136,15 +204,15 @@ Reglas:
         plan: ExecutionPlan,
     ) -> str:
 
-        plan_dict = plan.to_dict()
+        data = plan.to_dict()
 
-        plan_dict.pop(
+        data.pop(
             "steps",
             None,
         )
 
         return "# EXECUTION PLAN\n" + json.dumps(
-            plan_dict,
+            data,
             indent=2,
             ensure_ascii=False,
         )
@@ -161,18 +229,24 @@ Reglas:
         if not plan.steps:
             return None
 
+        steps = [
+            {
+                "description": step.description,
+                "skill": step.skill,
+                "tool": step.tool,
+                "provider": step.provider,
+                "params": step.params,
+                "expected_output": step.expected_output,
+                "retries": step.retries,
+                "timeout": step.timeout,
+                "status": step.status,
+                "metadata": step.metadata,
+            }
+            for step in plan.steps
+        ]
+
         return "# EXECUTION STEPS\n" + json.dumps(
-            [
-                {
-                    "description": step.description,
-                    "skill": step.skill,
-                    "tool": step.tool,
-                    "provider": step.provider,
-                    "params": step.params,
-                    "status": step.status,
-                }
-                for step in plan.steps
-            ],
+            steps,
             indent=2,
             ensure_ascii=False,
         )
@@ -189,7 +263,7 @@ Reglas:
         if not plan.constraints:
             return None
 
-        return "# CONSTRAINTS\n\n" + "\n".join(f"- {constraint}" for constraint in plan.constraints)
+        return "# CONSTRAINTS\n\n" + "\n".join(f"- {item}" for item in plan.constraints)
 
     # ==========================================================
     # CONTEXT
@@ -200,17 +274,19 @@ Reglas:
         context: dict,
     ) -> list[str]:
 
-        sections: list[str] = []
+        sections = []
 
         titles = {
             "project": "PROJECT CONTEXT",
             "memory": "CONVERSATION MEMORY",
+            "documents": "DOCUMENTS",
             "obsidian": "OBSIDIAN KNOWLEDGE",
-            "documents": "RELATED DOCUMENTS",
             "spec": "SPECIFICATION",
             "standards": "PROJECT STANDARDS",
             "gentleman": "GENTLEMAN SKILLS",
         }
+
+        handled = set(titles.keys())
 
         for key, title in titles.items():
 
@@ -219,36 +295,77 @@ Reglas:
             if not value:
                 continue
 
-            block = f"# {title}\n\n" f"{PromptBuilder._format_value(value)}"
-
             if key == "gentleman":
 
-                block += "\n\nEstas instrucciones tienen prioridad " "sobre conocimiento general."
+                sections.append(PromptBuilder._build_gentleman_context(value))
 
-            sections.append(block)
+                continue
 
-        # Engram separado en memoria y skills
+            sections.append(f"#{title}\n\n" f"{PromptBuilder._format_value(value)}")
+
+        handled.add("engram")
 
         engram = context.get("engram")
 
         if isinstance(engram, dict):
 
-            memory = engram.get("memory")
+            if engram.get("memory"):
 
-            if memory:
+                sections.append(
+                    "# ENGRAM MEMORY\n\n" + PromptBuilder._format_value(engram["memory"])
+                )
 
-                sections.append("# ENGRAM MEMORY\n\n" f"{PromptBuilder._format_value(memory)}")
+            if engram.get("skills"):
 
-            skills = engram.get("skills")
+                sections.append(
+                    "# ENGRAM SKILLS\n\n" + PromptBuilder._format_value(engram["skills"])
+                )
 
-            if skills:
+        for key, value in context.items():
 
-                sections.append("# ENGRAM SKILLS\n\n" f"{PromptBuilder._format_value(skills)}")
+            if key in handled:
+                continue
+
+            if not value:
+                continue
+
+            sections.append(f"#{key.upper()}\n\n" + PromptBuilder._format_value(value))
 
         return sections
 
     # ==========================================================
-    # LLM SETTINGS
+    # GENTLEMAN
+    # ==========================================================
+
+    @staticmethod
+    def _build_gentleman_context(
+        value: dict,
+    ) -> str:
+
+        skills = {}
+
+        for name, data in value.items():
+
+            if isinstance(data, dict):
+
+                skills[name] = data.get(
+                    "content",
+                    "",
+                )
+
+            else:
+
+                skills[name] = data
+
+        return (
+            "# GENTLEMAN SKILLS\n\n"
+            + PromptBuilder._format_value(skills)
+            + "\n\nEstas instrucciones tienen "
+            "prioridad sobre conocimiento general."
+        )
+
+    # ==========================================================
+    # SETTINGS
     # ==========================================================
 
     @staticmethod

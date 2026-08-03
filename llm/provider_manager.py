@@ -14,14 +14,14 @@ logger = logging.getLogger(__name__)
 
 class ProviderManager:
     """
-    Responsable de ejecutar proveedores LLM.
+    Ejecuta proveedores LLM.
 
     Responsabilidades:
 
     - Registrar proveedores.
     - Ejecutar fallback automático.
     - Mantener estadísticas.
-    - Futuro soporte para ejecución paralela.
+    - Administrar ciclo de vida de providers.
     """
 
     def __init__(self):
@@ -31,17 +31,29 @@ class ProviderManager:
             Callable[[], LLMProvider],
         ] = {}
 
-        self._stats = {}
+        self._instances: dict[
+            str,
+            LLMProvider,
+        ] = {}
+
+        self._stats: dict[
+            str,
+            dict[str, int],
+        ] = {}
 
         self._register_default_providers()
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Registro inicial
+    # =========================================================
 
-    def _register_default_providers(self):
+    def _register_default_providers(
+        self,
+    ) -> None:
 
-        from llm.gemini import GeminiProvider
-        from llm.deepseek import DeepSeekProvider
-        from llm.nim import NVIDIAProvider
+        from llm.providers.deepseek import DeepSeekProvider
+        from llm.providers.gemini import GeminiProvider
+        from llm.providers.nim import NVIDIAProvider
 
         self.register(
             "gemini",
@@ -58,26 +70,45 @@ class ProviderManager:
             NVIDIAProvider,
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Registro
+    # =========================================================
 
     def register(
         self,
         name: str,
-        factory,
-    ):
+        factory: Callable[[], LLMProvider],
+    ) -> None:
 
-        self._factories[name.lower()] = factory
+        key = name.lower().strip()
+
+        self._factories[key] = factory
 
         self._stats.setdefault(
-            name.lower(),
-            {
-                "calls": 0,
-                "success": 0,
-                "errors": 0,
-            },
+            key,
+            self._empty_stats(),
         )
 
-    # ---------------------------------------------------------
+    def unregister(
+        self,
+        name: str,
+    ) -> None:
+
+        key = name.lower().strip()
+
+        self._factories.pop(
+            key,
+            None,
+        )
+
+        self._instances.pop(
+            key,
+            None,
+        )
+
+    # =========================================================
+    # Ejecución pública
+    # =========================================================
 
     def generate(
         self,
@@ -87,24 +118,23 @@ class ProviderManager:
         **kwargs,
     ) -> str:
 
-        providers = [provider_name]
-
-        if fallback_chain:
-
-            for provider in fallback_chain:
-
-                if provider not in providers:
-
-                    providers.append(provider)
+        providers = self._build_chain(
+            provider_name,
+            fallback_chain,
+        )
 
         logger.info(
             "Cadena LLM: %s",
             " -> ".join(providers),
         )
 
-        errors = {}
+        errors: dict[str, Exception] = {}
 
         for provider in providers:
+
+            self._ensure_stats(
+                provider,
+            )
 
             try:
 
@@ -118,7 +148,7 @@ class ProviderManager:
 
                 return result
 
-            except Exception as e:
+            except Exception as exc:
 
                 logger.exception(
                     "Proveedor %s falló.",
@@ -127,11 +157,15 @@ class ProviderManager:
 
                 self._stats[provider]["errors"] += 1
 
-                errors[provider] = e
+                errors[provider] = exc
 
-        raise AllProvidersFailedError(errors)
+        raise AllProvidersFailedError(
+            errors,
+        )
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Ejecución interna
+    # =========================================================
 
     def _execute(
         self,
@@ -139,8 +173,6 @@ class ProviderManager:
         prompt: str,
         **kwargs,
     ) -> str:
-
-        provider_name = provider_name.lower()
 
         factory = self._factories.get(
             provider_name,
@@ -152,17 +184,100 @@ class ProviderManager:
 
         self._stats[provider_name]["calls"] += 1
 
-        provider = factory()
+        provider = self._get_instance(
+            provider_name,
+            factory,
+        )
 
         return provider.generate(
             prompt,
             **kwargs,
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
+    # Instancias
+    # =========================================================
+
+    def _get_instance(
+        self,
+        name: str,
+        factory: Callable[[], LLMProvider],
+    ) -> LLMProvider:
+
+        if name not in self._instances:
+
+            try:
+
+                self._instances[name] = factory()
+
+            except Exception as exc:
+
+                logger.exception(
+                    "No se pudo inicializar provider %s",
+                    name,
+                )
+
+                raise ProviderError(f"No se pudo inicializar {name}: {exc}") from exc
+
+        return self._instances[name]
+
+    # =========================================================
+    # Helpers
+    # =========================================================
+
+    def _build_chain(
+        self,
+        provider_name: str,
+        fallback_chain: list[str] | None,
+    ) -> list[str]:
+
+        providers = [provider_name.lower().strip()]
+
+        for provider in fallback_chain or []:
+
+            provider = provider.lower().strip()
+
+            if provider and provider not in providers:
+
+                providers.append(
+                    provider,
+                )
+
+        return providers
+
+    @staticmethod
+    def _empty_stats() -> dict[str, int]:
+
+        return {
+            "calls": 0,
+            "success": 0,
+            "errors": 0,
+        }
+
+    def _ensure_stats(
+        self,
+        provider: str,
+    ) -> None:
+
+        self._stats.setdefault(
+            provider,
+            self._empty_stats(),
+        )
+
+    # =========================================================
+    # Administración
+    # =========================================================
+
+    def list_providers(
+        self,
+    ) -> list[str]:
+
+        return sorted(
+            self._factories.keys(),
+        )
 
     def get_stats(
         self,
-    ) -> dict:
+    ) -> dict[str, dict[str, int]]:
 
-        return self._stats
+        return {name: stats.copy() for name, stats in self._stats.items()}

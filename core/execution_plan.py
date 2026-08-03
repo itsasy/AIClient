@@ -10,7 +10,9 @@ from typing import Any
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Paso individual de un ExecutionPlan.
+    Paso individual de ejecución.
+
+    Representa una acción dentro de un flujo.
     """
 
     description: str
@@ -33,19 +35,45 @@ class ExecutionStep:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    def set_status(
+        self,
+        status: str,
+    ) -> None:
+
+        if status not in ExecutionPlan.VALID_STATUS:
+            raise ValueError(f"Estado inválido: {status}")
+
+        self.status = status
+
+    def mark_running(
+        self,
+    ) -> None:
+
+        self.set_status(
+            "running",
+        )
+
+    def mark_completed(
+        self,
+    ) -> None:
+
+        self.set_status(
+            "completed",
+        )
+
+    def mark_failed(
+        self,
+    ) -> None:
+
+        self.set_status(
+            "failed",
+        )
+
 
 @dataclass(slots=True)
 class ExecutionPlan:
     """
-    Contrato único de ejecución.
-
-    Todo el sistema trabaja únicamente con ExecutionPlan.
-
-    El contexto requerido se define mediante:
-        context_requirements
-
-    Ningún componente debe depender de estructuras
-    anteriores al ExecutionPlan.
+    Contrato central del sistema.
     """
 
     AVAILABLE_CONTEXT_PROVIDERS = {
@@ -59,21 +87,26 @@ class ExecutionPlan:
         "gentleman",
     }
 
-    # ---------------------------------------------------------
-    # Identidad
-    # ---------------------------------------------------------
+    AVAILABLE_EXECUTION_MODES = {
+        "single",
+        "multi_step",
+    }
+
+    VALID_STATUS = {
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+    }
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
     status: str = "pending"
 
     priority: int = 0
-
-    # ---------------------------------------------------------
-    # Solicitud original
-    # ---------------------------------------------------------
 
     original_task: str = ""
 
@@ -82,10 +115,6 @@ class ExecutionPlan:
     intent: str | None = None
 
     intent_category: str | None = None
-
-    # ---------------------------------------------------------
-    # Ejecución
-    # ---------------------------------------------------------
 
     execution_mode: str = "single"
 
@@ -97,19 +126,13 @@ class ExecutionPlan:
 
     steps: list[ExecutionStep] = field(default_factory=list)
 
-    # ---------------------------------------------------------
-    # Contexto
-    # ---------------------------------------------------------
-
     context_requirements: list[str] = field(default_factory=list)
 
     memory_queries: list[str] = field(default_factory=list)
 
     document_queries: list[str] = field(default_factory=list)
 
-    # ---------------------------------------------------------
-    # Parámetros
-    # ---------------------------------------------------------
+    execution_context: dict[str, Any] = field(default_factory=dict)
 
     params: dict[str, Any] = field(default_factory=dict)
 
@@ -119,9 +142,9 @@ class ExecutionPlan:
 
     metrics: dict[str, Any] = field(default_factory=dict)
 
-    # ---------------------------------------------------------
-    # Configuración LLM
-    # ---------------------------------------------------------
+    result: Any = None
+
+    error: str | None = None
 
     preferred_provider: str | None = None
 
@@ -130,10 +153,6 @@ class ExecutionPlan:
     max_tokens: int | None = None
 
     system_role: str | None = None
-
-    # ---------------------------------------------------------
-    # Configuración ejecución
-    # ---------------------------------------------------------
 
     max_retries: int = 2
 
@@ -145,9 +164,112 @@ class ExecutionPlan:
 
     stop_on_error: bool = True
 
-    # ---------------------------------------------------------
-    # Helpers
-    # ---------------------------------------------------------
+    # ==========================================================
+    # Skills
+    # ==========================================================
+
+    def primary_skill(
+        self,
+    ) -> str | None:
+
+        return self.skills[0] if self.skills else None
+
+    @property
+    def skill(
+        self,
+    ) -> str | None:
+
+        return self.primary_skill()
+
+    def has_skill(
+        self,
+        skill: str,
+    ) -> bool:
+
+        return skill in self.skills
+
+    def add_skill(
+        self,
+        skill: str,
+    ) -> None:
+
+        if skill and skill not in self.skills:
+            self.skills.append(skill)
+
+    # ==========================================================
+    # Contexto
+    # ==========================================================
+
+    def requires_context(
+        self,
+        provider: str,
+    ) -> bool:
+
+        return provider in self.context_requirements
+
+    def add_context_requirement(
+        self,
+        provider: str,
+    ) -> None:
+
+        if (
+            provider in self.AVAILABLE_CONTEXT_PROVIDERS
+            and provider not in self.context_requirements
+        ):
+            self.context_requirements.append(provider)
+
+    def validate_context_requirements(
+        self,
+    ) -> list[str]:
+
+        return [
+            item
+            for item in self.context_requirements
+            if item not in self.AVAILABLE_CONTEXT_PROVIDERS
+        ]
+
+    # ==========================================================
+    # Tools
+    # ==========================================================
+
+    def requires_tool(
+        self,
+        tool: str,
+    ) -> bool:
+
+        return tool in self.required_tools
+
+    def add_tool(
+        self,
+        tool: str,
+    ) -> None:
+
+        if tool and tool not in self.required_tools:
+            self.required_tools.append(tool)
+
+    # ==========================================================
+    # Params
+    # ==========================================================
+
+    def add_param(
+        self,
+        key: str,
+        value: Any,
+    ) -> None:
+
+        self.params[key] = value
+
+    def add_constraint(
+        self,
+        value: str,
+    ) -> None:
+
+        if value and value not in self.constraints:
+            self.constraints.append(value)
+
+    # ==========================================================
+    # Steps
+    # ==========================================================
 
     def add_step(
         self,
@@ -168,36 +290,89 @@ class ExecutionPlan:
             )
         )
 
-    def requires_context(
+    def update_step_status(
         self,
-        provider: str,
+        index: int,
+        status: str,
+    ) -> None:
+
+        if index < 0 or index >= len(self.steps):
+            raise IndexError("Índice de step inválido.")
+
+        self.steps[index].set_status(
+            status,
+        )
+
+    def is_multistep(
+        self,
     ) -> bool:
 
-        return provider in self.context_requirements
+        return self.execution_mode == "multi_step"
 
-    def requires_tool(
+    # ==========================================================
+    # Estado
+    # ==========================================================
+
+    def mark_completed(
         self,
-        tool: str,
-    ) -> bool:
+        result: Any = None,
+    ) -> None:
 
-        return tool in self.required_tools
+        self.status = "completed"
+        self.result = result
 
-    def uses_skill(
+    def mark_failed(
         self,
-        skill: str,
-    ) -> bool:
+        error: str,
+    ) -> None:
 
-        return skill in self.skills
+        self.status = "failed"
+        self.error = error
 
-    def validate_context_requirements(self) -> list[str]:
+    # ==========================================================
+    # Validación
+    # ==========================================================
 
-        return [
-            provider
-            for provider in self.context_requirements
-            if provider not in self.AVAILABLE_CONTEXT_PROVIDERS
-        ]
+    def validate(
+        self,
+    ) -> list[str]:
 
-    def to_dict(self) -> dict[str, Any]:
+        errors = []
+
+        if not self.original_task:
+            errors.append("original_task vacío")
+
+        if self.intent is None:
+            errors.append("intent no definido")
+
+        if self.agent is None:
+            errors.append("agent no definido")
+
+        if self.agent == "executor" and not self.skills:
+            errors.append("executor sin skills")
+
+        if self.execution_mode not in self.AVAILABLE_EXECUTION_MODES:
+            errors.append("execution_mode inválido")
+
+        errors.extend(
+            [f"context inválido: {item}" for item in self.validate_context_requirements()]
+        )
+
+        if len(self.skills) != len(set(self.skills)):
+            errors.append("skills duplicadas")
+
+        if self.execution_mode == "multi_step" and not self.steps:
+            errors.append("multi_step sin steps definidos")
+
+        return errors
+
+    # ==========================================================
+    # Serialización
+    # ==========================================================
+
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
 
         return {
             "id": self.id,
@@ -213,12 +388,13 @@ class ExecutionPlan:
             "skills": self.skills,
             "required_tools": self.required_tools,
             "context_requirements": self.context_requirements,
-            "memory_queries": self.memory_queries,
-            "document_queries": self.document_queries,
             "params": self.params,
             "constraints": self.constraints,
             "metadata": self.metadata,
             "metrics": self.metrics,
+            "execution_context": self.execution_context,
+            "result": self.result,
+            "error": self.error,
             "preferred_provider": self.preferred_provider,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
@@ -245,10 +421,16 @@ class ExecutionPlan:
             ],
         }
 
-    def __repr__(self) -> str:
+    # ==========================================================
+    # Debug
+    # ==========================================================
+
+    def __repr__(
+        self,
+    ) -> str:
 
         return (
-            f"<ExecutionPlan("
+            "<ExecutionPlan("
             f"intent={self.intent}, "
             f"agent={self.agent}, "
             f"skills={self.skills}, "

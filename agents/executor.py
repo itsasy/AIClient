@@ -1,7 +1,7 @@
 import logging
 
 from agents.base import Agent
-from agents.subagent import Subagent
+from core.subagent import Subagent
 
 from core.execution_plan import (
     ExecutionPlan,
@@ -104,7 +104,7 @@ class ExecutorAgent(Agent):
                 )
             )
 
-            if not plan.continue_on_error:
+            if plan.stop_on_error:
 
                 logger.warning("Plan detenido por fallo.")
 
@@ -129,7 +129,7 @@ class ExecutorAgent(Agent):
             return "No existe ninguna Skill para ejecutar."
 
         step = ExecutionStep(
-            description=plan.objective,
+            description=plan.objective or plan.original_task,
             skill=plan.skill,
             params=plan.params,
         )

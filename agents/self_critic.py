@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 import json
 import logging
+from typing import Any
 
 from agents.base import Agent
+
 from core.execution_plan import ExecutionPlan
+
 from llm.prompt_builder import PromptBuilder
 from llm.provider_manager import ProviderManager
 from llm.provider_selector import ProviderSelector
@@ -17,14 +22,21 @@ class SelfCriticAgent(Agent):
     role = "Evaluador de calidad"
 
     def __init__(self):
+
         self.provider_manager = ProviderManager()
 
     def process(
         self,
         plan: ExecutionPlan,
-        context: dict,
-        draft_response: str,
+        context: dict[str, Any] | None = None,
     ) -> dict:
+
+        context = context or {}
+
+        draft_response = context.get(
+            "draft_response",
+            "",
+        )
 
         provider, fallback = ProviderSelector.select(
             task=plan.original_task,
@@ -37,8 +49,9 @@ class SelfCriticAgent(Agent):
             intent="reflection",
             objective="Evaluar la respuesta generada",
             agent="self_critic",
-            skill="reflection",
-            context_requirements=[],
+            skills=[
+                "reflection",
+            ],
         )
 
         prompt = PromptBuilder.build(
@@ -62,9 +75,15 @@ class SelfCriticAgent(Agent):
 
         except Exception:
 
-            logger.exception("Self Critic error")
+            logger.exception(
+                "SelfCritic error",
+            )
 
             return self._fallback()
+
+    # ======================================================
+    # Helpers
+    # ======================================================
 
     def _extract_json(
         self,
@@ -72,19 +91,25 @@ class SelfCriticAgent(Agent):
     ) -> dict:
 
         start = text.find("{")
+
         end = text.rfind("}") + 1
 
         if start == -1:
-            raise ValueError("JSON no encontrado")
 
-        return json.loads(text[start:end])
+            raise ValueError(
+                "JSON no encontrado",
+            )
 
-    def _fallback(self):
+        return json.loads(
+            text[start:end],
+        )
+
+    def _fallback(self) -> dict:
 
         return {
             "alignment_score": 7,
             "hallucination_risk": "medium",
-            "context_usage": "good",
+            "context_usage": "unknown",
             "coverage": "No evaluado",
             "missing_parts": "",
             "course_correction_advice": "",

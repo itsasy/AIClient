@@ -1,68 +1,288 @@
-import os
+from __future__ import annotations
+
 import logging
+
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 
 class GentlemanSkills:
     """
-    Carga skills de Gentleman-Programming desde el sistema de archivos.
-    Busca en ~/.engram/skills/, ~/.claude/skills/, etc.
+    Gestor de Gentleman Skills.
+
+    Descubre conocimiento operativo reutilizable.
+
+    Fuentes:
+
+    - ~/.engram/skills/
+    - ~/.claude/skills/
+    - ~/.codex/skills/
+    - ~/.gentleman/skills/
+
+    Responsabilidades:
+
+    - Descubrir skills.
+    - Cargar contenido.
+    - Indexar metadata.
+    - Buscar skills relevantes.
+
+    No:
+
+    - Construye prompts.
+    - Ejecuta herramientas.
+    - Decide prioridades.
     """
 
+    SEARCH_PATHS = (
+        Path.home() / ".engram" / "skills",
+        Path.home() / ".claude" / "skills",
+        Path.home() / ".codex" / "skills",
+        Path.home() / ".gentleman" / "skills",
+    )
+
     def __init__(self):
-        self.skills_dir = self._find_skills_dir()
-        self.skills: Dict[str, str] = {}
-        if self.skills_dir:
-            logger.info(f"📂 Skills dir encontrado: {self.skills_dir}")
-            self._load_all()
-            logger.info(f"✅ Skills cargadas: {list(self.skills.keys())}")
-        else:
-            logger.warning("❌ No se encontraron skills de Gentleman en ninguna ruta.")
 
-    def _find_skills_dir(self) -> Optional[Path]:
-        """Busca el directorio de skills en las rutas típicas."""
-        candidates = [
-            Path.home() / ".engram" / "skills",
-            Path.home() / ".claude" / "skills",
-            Path.home() / ".codex" / "skills",
-            Path.home() / ".gentleman" / "skills",
-        ]
-        for path in candidates:
-            if path.exists():
-                logger.info(f"✅ Skills encontradas en: {path}")
-                return path
-        return None
+        self.skills: dict[str, str] = {}
 
-    def _load_all(self):
-        """Recorre recursivamente todas las carpetas buscando SKILL.md."""
-        for md_file in self.skills_dir.rglob("SKILL.md"):
-            skill_name = md_file.parent.name
-            try:
-                content = md_file.read_text(encoding="utf-8", errors="ignore")
-                self.skills[skill_name] = content
-                logger.info(f"📄 Skill cargada: {skill_name}")
-            except Exception as e:
-                logger.warning(f"Error cargando {md_file}: {e}")
+        self.metadata: dict[str, dict] = {}
 
-    def get_skill(self, name: str) -> Optional[str]:
-        """Devuelve el contenido de una skill por su nombre."""
-        return self.skills.get(name)
+        self._search_cache: dict[str, list[str]] = {}
 
-    def find_relevant(self, query: str) -> List[str]:
-        """Devuelve nombres de skills que podrían ser relevantes para la consulta."""
+        self.skills_dirs = self._discover_skill_dirs()
+
+        if not self.skills_dirs:
+
+            logger.warning("No se encontraron Gentleman Skills.")
+
+            return
+
+        logger.info(
+            "Directorios Gentleman encontrados: %s",
+            self.skills_dirs,
+        )
+
+        self._load_all()
+
+        logger.info(
+            "Gentleman Skills cargadas: %s",
+            list(self.skills.keys()),
+        )
+
+    # ==========================================================
+    # Discovery
+    # ==========================================================
+
+    def _discover_skill_dirs(self) -> list[Path]:
+
+        directories = []
+
+        for path in self.SEARCH_PATHS:
+
+            if path.exists() and path.is_dir():
+
+                directories.append(path)
+
+        return directories
+
+    # ==========================================================
+    # Loading
+    # ==========================================================
+
+    def _load_all(self) -> None:
+
+        for directory in self.skills_dirs:
+
+            for file in directory.rglob("SKILL.md"):
+
+                self._load_skill(file)
+
+    def _load_skill(
+        self,
+        file: Path,
+    ) -> None:
+
+        try:
+
+            name = self._normalize_name(file.parent.name)
+
+            content = file.read_text(
+                encoding="utf-8",
+                errors="ignore",
+            )
+
+            if not content.strip():
+
+                return
+
+            # Si existe una skill con mismo nombre,
+            # gana la última encontrada.
+            self.skills[name] = content
+
+            self.metadata[name] = {
+                "name": name,
+                "path": str(file),
+                "directory": str(file.parent),
+                "size": len(content),
+            }
+
+        except Exception:
+
+            logger.exception(
+                "Error cargando skill: %s",
+                file,
+            )
+
+    # ==========================================================
+    # Public API
+    # ==========================================================
+
+    def list_skills(self) -> list[str]:
+
+        return sorted(self.skills.keys())
+
+    def get_skill(
+        self,
+        name: str,
+    ) -> Optional[str]:
+
+        return self.skills.get(self._normalize_name(name))
+
+    def get_metadata(
+        self,
+        name: str,
+    ) -> dict | None:
+
+        return self.metadata.get(self._normalize_name(name))
+
+    def find_relevant(
+        self,
+        query: str,
+        limit: int = 3,
+    ) -> list[str]:
+
+        if not query:
+
+            return []
+
+        cache_key = f"{query}:{limit}"
+
+        if cache_key in self._search_cache:
+
+            return self._search_cache[cache_key]
+
         query_lower = query.lower()
-        relevant = []
-        for name in self.skills.keys():
-            # Dividir el nombre en palabras (ej. "react-19" → ["react", "19"])
-            keywords = name.replace("-", " ").split()
-            if any(k in query_lower for k in keywords):
-                relevant.append(name)
-        # Ordenar por relevancia (las que coinciden con más palabras primero)
-        relevant.sort(
-            key=lambda n: sum(1 for k in n.replace("-", " ").split() if k in query_lower),
+
+        query_tokens = {token for token in query_lower.split() if len(token) > 2}
+
+        scored: list[tuple[int, str]] = []
+
+        for name, content in self.skills.items():
+
+            score = 0
+
+            normalized_name = name.replace("-", " ").replace("_", " ")
+
+            # -----------------------------
+            # Match nombre
+            # -----------------------------
+
+            for token in normalized_name.split():
+
+                if token in query_lower:
+
+                    score += 5
+
+            # -----------------------------
+            # Match contenido
+            # -----------------------------
+
+            preview = content.lower()
+
+            for token in query_tokens:
+
+                if token in preview:
+
+                    score += 1
+
+            # -----------------------------
+            # Frontmatter / tags
+            # -----------------------------
+
+            if "tags:" in preview:
+
+                for token in query_tokens:
+
+                    if token in preview:
+
+                        score += 2
+
+            if score:
+
+                scored.append(
+                    (
+                        score,
+                        name,
+                    )
+                )
+
+        scored.sort(
+            key=lambda item: item[0],
             reverse=True,
         )
-        return relevant[:3]  # máximo 3 skills para no saturar el contexto
+
+        result = [name for _, name in scored[:limit]]
+
+        self._search_cache[cache_key] = result
+
+        return result
+
+    def find_skills(
+        self,
+        query: str,
+        limit: int = 3,
+    ) -> list[str]:
+
+        return self.find_relevant(
+            query,
+            limit,
+        )
+
+    # ==========================================================
+    # Reload
+    # ==========================================================
+
+    def reload(self) -> None:
+
+        self.skills.clear()
+
+        self.metadata.clear()
+
+        self._search_cache.clear()
+
+        self.skills_dirs = self._discover_skill_dirs()
+
+        self._load_all()
+
+    # ==========================================================
+    # Helpers
+    # ==========================================================
+
+    @staticmethod
+    def _normalize_name(
+        name: str,
+    ) -> str:
+
+        return (
+            name.strip()
+            .lower()
+            .replace(
+                " ",
+                "-",
+            )
+            .replace(
+                "_",
+                "-",
+            )
+        )

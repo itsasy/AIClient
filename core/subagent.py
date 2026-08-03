@@ -1,6 +1,7 @@
-import logging
+from __future__ import annotations
 
-from agents.self_critic import SelfCriticAgent
+import logging
+from typing import Any
 
 from core.execution_plan import (
     ExecutionPlan,
@@ -14,35 +15,43 @@ logger = logging.getLogger(__name__)
 
 class Subagent:
     """
-    Ejecuta un ExecutionStep.
+    Ejecuta unidades pequeñas de un ExecutionPlan.
 
-    En el futuro podrá ejecutar:
+    Responsabilidades:
 
-    - Skills
-    - Agentes
-    - Workflows
-    - Plugins
-    - MCP Servers
+    - Resolver ExecutionStep.
+    - Ejecutar Skills.
+    - Manejar retries.
+    - Devolver resultado normalizado.
+
+    No:
+
+    - Analiza intención.
+    - Crea planes.
+    - Ejecuta self critic.
+    - Gestiona memoria.
     """
 
     def __init__(self):
 
         self.skills = SkillManager()
-        self.critic = SelfCriticAgent()
 
-    # ---------------------------------------------------------
+    # ==========================================================
+    # Execute
+    # ==========================================================
 
     def execute(
         self,
         plan: ExecutionPlan,
         step: ExecutionStep,
-        context: dict | None = None,
-    ) -> dict:
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
 
         context = context or {}
 
         retries = 0
-        max_retries = plan.max_retries
+
+        max_retries = step.retries or plan.max_retries
 
         while retries <= max_retries:
 
@@ -60,44 +69,6 @@ class Subagent:
                     **step.params,
                 )
 
-                output = self._extract_output(result)
-
-                if plan.requires_self_critic:
-
-                    evaluation = self.critic.process(
-                        plan=plan,
-                        context=context,
-                        draft_response=output,
-                    )
-
-                    score = evaluation.get(
-                        "alignment_score",
-                        10,
-                    )
-
-                    if score < 5:
-
-                        retries += 1
-
-                        logger.warning(
-                            "Self-Critic rechazó el step (%s/%s)",
-                            retries,
-                            max_retries,
-                        )
-
-                        advice = evaluation.get(
-                            "course_correction_advice",
-                        )
-
-                        if advice:
-
-                            self._apply_correction(
-                                step,
-                                advice,
-                            )
-
-                        continue
-
                 step.status = "completed"
 
                 return {
@@ -105,12 +76,13 @@ class Subagent:
                     "result": result,
                 }
 
-            except Exception as e:
+            except Exception as exc:
 
                 retries += 1
 
                 logger.exception(
-                    "Error ejecutando step.",
+                    "Error ejecutando step %s",
+                    step.description,
                 )
 
                 if retries > max_retries:
@@ -119,7 +91,7 @@ class Subagent:
 
                     return {
                         "success": False,
-                        "error": str(e),
+                        "error": str(exc),
                     }
 
         step.status = "failed"
@@ -129,34 +101,17 @@ class Subagent:
             "error": "Max retries alcanzado.",
         }
 
-    # ---------------------------------------------------------
-
-    @staticmethod
-    def _apply_correction(
-        step: ExecutionStep,
-        advice: str,
-    ):
-
-        for field in (
-            "task",
-            "prompt",
-            "content",
-        ):
-
-            if field in step.params:
-
-                step.params[field] += "\n\n" "[SELF-CRITIC]\n" f"{advice}"
-
-                return
-
-    # ---------------------------------------------------------
+    # ==========================================================
+    # Helpers
+    # ==========================================================
 
     @staticmethod
     def _extract_output(
-        result,
+        result: Any,
     ) -> str:
 
         if not isinstance(result, dict):
+
             return str(result)
 
         payload = result.get(

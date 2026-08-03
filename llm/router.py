@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class LLMRouter:
     """
-    Responsable únicamente de comunicarse con los modelos LLM.
+    Punto único de comunicación con proveedores LLM.
 
     Flujo:
 
@@ -42,14 +42,24 @@ class LLMRouter:
 
         context = context or {}
 
-        provider, fallbacks = ProviderSelector.select(
-            plan,
-        )
+        try:
+
+            provider, fallbacks = ProviderSelector.select(
+                plan,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error seleccionando proveedor LLM",
+            )
+
+            raise
 
         logger.info(
-            "LLM Router | provider=%s | skill=%s | intent=%s",
+            "LLM Router | provider=%s | skills=%s | intent=%s",
             provider,
-            plan.skill,
+            plan.skills,
             plan.intent,
         )
 

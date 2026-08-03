@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class ProviderSelector:
     """
-    Selecciona el proveedor LLM adecuado para un ExecutionPlan.
+    Selecciona proveedor LLM según ExecutionPlan.
 
     Prioridad:
 
@@ -16,11 +16,13 @@ class ProviderSelector:
                 ↓
         intent_category
                 ↓
-             skill
+        skills
+                ↓
+        agent
                 ↓
         execution_mode
                 ↓
-            default
+        default
     """
 
     CATEGORY_MAP = {
@@ -58,40 +60,45 @@ class ProviderSelector:
         ),
     }
 
+    CATEGORY_ALIASES = {
+        "project": "architecture",
+        "planning": "architecture",
+        "analysis": "architecture",
+        "execution": "code",
+        "file": "code",
+        "conversation": "fast",
+    }
+
     SKILL_CATEGORY = {
-        # -------------------------
-        # Código
-        # -------------------------
         "code": "code",
+        "write_file": "code",
         "execute_code": "code",
+        "shell": "code",
+        "docker": "code",
         "sandbox": "code",
         "refactor_code": "code",
         "analyze_code": "code",
-        # -------------------------
-        # Arquitectura
-        # -------------------------
         "plan": "architecture",
         "architecture": "architecture",
         "analyze_project": "architecture",
         "reflection": "architecture",
         "self_critic": "architecture",
         "critique": "architecture",
-        # -------------------------
-        # Documentación
-        # -------------------------
         "readme": "documentation",
         "generate_proposal": "documentation",
-        # -------------------------
-        # Conversación
-        # -------------------------
         "conversation": "fast",
         "chat": "fast",
         "general": "fast",
         "quick": "fast",
-        # -------------------------
-        # Aprendizaje
-        # -------------------------
         "learning": "fast",
+    }
+
+    AGENT_CATEGORY = {
+        "coder": "code",
+        "executor": "code",
+        "architect": "architecture",
+        "planner": "architecture",
+        "task": "fast",
     }
 
     @classmethod
@@ -99,10 +106,6 @@ class ProviderSelector:
         cls,
         plan: ExecutionPlan,
     ) -> tuple[str, list[str]]:
-
-        # =====================================================
-        # Provider forzado
-        # =====================================================
 
         if plan.preferred_provider:
 
@@ -121,37 +124,38 @@ class ProviderSelector:
                 ),
             )
 
-        # =====================================================
-        # Intent category
-        # =====================================================
+        category = None
 
-        category = plan.intent_category
+        if plan.intent_category:
 
-        # =====================================================
-        # Primera skill del plan
-        # =====================================================
+            category = cls.CATEGORY_ALIASES.get(
+                plan.intent_category.lower(),
+                plan.intent_category.lower(),
+            )
 
-        skill = plan.skills[0] if plan.skills else None
+        if category is None and plan.skills:
 
-        # =====================================================
-        # Skill -> Category
-        # =====================================================
+            for skill in plan.skills:
 
-        if category is None and skill is not None:
-            category = cls.SKILL_CATEGORY.get(skill)
+                category = cls.SKILL_CATEGORY.get(
+                    skill.lower(),
+                )
 
-        # =====================================================
-        # MultiStep
-        # =====================================================
+                if category:
+                    break
+
+        if category is None and plan.agent:
+
+            category = cls.AGENT_CATEGORY.get(
+                plan.agent.lower(),
+            )
 
         if category is None and plan.execution_mode == "multi_step":
+
             category = "architecture"
 
-        # =====================================================
-        # Default
-        # =====================================================
-
         if category is None:
+
             category = "fast"
 
         provider, fallbacks = cls.CATEGORY_MAP.get(
@@ -163,10 +167,11 @@ class ProviderSelector:
         )
 
         logger.info(
-            "Provider=%s | Category=%s | Skill=%s",
+            "Provider=%s | Category=%s | Skills=%s | Agent=%s",
             provider,
             category,
-            skill,
+            plan.skills,
+            plan.agent,
         )
 
         return (
@@ -186,6 +191,8 @@ class ProviderSelector:
         clean = []
 
         for item in chain:
+
+            item = item.lower()
 
             if item == provider:
                 continue

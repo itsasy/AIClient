@@ -34,14 +34,12 @@ class AllProvidersFailedError(LLMError):
     Ningún proveedor pudo completar la solicitud.
     """
 
-    def __init__(self, errors: dict[str, Exception]):
-        self.errors = errors
+    def __init__(
+        self,
+        errors: dict[str, Exception],
+    ):
+        self.errors = dict(errors)
 
-        details = "; ".join(
-            f"{provider}: {error}"
-            for provider, error in errors.items()
-        )
+        details = "; ".join(f"{provider}: {error}" for provider, error in self.errors.items())
 
-        super().__init__(
-            f"Todos los proveedores LLM fallaron. {details}"
-        )
+        super().__init__(f"Todos los proveedores LLM fallaron. {details}")
