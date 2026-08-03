@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import logging
 from typing import Callable
 
 from core.execution_plan import ExecutionPlan
+
 from core.context.base import BaseContextProvider
 
 from core.context.project_provider import ProjectProvider
@@ -18,19 +21,21 @@ logger = logging.getLogger(__name__)
 
 class ContextManager:
     """
-    Construye el contexto requerido por un ExecutionPlan.
+    Orquestador de contexto.
 
-    Características:
+    Responsabilidades:
 
-    - Providers lazy.
-    - Providers independientes.
-    - Fallo aislado por provider.
-    - Contexto extensible.
+    - Resolver providers requeridos por ExecutionPlan.
+    - Cargar información contextual.
+    - Gestionar ciclo de vida de providers.
+    - Aislar errores individuales.
+    - Entregar contexto al sistema de ejecución.
 
     No:
 
-    - Decide qué contexto necesita el plan.
     - Analiza intención.
+    - Decide qué contexto usar.
+    - Ejecuta skills.
     - Construye prompts.
     """
 
@@ -45,9 +50,9 @@ class ContextManager:
             "memory": MemoryProvider,
             "obsidian": ObsidianProvider,
             "documents": DocumentsProvider,
-            "spec": SpecProvider,
-            "standards": StandardsProvider,
             "gentleman": GentlemanProvider,
+            "standards": StandardsProvider,
+            "spec": SpecProvider,
         }
 
         self.providers: dict[
@@ -56,9 +61,12 @@ class ContextManager:
         ] = {}
 
         self.metrics = {
-            "loaded": 0,
-            "failed": 0,
+            "providers_loaded": 0,
+            "providers_failed": 0,
+            "contexts_generated": 0,
         }
+
+        self._context_cache: dict[str, dict] = {}
 
     # ==========================================================
     # Provider lifecycle
@@ -66,20 +74,20 @@ class ContextManager:
 
     def _get_provider(
         self,
-        key: str,
+        name: str,
     ) -> BaseContextProvider | None:
 
-        if key in self.providers:
+        if name in self.providers:
 
-            return self.providers[key]
+            return self.providers[name]
 
-        factory = self.provider_factories.get(key)
+        factory = self.provider_factories.get(name)
 
-        if factory is None:
+        if not factory:
 
             logger.warning(
-                "Context provider no registrado: %s",
-                key,
+                "Provider de contexto no registrado: %s",
+                name,
             )
 
             return None
@@ -88,23 +96,30 @@ class ContextManager:
 
             provider = factory()
 
-            self.providers[key] = provider
+            self.providers[name] = provider
+
+            self.metrics["providers_loaded"] += 1
+
+            logger.info(
+                "Context provider inicializado: %s",
+                name,
+            )
 
             return provider
 
         except Exception:
 
-            self.metrics["failed"] += 1
+            self.metrics["providers_failed"] += 1
 
             logger.exception(
-                "No se pudo inicializar provider: %s",
-                key,
+                "Error inicializando provider: %s",
+                name,
             )
 
             return None
 
     # ==========================================================
-    # Context building
+    # Context generation
     # ==========================================================
 
     def build(
@@ -112,18 +127,30 @@ class ContextManager:
         plan: ExecutionPlan,
     ) -> dict:
 
-        context = {
+        cache_key = plan.id
+
+        if cache_key in self._context_cache:
+
+            logger.debug(
+                "Contexto recuperado desde cache: %s",
+                cache_key,
+            )
+
+            return self._context_cache[cache_key]
+
+        context: dict = {
             "query": plan.original_task,
+            "execution_plan": plan.to_dict(),
         }
 
-        requirements = list(dict.fromkeys(plan.context_requirements or []))
+        requirements = list(dict.fromkeys(plan.context_requirements))
 
         invalid = plan.validate_context_requirements()
 
         if invalid:
 
             logger.warning(
-                "Context providers inválidos: %s",
+                "Context providers inválidos detectados: %s",
                 invalid,
             )
 
@@ -138,7 +165,7 @@ class ContextManager:
             try:
 
                 logger.info(
-                    "Cargando contexto: %s",
+                    "Cargando contexto provider=%s",
                     requirement,
                 )
 
@@ -147,42 +174,49 @@ class ContextManager:
                     context,
                 )
 
-                self.metrics["loaded"] += 1
-
             except Exception:
 
-                self.metrics["failed"] += 1
+                self.metrics["providers_failed"] += 1
 
                 logger.exception(
-                    "Error cargando contexto provider=%s",
+                    "Falló carga de contexto provider=%s",
                     requirement,
                 )
 
+        self.metrics["contexts_generated"] += 1
+
+        self._context_cache[cache_key] = context
+
         logger.info(
-            "Contexto construido: %s",
+            "Contexto generado keys=%s",
             list(context.keys()),
         )
 
         return context
 
     # ==========================================================
-    # Management
+    # Provider management
     # ==========================================================
 
     def register_provider(
         self,
-        key: str,
+        name: str,
         factory: Callable[
             [],
             BaseContextProvider,
         ],
     ) -> None:
         """
-        Permite agregar providers externos
-        sin modificar la clase.
+        Permite agregar providers dinámicamente.
         """
 
-        self.provider_factories[key] = factory
+        self.provider_factories[name] = factory
+
+    def clear_cache(
+        self,
+    ) -> None:
+
+        self._context_cache.clear()
 
     def get_loaded_providers(
         self,

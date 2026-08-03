@@ -10,9 +10,7 @@ from typing import Any
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Paso individual de ejecución.
-
-    Representa una acción dentro de un flujo.
+    Unidad ejecutable dentro de un ExecutionPlan.
     """
 
     description: str
@@ -33,6 +31,10 @@ class ExecutionStep:
 
     status: str = "pending"
 
+    result: Any = None
+
+    error: str | None = None
+
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def set_status(
@@ -45,35 +47,44 @@ class ExecutionStep:
 
         self.status = status
 
-    def mark_running(
-        self,
-    ) -> None:
-
-        self.set_status(
-            "running",
-        )
+    def mark_running(self):
+        self.set_status("running")
 
     def mark_completed(
         self,
-    ) -> None:
-
-        self.set_status(
-            "completed",
-        )
+        result: Any = None,
+    ):
+        self.status = "completed"
+        self.result = result
 
     def mark_failed(
         self,
-    ) -> None:
-
-        self.set_status(
-            "failed",
-        )
+        error: str,
+    ):
+        self.status = "failed"
+        self.error = error
 
 
 @dataclass(slots=True)
 class ExecutionPlan:
     """
-    Contrato central del sistema.
+    Contrato central de ejecución.
+
+    Flujo:
+
+    Intent
+      |
+      v
+    Planner
+      |
+      v
+    ExecutionPlan
+      |
+      v
+    Runtime
+      |
+      v
+    Result
     """
 
     AVAILABLE_CONTEXT_PROVIDERS = {
@@ -85,6 +96,7 @@ class ExecutionPlan:
         "spec",
         "standards",
         "gentleman",
+        "knowledge",
     }
 
     AVAILABLE_EXECUTION_MODES = {
@@ -94,9 +106,12 @@ class ExecutionPlan:
 
     VALID_STATUS = {
         "pending",
+        "planned",
+        "validated",
         "running",
         "completed",
         "failed",
+        "learning",
         "cancelled",
     }
 
@@ -128,6 +143,8 @@ class ExecutionPlan:
 
     context_requirements: list[str] = field(default_factory=list)
 
+    loaded_context: dict[str, Any] = field(default_factory=dict)
+
     memory_queries: list[str] = field(default_factory=list)
 
     document_queries: list[str] = field(default_factory=list)
@@ -139,6 +156,8 @@ class ExecutionPlan:
     constraints: list[str] = field(default_factory=list)
 
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    planning_metadata: dict[str, Any] = field(default_factory=dict)
 
     metrics: dict[str, Any] = field(default_factory=dict)
 
@@ -164,22 +183,17 @@ class ExecutionPlan:
 
     stop_on_error: bool = True
 
-    # ==========================================================
+    # ======================================================
     # Skills
-    # ==========================================================
+    # ======================================================
 
-    def primary_skill(
+    def add_skill(
         self,
-    ) -> str | None:
+        skill: str,
+    ):
 
-        return self.skills[0] if self.skills else None
-
-    @property
-    def skill(
-        self,
-    ) -> str | None:
-
-        return self.primary_skill()
+        if skill and skill not in self.skills:
+            self.skills.append(skill)
 
     def has_skill(
         self,
@@ -188,29 +202,21 @@ class ExecutionPlan:
 
         return skill in self.skills
 
-    def add_skill(
+    @property
+    def skill(
         self,
-        skill: str,
-    ) -> None:
+    ):
 
-        if skill and skill not in self.skills:
-            self.skills.append(skill)
+        return self.skills[0] if self.skills else None
 
-    # ==========================================================
-    # Contexto
-    # ==========================================================
-
-    def requires_context(
-        self,
-        provider: str,
-    ) -> bool:
-
-        return provider in self.context_requirements
+    # ======================================================
+    # Context
+    # ======================================================
 
     def add_context_requirement(
         self,
         provider: str,
-    ) -> None:
+    ):
 
         if (
             provider in self.AVAILABLE_CONTEXT_PROVIDERS
@@ -218,105 +224,73 @@ class ExecutionPlan:
         ):
             self.context_requirements.append(provider)
 
-    def validate_context_requirements(
+    def load_context(
         self,
-    ) -> list[str]:
+        name: str,
+        value: Any,
+    ):
 
-        return [
-            item
-            for item in self.context_requirements
-            if item not in self.AVAILABLE_CONTEXT_PROVIDERS
-        ]
+        self.loaded_context[name] = value
 
-    # ==========================================================
+    # ======================================================
     # Tools
-    # ==========================================================
-
-    def requires_tool(
-        self,
-        tool: str,
-    ) -> bool:
-
-        return tool in self.required_tools
+    # ======================================================
 
     def add_tool(
         self,
         tool: str,
-    ) -> None:
+    ):
 
         if tool and tool not in self.required_tools:
             self.required_tools.append(tool)
 
-    # ==========================================================
-    # Params
-    # ==========================================================
-
-    def add_param(
-        self,
-        key: str,
-        value: Any,
-    ) -> None:
-
-        self.params[key] = value
-
-    def add_constraint(
-        self,
-        value: str,
-    ) -> None:
-
-        if value and value not in self.constraints:
-            self.constraints.append(value)
-
-    # ==========================================================
+    # ======================================================
     # Steps
-    # ==========================================================
+    # ======================================================
 
     def add_step(
         self,
         description: str,
         skill: str | None = None,
         tool: str | None = None,
-        provider: str | None = None,
         params: dict[str, Any] | None = None,
-    ) -> None:
+    ):
 
         self.steps.append(
             ExecutionStep(
                 description=description,
                 skill=skill,
                 tool=tool,
-                provider=provider,
                 params=params or {},
             )
         )
 
-    def update_step_status(
-        self,
-        index: int,
-        status: str,
-    ) -> None:
+    def current_step(self):
 
-        if index < 0 or index >= len(self.steps):
-            raise IndexError("Índice de step inválido.")
+        for step in self.steps:
 
-        self.steps[index].set_status(
-            status,
-        )
+            if step.status != "completed":
+                return step
 
-    def is_multistep(
-        self,
-    ) -> bool:
+        return None
 
-        return self.execution_mode == "multi_step"
+    # ======================================================
+    # Lifecycle
+    # ======================================================
 
-    # ==========================================================
-    # Estado
-    # ==========================================================
+    def mark_planned(self):
+        self.status = "planned"
+
+    def mark_validated(self):
+        self.status = "validated"
+
+    def mark_running(self):
+        self.status = "running"
 
     def mark_completed(
         self,
-        result: Any = None,
-    ) -> None:
+        result=None,
+    ):
 
         self.status = "completed"
         self.result = result
@@ -324,116 +298,73 @@ class ExecutionPlan:
     def mark_failed(
         self,
         error: str,
-    ) -> None:
+    ):
 
         self.status = "failed"
         self.error = error
 
-    # ==========================================================
-    # Validación
-    # ==========================================================
+    # ======================================================
+    # Validation
+    # ======================================================
 
-    def validate(
-        self,
-    ) -> list[str]:
+    def validate(self):
 
         errors = []
 
         if not self.original_task:
             errors.append("original_task vacío")
 
-        if self.intent is None:
+        if not self.intent:
             errors.append("intent no definido")
 
-        if self.agent is None:
+        if not self.agent:
             errors.append("agent no definido")
-
-        if self.agent == "executor" and not self.skills:
-            errors.append("executor sin skills")
 
         if self.execution_mode not in self.AVAILABLE_EXECUTION_MODES:
             errors.append("execution_mode inválido")
 
-        errors.extend(
-            [f"context inválido: {item}" for item in self.validate_context_requirements()]
-        )
+        invalid_context = [
+            x for x in self.context_requirements if x not in self.AVAILABLE_CONTEXT_PROVIDERS
+        ]
 
-        if len(self.skills) != len(set(self.skills)):
-            errors.append("skills duplicadas")
+        for item in invalid_context:
+            errors.append(f"context inválido: {item}")
 
         if self.execution_mode == "multi_step" and not self.steps:
-            errors.append("multi_step sin steps definidos")
+            errors.append("multi_step sin pasos")
 
         return errors
 
-    # ==========================================================
-    # Serialización
-    # ==========================================================
+    # ======================================================
+    # Serialization
+    # ======================================================
 
-    def to_dict(
-        self,
-    ) -> dict[str, Any]:
+    def to_dict(self):
 
         return {
             "id": self.id,
-            "created_at": self.created_at.isoformat(),
             "status": self.status,
-            "priority": self.priority,
-            "original_task": self.original_task,
+            "task": self.original_task,
             "objective": self.objective,
             "intent": self.intent,
-            "intent_category": self.intent_category,
-            "execution_mode": self.execution_mode,
             "agent": self.agent,
             "skills": self.skills,
-            "required_tools": self.required_tools,
             "context_requirements": self.context_requirements,
-            "params": self.params,
-            "constraints": self.constraints,
-            "metadata": self.metadata,
-            "metrics": self.metrics,
-            "execution_context": self.execution_context,
-            "result": self.result,
-            "error": self.error,
-            "preferred_provider": self.preferred_provider,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "system_role": self.system_role,
-            "max_retries": self.max_retries,
-            "requires_confirmation": self.requires_confirmation,
-            "requires_self_critic": self.requires_self_critic,
-            "allow_parallel_steps": self.allow_parallel_steps,
-            "stop_on_error": self.stop_on_error,
+            "loaded_context": self.loaded_context,
             "steps": [
                 {
                     "description": step.description,
                     "skill": step.skill,
                     "tool": step.tool,
-                    "provider": step.provider,
-                    "params": step.params,
-                    "expected_output": step.expected_output,
-                    "retries": step.retries,
-                    "timeout": step.timeout,
                     "status": step.status,
-                    "metadata": step.metadata,
+                    "result": step.result,
                 }
                 for step in self.steps
             ],
+            "result": self.result,
+            "error": self.error,
         }
 
-    # ==========================================================
-    # Debug
-    # ==========================================================
+    def __repr__(self):
 
-    def __repr__(
-        self,
-    ) -> str:
-
-        return (
-            "<ExecutionPlan("
-            f"intent={self.intent}, "
-            f"agent={self.agent}, "
-            f"skills={self.skills}, "
-            f"steps={len(self.steps)}, "
-            f"status={self.status})>"
-        )
+        return "<ExecutionPlan " f"{self.intent} " f"{self.agent} " f"{self.status}>"

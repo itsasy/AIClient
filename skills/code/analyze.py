@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any
+
 from skills.base import Skill
 
 
@@ -5,13 +9,35 @@ class AnalyzeCodeSkill(Skill):
 
     name = "analyze"
 
-    description = "Analiza código"
+    description = "Analiza código fuente y devuelve información estructurada."
 
-    def execute(self, code_snippet="", language="python", **kwargs):
+    version = "1.0"
+
+    def execute(
+        self,
+        code_snippet: str = "",
+        language: str = "python",
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+
+        if not code_snippet.strip():
+
+            return {
+                "ok": False,
+                "result": None,
+                "error": "No se proporcionó código para analizar.",
+            }
+
         return {
-            "type": "code_analysis",
-            "payload": {
-                "code": code_snippet,
+            "ok": True,
+            "result": {
+                "type": "code_analysis",
                 "language": language,
+                "code": code_snippet,
+                "analysis": {
+                    "lines": len(code_snippet.splitlines()),
+                    "characters": len(code_snippet),
+                },
             },
+            "error": None,
         }

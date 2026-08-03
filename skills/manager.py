@@ -5,7 +5,7 @@ from skills.projects.full_generator import FullProjectGeneratorSkill
 
 from skills.code.project_analyzer import ProjectAnalyzerSkill
 from skills.code.generate import GenerateCodeSkill
-from skills.code.executor import CodeExecutorSkill
+from skills.code.execute_code import CodeExecutorSkill
 from skills.code.sandbox import CodeSandboxSkill
 from skills.code.analyze import AnalyzeCodeSkill
 

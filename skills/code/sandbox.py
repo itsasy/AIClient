@@ -1,42 +1,61 @@
+from __future__ import annotations
+
 import subprocess
 import tempfile
+
 from pathlib import Path
+from typing import Any
 
 from skills.base import Skill
+
 from core.config import Config
 
 
 class CodeSandboxSkill(Skill):
-    name = "sandbox"
-    description = (
-        "Ejecuta código Python de forma aislada dentro de un contenedor Docker"
-    )
 
-    def execute(self, code: str, **kwargs):
-        if not code or not code.strip():
+    name = "sandbox"
+
+    description = "Ejecuta código Python " "dentro de un contenedor Docker aislado."
+
+    version = "1.0"
+
+    def execute(
+        self,
+        code: str = "",
+        timeout: int | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+
+        if not code.strip():
+
             return {
-                "type": "sandbox_result",
-                "payload": {"ok": False, "output": "Código vacío"},
+                "ok": False,
+                "result": None,
+                "error": "Código vacío.",
             }
 
         if not self._docker_available():
+
             return {
-                "type": "sandbox_result",
-                "payload": {
-                    "ok": False,
-                    "output": (
-                        "❌ Docker no está instalado o no está en el PATH.\n"
-                        "Instala Docker Desktop o Docker Engine para usar el sandbox aislado."
-                    ),
-                },
+                "ok": False,
+                "result": None,
+                "error": ("Docker no está disponible."),
             }
 
-        try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                script_path = Path(tmpdir) / "script.py"
-                script_path.write_text(code, encoding="utf-8")
+        timeout = timeout or int(Config.SANDBOX_TIMEOUT)
 
-                docker_cmd = [
+        try:
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+
+                script = Path(tmpdir) / "script.py"
+
+                script.write_text(
+                    code,
+                    encoding="utf-8",
+                )
+
+                command = [
                     "docker",
                     "run",
                     "--rm",
@@ -50,74 +69,64 @@ class CodeSandboxSkill(Skill):
                     "nobody",
                     "--read-only",
                     "--mount",
-                    f"type=bind,source={script_path},target=/script.py,ro",
+                    (f"type=bind," f"source={script}," f"target=/script.py," f"ro"),
                     Config.SANDBOX_IMAGE,
                     "python",
                     "/script.py",
                 ]
 
-                timeout = kwargs.get("timeout", int(Config.SANDBOX_TIMEOUT))
-                result = subprocess.run(
-                    docker_cmd,
+                process = subprocess.run(
+                    command,
                     capture_output=True,
                     text=True,
                     timeout=timeout,
-                    cwd=tmpdir,
                 )
 
-                stdout = result.stdout.strip()
-                stderr = result.stderr.strip()
-                output = stdout if stdout else stderr
+                output = process.stdout.strip() or process.stderr.strip()
 
                 return {
-                    "type": "sandbox_result",
-                    "payload": {
-                        "ok": result.returncode == 0,
-                        "output": output[:1500],
-                        "error": stderr if result.returncode != 0 else "",
-                        "returncode": result.returncode,
+                    "ok": process.returncode == 0,
+                    "result": {
+                        "type": "sandbox_execution",
+                        "output": output[:2000],
+                        "returncode": process.returncode,
                     },
+                    "error": (None if process.returncode == 0 else process.stderr.strip()),
                 }
 
         except subprocess.TimeoutExpired:
+
             return {
-                "type": "sandbox_result",
-                "payload": {
-                    "ok": False,
-                    "output": f"⏱️ Timeout de ejecución ({timeout}s). El código se ha detenido.",
-                },
+                "ok": False,
+                "result": None,
+                "error": (f"Sandbox excedió timeout {timeout}s"),
             }
 
-        except FileNotFoundError:
+        except Exception as exc:
+
             return {
-                "type": "sandbox_result",
-                "payload": {
-                    "ok": False,
-                    "output": "❌ Docker no encontrado. Asegúrate de que Docker esté instalado y en el PATH.",
-                },
+                "ok": False,
+                "result": None,
+                "error": str(exc),
             }
 
-        except Exception as e:
-            return {
-                "type": "sandbox_result",
-                "payload": {
-                    "ok": False,
-                    "output": f"❌ Error inesperado en el sandbox: {e}",
-                },
-            }
+    def _docker_available(
+        self,
+    ) -> bool:
 
-    def _docker_available(self) -> bool:
         try:
-            subprocess.run(
-                ["docker", "version", "--format", "{{.Server.Version}}"],
+
+            result = subprocess.run(
+                [
+                    "docker",
+                    "version",
+                ],
                 capture_output=True,
                 timeout=5,
-                check=False,
             )
-            return True
-        except (
-            subprocess.TimeoutExpired,
-            FileNotFoundError,
-            subprocess.CalledProcessError,
-        ):
+
+            return result.returncode == 0
+
+        except Exception:
+
             return False

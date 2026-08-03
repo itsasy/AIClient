@@ -1,4 +1,9 @@
+from __future__ import annotations
+
+from typing import Any
+
 from core.project_inspector import ProjectInspector
+
 from skills.base import Skill
 
 
@@ -6,15 +11,36 @@ class ProjectAnalyzerSkill(Skill):
 
     name = "analyze_project"
 
-    description = "Analiza un proyecto completo"
+    description = "Analiza la estructura " "de un proyecto existente."
+
+    version = "1.0"
 
     def __init__(self):
+
         self.inspector = ProjectInspector()
 
-    def execute(self, **kwargs):
-        snapshot = self.inspector.inspect()
+    def execute(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
 
-        return {
-            "type": "project_analysis",
-            "payload": snapshot,
-        }
+        try:
+
+            snapshot = self.inspector.inspect()
+
+            return {
+                "ok": True,
+                "result": {
+                    "type": "project_analysis",
+                    "snapshot": snapshot,
+                },
+                "error": None,
+            }
+
+        except Exception as exc:
+
+            return {
+                "ok": False,
+                "result": None,
+                "error": str(exc),
+            }
