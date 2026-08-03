@@ -68,11 +68,18 @@ class AgentManager:
         context: dict[str, Any] | None = None,
     ) -> Any:
 
+        if plan.execution_unit_type != "agent":
+
+            raise RuntimeError(
+                "AgentManager solo ejecuta unidades de tipo 'agent'. "
+                f"Recibido: {plan.execution_unit_type}"
+            )
+
         context = context or {}
 
-        if plan.agent:
+        if plan.execution_unit:
 
-            plan.agent = self._normalize_agent(plan.agent)
+            plan.execution_unit = self._normalize_agent(plan.execution_unit)
 
         agent = self._select(
             plan,
@@ -115,9 +122,9 @@ class AgentManager:
         plan: ExecutionPlan,
     ) -> Agent | None:
 
-        agent_name = self._normalize_agent(plan.agent)
+        if plan.execution_unit:
 
-        if agent_name:
+            agent_name = self._normalize_agent(plan.execution_unit)
 
             agent = self.registry.get(
                 agent_name,
@@ -126,6 +133,8 @@ class AgentManager:
             if agent:
 
                 return agent
+
+            raise RuntimeError(f"Agent '{agent_name}' no encontrado en el registro.")
 
         if plan.execution_mode == "multi_step":
 

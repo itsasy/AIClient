@@ -5,7 +5,7 @@ from skills.projects.full_generator import FullProjectGeneratorSkill
 
 from skills.code.project_analyzer import ProjectAnalyzerSkill
 from skills.code.generate import GenerateCodeSkill
-from skills.code.execute_code import CodeExecutorSkill
+from skills.code.executor import CodeExecutorSkill
 from skills.code.sandbox import CodeSandboxSkill
 from skills.code.analyze import AnalyzeCodeSkill
 
@@ -39,13 +39,37 @@ class SkillManager:
             "write_file": WriteFileSkill(),
         }
 
+    # ==========================================================
+    # Normalization
+    # ==========================================================
+
+    def _normalize_skill(
+        self,
+        name: str,
+    ) -> str:
+
+        return name.lower().strip().replace("-", "_").replace(" ", "_")
+
+    # ==========================================================
+    # Public API
+    # ==========================================================
+
+    def get(
+        self,
+        skill_name: str,
+    ):
+
+        return self.skills.get(self._normalize_skill(skill_name))
+
     def execute(
         self,
         skill_name: str,
         **kwargs,
     ):
 
-        skill = self.skills.get(skill_name)
+        skill = self.get(
+            skill_name,
+        )
 
         if skill is None:
 
@@ -87,7 +111,7 @@ class SkillManager:
         skill_name: str,
     ) -> bool:
 
-        return skill_name in self.skills
+        return self._normalize_skill(skill_name) in self.skills
 
     def list(
         self,
