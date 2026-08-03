@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import Any
 
 from skills.base import Skill
 
@@ -16,14 +15,13 @@ class SkillRegistry:
     Responsabilidades:
 
     - Registrar skills.
-    - Resolver instancias lazy.
-    - Mantener metadata.
+    - Crear instancias lazy.
+    - Resolver ejecución.
 
     No:
 
     - Ejecuta skills.
-    - Descubre módulos.
-    - Gestiona contexto.
+    - Gestiona agentes.
     """
 
     def __init__(self):
@@ -38,28 +36,15 @@ class SkillRegistry:
             Skill,
         ] = {}
 
-    # ======================================================
-    # Registration
-    # ======================================================
-
     def register(
         self,
         name: str,
         factory: Callable[[], Skill],
-    ) -> None:
+    ):
 
         key = name.lower().strip()
 
         self._factories[key] = factory
-
-        logger.debug(
-            "Skill registrada=%s",
-            key,
-        )
-
-    # ======================================================
-    # Resolve
-    # ======================================================
 
     def get(
         self,
@@ -76,7 +61,7 @@ class SkillRegistry:
             key,
         )
 
-        if factory is None:
+        if not factory:
 
             logger.warning(
                 "Skill no registrada=%s",
@@ -102,61 +87,6 @@ class SkillRegistry:
 
             return None
 
-    # ======================================================
-    # Information
-    # ======================================================
+    def list(self):
 
-    def exists(
-        self,
-        name: str,
-    ) -> bool:
-
-        return name.lower().strip() in self._factories
-
-    def list(
-        self,
-    ) -> list[str]:
-
-        return sorted(
-            self._factories.keys(),
-        )
-
-    def loaded(
-        self,
-    ) -> list[str]:
-
-        return sorted(
-            self._instances.keys(),
-        )
-
-    def metadata(
-        self,
-    ) -> list[dict[str, Any]]:
-
-        result = []
-
-        for name in self.list():
-
-            skill = self.get(
-                name,
-            )
-
-            if skill:
-
-                result.append(
-                    skill.metadata(),
-                )
-
-        return result
-
-    # ======================================================
-    # Management
-    # ======================================================
-
-    def clear(
-        self,
-    ) -> None:
-
-        self._factories.clear()
-
-        self._instances.clear()
+        return sorted(self._factories.keys())

@@ -69,6 +69,17 @@ class ContextManager:
         self._context_cache: dict[str, dict] = {}
 
     # ==========================================================
+    # Provider Normalization
+    # ==========================================================
+
+    def _normalize_provider(
+        self,
+        name: str,
+    ) -> str:
+
+        return ExecutionPlan.normalize_provider(name)
+
+    # ==========================================================
     # Provider lifecycle
     # ==========================================================
 

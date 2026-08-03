@@ -22,7 +22,6 @@ class AgentManager:
     - Validar plan.
     - Delegar ejecución.
 
-
     No:
 
     - Registra agentes.
@@ -44,6 +43,25 @@ class AgentManager:
 
         self.loader.load_defaults()
 
+    # ==========================================================
+    # Agent normalization
+    # ==========================================================
+
+    def _normalize_agent(
+        self,
+        name: str | None,
+    ) -> str | None:
+
+        if not name:
+
+            return None
+
+        return name.lower().strip().replace(" ", "_").replace("-", "_")
+
+    # ==========================================================
+    # Delegation
+    # ==========================================================
+
     def delegate(
         self,
         plan: ExecutionPlan,
@@ -51,6 +69,10 @@ class AgentManager:
     ) -> Any:
 
         context = context or {}
+
+        if plan.agent:
+
+            plan.agent = self._normalize_agent(plan.agent)
 
         agent = self._select(
             plan,
@@ -72,20 +94,33 @@ class AgentManager:
                 errors,
             )
 
+            plan.metadata.setdefault(
+                "agent_validation_errors",
+                [],
+            )
+
+            plan.metadata["agent_validation_errors"].extend(errors)
+
         return agent.process(
             plan,
             context,
         )
+
+    # ==========================================================
+    # Selection
+    # ==========================================================
 
     def _select(
         self,
         plan: ExecutionPlan,
     ) -> Agent | None:
 
-        if plan.agent:
+        agent_name = self._normalize_agent(plan.agent)
+
+        if agent_name:
 
             agent = self.registry.get(
-                plan.agent,
+                agent_name,
             )
 
             if agent:
@@ -106,12 +141,24 @@ class AgentManager:
             "task",
         )
 
+    # ==========================================================
+    # Access
+    # ==========================================================
+
     def get(
         self,
         name: str,
     ) -> Agent | None:
 
-        return self._get_agent(name)
+        normalized = self._normalize_agent(name)
+
+        if not normalized:
+
+            return None
+
+        return self.registry.get(
+            normalized,
+        )
 
     def list_agents(
         self,

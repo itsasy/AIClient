@@ -1,12 +1,15 @@
+from __future__ import annotations
+
 import logging
 
 from agents.base import Agent
-from core.subagent import Subagent
 
 from core.execution_plan import (
     ExecutionPlan,
     ExecutionStep,
 )
+
+from runtime.skill_runtime import SkillRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +22,7 @@ class ExecutorAgent(Agent):
 
     def __init__(self):
 
-        self.subagent = Subagent()
-
-    # ---------------------------------------------------------
+        self.skill_runtime = SkillRuntime()
 
     def process(
         self,
@@ -43,8 +44,6 @@ class ExecutorAgent(Agent):
             context,
         )
 
-    # ---------------------------------------------------------
-
     def _execute_plan(
         self,
         plan: ExecutionPlan,
@@ -58,7 +57,7 @@ class ExecutorAgent(Agent):
         failed = 0
 
         logger.info(
-            "Ejecutando plan (%s pasos)",
+            "Ejecutando plan pasos=%s",
             len(plan.steps),
         )
 
@@ -67,17 +66,10 @@ class ExecutorAgent(Agent):
             start=1,
         ):
 
-            logger.info(
-                "Step %s/%s -> %s",
-                index,
-                len(plan.steps),
-                step.description,
-            )
-
-            result = self.subagent.execute(
-                plan=plan,
-                step=step,
-                context=context,
+            result = self.skill_runtime.execute(
+                plan,
+                step,
+                context,
             )
 
             if result["success"]:
@@ -92,23 +84,21 @@ class ExecutorAgent(Agent):
                     )
                 )
 
-                continue
+            else:
 
-            failed += 1
+                failed += 1
 
-            outputs.append(
-                self._format_failure(
-                    index,
-                    step,
-                    result,
+                outputs.append(
+                    self._format_failure(
+                        index,
+                        step,
+                        result,
+                    )
                 )
-            )
 
-            if plan.stop_on_error:
+                if plan.stop_on_error:
 
-                logger.warning("Plan detenido por fallo.")
-
-                break
+                    break
 
         outputs.append("")
 
@@ -116,28 +106,22 @@ class ExecutorAgent(Agent):
 
         return "\n".join(outputs)
 
-    # ---------------------------------------------------------
-
     def _execute_single(
         self,
         plan: ExecutionPlan,
         context: dict,
     ) -> str:
 
-        if not plan.skill:
-
-            return "No existe ninguna Skill para ejecutar."
-
         step = ExecutionStep(
-            description=plan.objective or plan.original_task,
+            description=(plan.objective or plan.original_task),
             skill=plan.skill,
             params=plan.params,
         )
 
-        result = self.subagent.execute(
-            plan=plan,
-            step=step,
-            context=context,
+        result = self.skill_runtime.execute(
+            plan,
+            step,
+            context,
         )
 
         if result["success"]:
@@ -154,8 +138,6 @@ class ExecutorAgent(Agent):
             result,
         )
 
-    # ---------------------------------------------------------
-
     @staticmethod
     def _format_success(
         index: int,
@@ -163,7 +145,10 @@ class ExecutorAgent(Agent):
         result: dict,
     ) -> str:
 
-        payload = result["result"].get(
+        payload = result.get(
+            "result",
+            {},
+        ).get(
             "payload",
             {},
         )
@@ -171,8 +156,6 @@ class ExecutorAgent(Agent):
         output = payload.get("message") or payload.get("output") or str(payload)
 
         return f"✅ Paso {index}\n" f"{step.description}\n\n" f"{output}"
-
-    # ---------------------------------------------------------
 
     @staticmethod
     def _format_failure(

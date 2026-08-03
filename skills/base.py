@@ -1,72 +1,30 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+
+from core.execution_plan import ExecutionPlan, ExecutionStep
 
 
 class Skill(ABC):
     """
-    Contrato base de todas las Skills.
+    Contrato base para Skills.
 
-    Una Skill representa una capacidad ejecutable
-    dentro del sistema.
+    Una Skill representa una capacidad ejecutable.
 
-    Flujo:
+    No:
 
-    Agent
-      |
-      v
-    SkillRuntime
-      |
-      v
-    Skill
-      |
-      v
-    execute()
+    - Decide agentes.
+    - Gestiona contexto.
+    - Planifica.
     """
 
     name: str = "base"
 
-    description: str = ""
-
-    version: str = "1.0"
-
     @abstractmethod
     def execute(
         self,
-        **kwargs: Any,
-    ) -> dict[str, Any]:
-        """
-        Ejecuta la capacidad.
-
-        Todas las skills deben devolver:
-
-        {
-            "ok": bool,
-            "result": Any,
-            "error": str | None
-        }
-        """
-
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict,
+    ):
         raise NotImplementedError
-
-    def validate(
-        self,
-        **kwargs: Any,
-    ) -> list[str]:
-        """
-        Validación previa opcional.
-        """
-
-        return []
-
-    def metadata(self) -> dict[str, Any]:
-        """
-        Información pública de la skill.
-        """
-
-        return {
-            "name": self.name,
-            "description": self.description,
-            "version": self.version,
-        }

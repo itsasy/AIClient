@@ -33,7 +33,7 @@ class Agent(ABC):
         self,
         plan: ExecutionPlan,
         context: dict[str, Any] | None = None,
-    ) -> str:
+    ) -> Any:
         """
         Ejecuta un ExecutionPlan.
 

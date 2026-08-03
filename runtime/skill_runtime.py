@@ -3,249 +3,103 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from core.execution_plan import ExecutionPlan
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
 
-from skills.registry import SkillRegistry
-from skills.loader import SkillLoader
-from skills.base import Skill
+from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
 
 class SkillRuntime:
     """
-    Runtime central de Skills.
-
-    Flujo:
-
-        ExecutionPlan
-              |
-              v
-        SkillRuntime
-              |
-              v
-        SkillRegistry
-              |
-              v
-        Skill
-              |
-              v
-        execute()
-
+    Runtime encargado de ejecutar Skills.
 
     Responsabilidades:
 
-    - Resolver skills.
-    - Ejecutar skills.
-    - Gestionar lifecycle.
-    - Capturar errores.
-    - Exponer métricas.
-
+    - Resolver Skill.
+    - Ejecutar SkillManager.
+    - Gestionar lifecycle del step.
+    - Aplicar retries.
+    - Normalizar resultados.
 
     No:
 
-    - Decide qué skill utilizar.
-    - Construye planes.
-    - Analiza intención.
-    - Gestiona agentes.
+    - Selecciona agentes.
+    - Construye contexto.
+    - Decide planificación.
     """
 
     def __init__(
         self,
-        registry: SkillRegistry | None = None,
-        loader: SkillLoader | None = None,
+        skill_manager: SkillManager | None = None,
     ):
 
-        self.registry = registry or SkillRegistry()
-
-        self.loader = loader or SkillLoader(
-            self.registry,
-        )
-
-        self.loader.load_defaults()
-
-        self.metrics = {
-            "executions": 0,
-            "success": 0,
-            "failed": 0,
-        }
-
-    # ==========================================================
-    # Registration
-    # ==========================================================
-
-    def register(
-        self,
-        name: str,
-        factory: type[Skill],
-    ) -> None:
-        """
-        Permite registrar skills externas.
-        """
-
-        self.registry.register(
-            name,
-            factory,
-        )
-
-    # ==========================================================
-    # Execute
-    # ==========================================================
+        self.skills = skill_manager or SkillManager()
 
     def execute(
         self,
         plan: ExecutionPlan,
+        step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
 
         context = context or {}
 
-        if not plan.skills:
+        retries = 0
 
-            return {
-                "ok": False,
-                "error": "ExecutionPlan sin skills",
-            }
+        max_retries = step.retries or plan.max_retries
 
-        results = []
+        while retries <= max_retries:
 
-        for skill_name in plan.skills:
+            try:
 
-            result = self._execute_skill(
-                skill_name,
-                plan,
-                context,
-            )
+                logger.info(
+                    "Ejecutando skill=%s step=%s",
+                    step.skill,
+                    step.description,
+                )
 
-            results.append(
-                result,
-            )
+                step.mark_running()
 
-        success = all(item.get("ok", False) for item in results)
+                result = self.skills.execute(
+                    step.skill,
+                    **step.params,
+                )
 
-        return {
-            "ok": success,
-            "skills": results,
-        }
-
-    def _execute_skill(
-        self,
-        skill_name: str,
-        plan: ExecutionPlan,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-
-        skill = self._resolve(
-            skill_name,
-        )
-
-        if skill is None:
-
-            self.metrics["failed"] += 1
-
-            return {
-                "skill": skill_name,
-                "ok": False,
-                "error": "Skill no encontrada",
-            }
-
-        try:
-
-            validation_errors = skill.validate(
-                **plan.params,
-            )
-
-            if validation_errors:
-
-                self.metrics["failed"] += 1
+                step.mark_completed(
+                    result,
+                )
 
                 return {
-                    "skill": skill_name,
-                    "ok": False,
-                    "error": validation_errors,
+                    "success": True,
+                    "result": result,
                 }
 
-            params = {}
+            except Exception as exc:
 
-            params.update(
-                context,
-            )
+                retries += 1
 
-            params.update(
-                plan.params,
-            )
+                logger.exception(
+                    "Error ejecutando skill=%s intento=%s",
+                    step.skill,
+                    retries,
+                )
 
-            params.update(
-                plan.execution_context,
-            )
+                if retries > max_retries:
 
-            result = skill.execute(
-                **params,
-            )
+                    step.mark_failed(
+                        str(exc),
+                    )
 
-            self.metrics["executions"] += 1
+                    return {
+                        "success": False,
+                        "error": str(exc),
+                    }
 
-            self.metrics["success"] += 1
-
-            return {
-                "skill": skill_name,
-                "ok": True,
-                "result": result,
-            }
-
-        except Exception as exc:
-
-            self.metrics["failed"] += 1
-
-            logger.exception(
-                "Error ejecutando skill=%s",
-                skill_name,
-            )
-
-            return {
-                "skill": skill_name,
-                "ok": False,
-                "error": str(exc),
-            }
-
-    # ==========================================================
-    # Resolve
-    # ==========================================================
-
-    def _resolve(
-        self,
-        name: str,
-    ) -> Skill | None:
-
-        return self.registry.get(
-            name,
-        )
-
-    # ==========================================================
-    # Information
-    # ==========================================================
-
-    def list_skills(
-        self,
-    ) -> list[str]:
-
-        return self.registry.list()
-
-    def loaded_skills(
-        self,
-    ) -> list[str]:
-
-        return self.registry.loaded()
-
-    def get_metrics(
-        self,
-    ) -> dict[str, Any]:
-
-        return self.metrics.copy()
-
-    def get_skill(
-        self,
-        name: str,
-    ) -> Skill | None:
-
-        return self.registry.get(name)
+        return {
+            "success": False,
+            "error": "Max retries alcanzado.",
+        }

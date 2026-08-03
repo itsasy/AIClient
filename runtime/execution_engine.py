@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import logging
-import time
 from typing import Any
 
+from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
 
-from core.context.manager import ContextManager
-
-from runtime.agent_runtime import AgentRuntime
-from runtime.skill_runtime import SkillRuntime
+from runtime.execution_runtime import ExecutionRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -18,77 +15,69 @@ class ExecutionEngine:
     """
     Motor principal de ejecución.
 
-    Coordina:
+    Flujo:
 
     ExecutionPlan
-        |
-        v
-    Context
-        |
-        v
-    Agent
-        |
-        v
-    Skills
-        |
-        v
-    Resultado
+          |
+          v
+    ContextManager
+          |
+          v
+    ExecutionRuntime
+          |
+          v
+    Agent / Skill
+          |
+          v
+       Result
 
 
     Responsabilidades:
 
-    - Validar ExecutionPlan.
+    - Ejecutar ExecutionPlans completos.
     - Construir contexto.
-    - Ejecutar agente.
-    - Ejecutar skills cuando corresponda.
-    - Registrar métricas.
-    - Manejar errores.
-
+    - Delegar ejecución al runtime unificado.
+    - Gestionar lifecycle general.
 
     No:
 
     - Analiza intención.
-    - Construye planes.
-    - Genera prompts.
+    - Crea ExecutionPlans.
     - Selecciona LLM.
+    - Ejecuta Agents directamente.
+    - Ejecuta Skills directamente.
     """
 
     def __init__(
         self,
         context_manager: ContextManager | None = None,
-        agent_runtime: AgentRuntime | None = None,
-        skill_runtime: SkillRuntime | None = None,
+        execution_runtime: ExecutionRuntime | None = None,
     ):
 
         self.context_manager = context_manager or ContextManager()
 
-        self.agent_runtime = agent_runtime or AgentRuntime()
-
-        self.skill_runtime = skill_runtime or SkillRuntime()
+        self.execution_runtime = execution_runtime or ExecutionRuntime()
 
         self.metrics = {
             "executions": 0,
-            "success": 0,
             "failed": 0,
-            "total_time": 0,
         }
 
     # ==========================================================
-    # Public API
+    # Execution
     # ==========================================================
 
     def execute(
         self,
         plan: ExecutionPlan,
-    ) -> dict[str, Any]:
-
-        start = time.time()
+    ) -> Any:
 
         logger.info(
-            "Execution started | id=%s intent=%s",
+            "Inicio ejecución plan=%s",
             plan.id,
-            plan.intent,
         )
+
+        self.metrics["executions"] += 1
 
         try:
 
@@ -97,96 +86,43 @@ class ExecutionEngine:
             if errors:
 
                 logger.warning(
-                    "ExecutionPlan con errores: %s",
+                    "ExecutionPlan inválido errors=%s",
                     errors,
                 )
-
-            plan.mark_running()
-
-            # --------------------------------------------------
-            # Context
-            # --------------------------------------------------
 
             context = self.context_manager.build(
                 plan,
             )
 
-            plan.execution_context = context
+            result = self.execution_runtime.execute(plan, context)
 
-            # --------------------------------------------------
-            # Agent
-            # --------------------------------------------------
+            return result
 
-            result = self.agent_runtime.execute(
-                plan,
-                context,
-            )
-
-            # --------------------------------------------------
-            # Optional skills
-            # --------------------------------------------------
-
-            if plan.metadata.get("execute_skills", False):
-
-                skill_result = self.skill_runtime.execute(
-                    plan,
-                    context,
-                )
-
-                result = {
-                    "agent": result,
-                    "skill": skill_result,
-                }
-
-            plan.mark_completed(
-                result,
-            )
-
-            self.metrics["success"] += 1
-
-            return {
-                "ok": True,
-                "plan_id": plan.id,
-                "result": result,
-            }
-
-        except Exception as e:
+        except Exception as exc:
 
             self.metrics["failed"] += 1
 
             logger.exception(
-                "Execution failed",
+                "ExecutionEngine fallo plan=%s",
+                plan.id,
             )
 
             plan.mark_failed(
-                str(e),
+                str(exc),
             )
 
             return {
-                "ok": False,
+                "success": False,
+                "error": str(exc),
                 "plan_id": plan.id,
-                "error": str(e),
             }
 
-        finally:
-
-            elapsed = time.time() - start
-
-            self.metrics["executions"] += 1
-
-            self.metrics["total_time"] += elapsed
-
-            logger.info(
-                "Execution finished %.3fs",
-                elapsed,
-            )
-
     # ==========================================================
-    # Debug
+    # Information
     # ==========================================================
 
     def get_metrics(
         self,
-    ) -> dict[str, Any]:
+    ) -> dict:
 
         return self.metrics.copy()

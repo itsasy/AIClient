@@ -15,11 +15,9 @@ class ExecutionStep:
 
     description: str
 
-    skill: str | None = None
+    unit_type: str | None = None
 
-    tool: str | None = None
-
-    provider: str | None = None
+    unit_name: str | None = None
 
     params: dict[str, Any] = field(default_factory=dict)
 
@@ -37,10 +35,7 @@ class ExecutionStep:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def set_status(
-        self,
-        status: str,
-    ) -> None:
+    def set_status(self, status: str) -> None:
 
         if status not in ExecutionPlan.VALID_STATUS:
             raise ValueError(f"Estado inválido: {status}")
@@ -50,42 +45,19 @@ class ExecutionStep:
     def mark_running(self):
         self.set_status("running")
 
-    def mark_completed(
-        self,
-        result: Any = None,
-    ):
+    def mark_completed(self, result: Any = None):
+
         self.status = "completed"
         self.result = result
 
-    def mark_failed(
-        self,
-        error: str,
-    ):
+    def mark_failed(self, error: str):
+
         self.status = "failed"
         self.error = error
 
 
 @dataclass(slots=True)
 class ExecutionPlan:
-    """
-    Contrato central de ejecución.
-
-    Flujo:
-
-    Intent
-      |
-      v
-    Planner
-      |
-      v
-    ExecutionPlan
-      |
-      v
-    Runtime
-      |
-      v
-    Result
-    """
 
     AVAILABLE_CONTEXT_PROVIDERS = {
         "project",
@@ -97,6 +69,23 @@ class ExecutionPlan:
         "standards",
         "gentleman",
         "knowledge",
+    }
+
+    PROVIDER_ALIASES = {
+        "project_context": "project",
+        "project-provider": "project",
+        "projects": "project",
+        "engram_context": "engram",
+        "memory_context": "memory",
+        "obsidian_context": "obsidian",
+        "document": "documents",
+        "docs": "documents",
+        "document_context": "documents",
+        "standard": "standards",
+        "standards_context": "standards",
+        "specification": "spec",
+        "specifications": "spec",
+        "gentleman_context": "gentleman",
     }
 
     AVAILABLE_EXECUTION_MODES = {
@@ -184,6 +173,48 @@ class ExecutionPlan:
     stop_on_error: bool = True
 
     # ======================================================
+    # Provider normalization
+    # ======================================================
+
+    @classmethod
+    def normalize_provider(
+        cls,
+        provider: str,
+    ) -> str:
+
+        if not provider:
+            return provider
+
+        key = provider.lower().strip().replace(" ", "_")
+
+        return cls.PROVIDER_ALIASES.get(
+            key,
+            key,
+        )
+
+    def validate_context_requirements(self):
+
+        invalid = []
+
+        normalized = []
+
+        for provider in self.context_requirements:
+
+            canonical = self.normalize_provider(provider)
+
+            if canonical not in self.AVAILABLE_CONTEXT_PROVIDERS:
+
+                invalid.append(provider)
+
+                continue
+
+            normalized.append(canonical)
+
+        self.context_requirements = list(dict.fromkeys(normalized))
+
+        return invalid
+
+    # ======================================================
     # Skills
     # ======================================================
 
@@ -193,19 +224,11 @@ class ExecutionPlan:
     ):
 
         if skill and skill not in self.skills:
+
             self.skills.append(skill)
 
-    def has_skill(
-        self,
-        skill: str,
-    ) -> bool:
-
-        return skill in self.skills
-
     @property
-    def skill(
-        self,
-    ):
+    def skill(self):
 
         return self.skills[0] if self.skills else None
 
@@ -218,10 +241,13 @@ class ExecutionPlan:
         provider: str,
     ):
 
+        provider = self.normalize_provider(provider)
+
         if (
             provider in self.AVAILABLE_CONTEXT_PROVIDERS
             and provider not in self.context_requirements
         ):
+
             self.context_requirements.append(provider)
 
     def load_context(
@@ -242,6 +268,7 @@ class ExecutionPlan:
     ):
 
         if tool and tool not in self.required_tools:
+
             self.required_tools.append(tool)
 
     # ======================================================
@@ -251,8 +278,10 @@ class ExecutionPlan:
     def add_step(
         self,
         description: str,
-        skill: str | None = None,
+        unit_type: str | None = None,
+        unit_name: str | None = None,
         tool: str | None = None,
+        provider: str | None = None,
         params: dict[str, Any] | None = None,
     ):
 
@@ -261,6 +290,7 @@ class ExecutionPlan:
                 description=description,
                 skill=skill,
                 tool=tool,
+                provider=self.normalize_provider(provider) if provider else None,
                 params=params or {},
             )
         )
@@ -270,6 +300,7 @@ class ExecutionPlan:
         for step in self.steps:
 
             if step.status != "completed":
+
                 return step
 
         return None
@@ -323,21 +354,15 @@ class ExecutionPlan:
         if self.execution_mode not in self.AVAILABLE_EXECUTION_MODES:
             errors.append("execution_mode inválido")
 
-        invalid_context = [
-            x for x in self.context_requirements if x not in self.AVAILABLE_CONTEXT_PROVIDERS
-        ]
-
-        for item in invalid_context:
-            errors.append(f"context inválido: {item}")
+        errors.extend(
+            [f"context inválido: {item}" for item in self.validate_context_requirements()]
+        )
 
         if self.execution_mode == "multi_step" and not self.steps:
+
             errors.append("multi_step sin pasos")
 
         return errors
-
-    # ======================================================
-    # Serialization
-    # ======================================================
 
     def to_dict(self):
 
@@ -356,6 +381,7 @@ class ExecutionPlan:
                     "description": step.description,
                     "skill": step.skill,
                     "tool": step.tool,
+                    "provider": step.provider,
                     "status": step.status,
                     "result": step.result,
                 }
