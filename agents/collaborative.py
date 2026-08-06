@@ -10,13 +10,6 @@ from core.execution_plan import ExecutionPlan
 class CollaborativeSystem:
     """
     Sistema colaborativo entre agentes.
-
-    Ejecuta un mismo ExecutionPlan desde
-    perspectivas diferentes.
-
-    No crea planes.
-    No analiza intención.
-    No resuelve contexto.
     """
 
     def __init__(self):
@@ -35,11 +28,9 @@ class CollaborativeSystem:
         # Arquitectura
         # ==================================================
 
-        architect_plan = self._clone_plan(
-            plan,
-        )
-
-        architect_plan.agent = "architect"
+        architect_plan = self._clone_plan(plan)
+        architect_plan.execution_unit_type = "agent"
+        architect_plan.execution_unit = "architect"
 
         architect_response = self.manager.delegate(
             plan=architect_plan,
@@ -50,11 +41,9 @@ class CollaborativeSystem:
         # Implementación
         # ==================================================
 
-        coder_plan = self._clone_plan(
-            plan,
-        )
-
-        coder_plan.agent = "coder"
+        coder_plan = self._clone_plan(plan)
+        coder_plan.execution_unit_type = "agent"
+        coder_plan.execution_unit = "coder"
 
         coder_response = self.manager.delegate(
             plan=coder_plan,
@@ -75,10 +64,7 @@ class CollaborativeSystem:
     # Helpers
     # ==================================================
 
-    def _clone_plan(
-        self,
-        plan: ExecutionPlan,
-    ) -> ExecutionPlan:
+    def _clone_plan(self, plan: ExecutionPlan) -> ExecutionPlan:
 
         return ExecutionPlan(
             id=plan.id,
@@ -88,14 +74,13 @@ class CollaborativeSystem:
             intent=plan.intent,
             intent_category=plan.intent_category,
             execution_mode=plan.execution_mode,
-            skills=list(plan.skills),
-            required_tools=list(plan.required_tools),
+            execution_unit_type=plan.execution_unit_type,
+            execution_unit=plan.execution_unit,
+            steps=list(plan.steps),
             context_requirements=list(plan.context_requirements),
             params=dict(plan.params),
             constraints=list(plan.constraints),
             metadata=dict(plan.metadata),
-            preferred_provider=plan.preferred_provider,
-            temperature=plan.temperature,
-            max_tokens=plan.max_tokens,
-            system_role=plan.system_role,
+            max_retries=plan.max_retries,
+            stop_on_error=plan.stop_on_error,
         )

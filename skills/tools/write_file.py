@@ -1,35 +1,92 @@
+from __future__ import annotations
+
 from pathlib import Path
+
+from typing import Any
+
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
 from skills.base import Skill
 
 
 class WriteFileSkill(Skill):
+
     name = "write_file"
-    description = "Escribe contenido en un archivo del sistema. No genera contenido."
 
-    def execute(self, path: str, content: str, **kwargs):
+    description = "Escribe contenido en un archivo. " "No genera contenido."
+
+    version = "2.0"
+
+    capabilities = (
+        "file_write",
+        "filesystem_operation",
+    )
+
+    def execute(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        path = params.get(
+            "path",
+            "",
+        )
+
+        content = params.get(
+            "content",
+            "",
+        )
+
         if not content:
+
             return {
-                "type": "write_file_result",
-                "payload": {
-                    "ok": False,
-                    "error": "No se proporcionó contenido para escribir. La skill 'write_file' solo escribe, no genera contenido.",
-                },
+                "ok": False,
+                "result": None,
+                "error": ("No se proporcionó contenido " "para escribir."),
             }
 
-        filepath = Path(path).expanduser().resolve()
-        try:
-            filepath.parent.mkdir(parents=True, exist_ok=True)
-            filepath.write_text(content, encoding="utf-8")
+        if not path:
+
             return {
-                "type": "write_file_result",
-                "payload": {
-                    "ok": True,
-                    "path": str(filepath),
-                    "message": f"Archivo creado correctamente en {filepath}",
-                },
+                "ok": False,
+                "result": None,
+                "error": ("No se proporcionó ruta " "del archivo."),
             }
-        except Exception as e:
+
+        try:
+
+            filepath = Path(path).expanduser().resolve()
+
+            filepath.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
+
+            filepath.write_text(
+                content,
+                encoding="utf-8",
+            )
+
             return {
-                "type": "write_file_result",
-                "payload": {"ok": False, "error": str(e)},
+                "ok": True,
+                "result": {
+                    "type": "write_file_result",
+                    "path": str(filepath),
+                },
+                "error": None,
+            }
+
+        except Exception as exc:
+
+            return {
+                "ok": False,
+                "result": None,
+                "error": str(exc),
             }

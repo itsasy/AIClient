@@ -1,33 +1,97 @@
-from skills.base import Skill
+from __future__ import annotations
+
+from typing import Any
+
 import requests
+
 from bs4 import BeautifulSoup
+
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
+from skills.base import Skill
 
 
 class LinkedInScraperSkill(Skill):
+
     name = "linkedin_scrape"
-    description = "Extrae información de LinkedIn de forma básica"
 
-    def execute(self, url: str, **kwargs):
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            response = requests.get(url, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
+    description = "Extrae información básica " "de páginas de LinkedIn."
 
-            title = soup.find("title").text if soup.find("title") else "Sin título"
-            summary = soup.find("meta", attrs={"name": "description"})
-            summary = summary["content"] if summary else "Sin descripción"
+    version = "2.0"
+
+    capabilities = (
+        "web_scraping",
+        "linkedin_analysis",
+    )
+
+    def execute(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        url = params.get(
+            "url",
+            "",
+        )
+
+        if not url:
 
             return {
-                "type": "linkedin_result",
-                "payload": {
-                    "ok": True,
+                "ok": False,
+                "result": None,
+                "error": "No se proporcionó URL.",
+            }
+
+        try:
+
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                },
+                timeout=10,
+            )
+
+            soup = BeautifulSoup(
+                response.text,
+                "html.parser",
+            )
+
+            title_node = soup.find("title")
+
+            title = title_node.text if title_node else "Sin título"
+
+            summary_node = soup.find(
+                "meta",
+                attrs={
+                    "name": "description",
+                },
+            )
+
+            summary = summary_node["content"] if summary_node else "Sin descripción"
+
+            return {
+                "ok": True,
+                "result": {
+                    "type": "linkedin_result",
                     "title": title,
                     "summary": summary[:500],
                     "url": url,
                 },
+                "error": None,
             }
-        except Exception as e:
+
+        except Exception as exc:
+
             return {
-                "type": "linkedin_result",
-                "payload": {"ok": False, "error": str(e)},
+                "ok": False,
+                "result": None,
+                "error": str(exc),
             }

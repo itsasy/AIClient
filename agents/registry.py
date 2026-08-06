@@ -37,6 +37,10 @@ class AgentRegistry:
             Agent,
         ] = {}
 
+    @staticmethod
+    def _normalize(name: str) -> str:
+        return name.lower().strip().replace("-", "_").replace(" ", "_")
+
     # ==========================================================
     # Registration
     # ==========================================================
@@ -47,7 +51,7 @@ class AgentRegistry:
         factory: Callable[[], Agent],
     ) -> None:
 
-        key = name.lower().strip()
+        key = self._normalize(name)
 
         self._factories[key] = factory
 
@@ -65,7 +69,7 @@ class AgentRegistry:
         name: str,
     ) -> Agent | None:
 
-        key = name.lower().strip()
+        key = self._normalize(name)
 
         if key in self._instances:
 
@@ -110,7 +114,7 @@ class AgentRegistry:
         name: str,
     ) -> bool:
 
-        return name.lower().strip() in self._factories
+        return self._normalize(name) in self._factories
 
     def list(
         self,

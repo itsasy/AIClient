@@ -1,39 +1,109 @@
-from skills.base import Skill
+from __future__ import annotations
+
+from typing import Any
+
 import requests
+
 from bs4 import BeautifulSoup
 
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
 
-class FreelanceScraperSkill(Skill):
+from skills.base import Skill
+
+
+class JobScraperSkill(Skill):
+
     name = "scrape_job"
-    description = "Analiza trabajos en LinkedIn y Workana"
 
-    def execute(self, url: str, platform: str = "linkedin", **kwargs):
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            response = requests.get(url, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
+    description = "Analiza publicaciones laborales " "de LinkedIn y Workana."
 
-            title = soup.find("title").text if soup.find("title") else "Sin título"
-            description = soup.get_text()[:1500]
+    version = "2.0"
 
-            pain_points = self._analyze_pain(description)
+    capabilities = (
+        "web_scraping",
+        "job_analysis",
+    )
+
+    def execute(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        url = params.get(
+            "url",
+            "",
+        )
+
+        platform = params.get(
+            "platform",
+            "linkedin",
+        )
+
+        if not url:
 
             return {
-                "type": "job_analysis",
-                "payload": {
-                    "ok": True,
+                "ok": False,
+                "result": None,
+                "error": "No se proporcionó URL.",
+            }
+
+        try:
+
+            response = requests.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0",
+                },
+                timeout=10,
+            )
+
+            soup = BeautifulSoup(
+                response.text,
+                "html.parser",
+            )
+
+            title_node = soup.find("title")
+
+            title = title_node.text if title_node else "Sin título"
+
+            description = soup.get_text()[:1500]
+
+            return {
+                "ok": True,
+                "result": {
+                    "type": "job_analysis",
                     "platform": platform,
                     "title": title,
                     "description": description,
-                    "pain_points": pain_points,
+                    "pain_points": self._analyze_pain(
+                        description,
+                    ),
                     "url": url,
                 },
+                "error": None,
             }
-        except Exception as e:
-            return {"type": "job_analysis", "payload": {"ok": False, "error": str(e)}}
 
-    def _analyze_pain(self, text: str):
-        pain_keywords = [
+        except Exception as exc:
+
+            return {
+                "ok": False,
+                "result": None,
+                "error": str(exc),
+            }
+
+    def _analyze_pain(
+        self,
+        text: str,
+    ) -> list[str]:
+
+        keywords = [
             "problema",
             "error",
             "necesito",
@@ -42,4 +112,5 @@ class FreelanceScraperSkill(Skill):
             "solucionar",
             "urgente",
         ]
-        return [word for word in pain_keywords if word in text.lower()]
+
+        return [keyword for keyword in keywords if keyword in text.lower()]

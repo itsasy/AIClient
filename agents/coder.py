@@ -53,11 +53,9 @@ class CoderAgent(Agent):
         errors = []
 
         if not plan.params.get("task") and not plan.original_task:
-
             errors.append("CoderAgent requiere una tarea de implementación.")
 
-        if not plan.skills:
-
-            errors.append("CoderAgent requiere skills definidas.")
+        if not plan.steps and not plan.execution_unit:
+            errors.append("CoderAgent requiere pasos definidos o una unidad de ejecución.")
 
         return errors
