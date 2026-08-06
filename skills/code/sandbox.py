@@ -6,27 +6,48 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from skills.base import Skill
-
 from core.config import Config
+
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
+from skills.base import Skill
 
 
 class CodeSandboxSkill(Skill):
 
     name = "sandbox"
 
-    description = "Ejecuta código Python " "dentro de un contenedor Docker aislado."
+    description = "Ejecuta código Python dentro de un contenedor Docker aislado."
 
-    version = "1.0"
+    version = "2.0"
 
-    capabilities = ["isolated_execution"]
+    capabilities = (
+        "isolated_execution",
+        "docker_execution",
+        "secure_runtime",
+    )
 
     def execute(
         self,
-        code: str = "",
-        timeout: int | None = None,
-        **kwargs: Any,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        code = params.get(
+            "code",
+            "",
+        )
+
+        timeout = params.get(
+            "timeout",
+            int(Config.SANDBOX_TIMEOUT),
+        )
 
         if not code.strip():
 
@@ -41,10 +62,8 @@ class CodeSandboxSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": ("Docker no está disponible."),
+                "error": "Docker no está disponible.",
             }
-
-        timeout = timeout or int(Config.SANDBOX_TIMEOUT)
 
         try:
 
@@ -71,7 +90,7 @@ class CodeSandboxSkill(Skill):
                     "nobody",
                     "--read-only",
                     "--mount",
-                    (f"type=bind," f"source={script}," f"target=/script.py," f"ro"),
+                    (f"type=bind," f"source={script}," f"target=/script.py," "ro"),
                     Config.SANDBOX_IMAGE,
                     "python",
                     "/script.py",
@@ -112,9 +131,7 @@ class CodeSandboxSkill(Skill):
                 "error": str(exc),
             }
 
-    def _docker_available(
-        self,
-    ) -> bool:
+    def _docker_available(self) -> bool:
 
         try:
 

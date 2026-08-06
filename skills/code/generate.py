@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
 from skills.base import Skill
 
 
@@ -9,27 +14,48 @@ class GenerateCodeSkill(Skill):
 
     name = "generate"
 
-    description = "Prepara una solicitud estructurada " "de generación de código."
+    description = "Prepara solicitudes estructuradas de generación de código."
 
-    version = "1.0"
+    version = "2.0"
 
-    capabilities = ["code_generation"]
+    capabilities = (
+        "code_generation",
+        "task_translation",
+    )
 
     def execute(
         self,
-        task: str = "",
-        language: str = "python",
-        framework: str | None = None,
-        filepath: str | None = None,
-        **kwargs: Any,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        task = params.get(
+            "task",
+            "",
+        )
+
+        language = params.get(
+            "language",
+            "python",
+        )
+
+        framework = params.get(
+            "framework",
+        )
+
+        filepath = params.get(
+            "filepath",
+        )
 
         if not task.strip():
 
             return {
                 "ok": False,
                 "result": None,
-                "error": "No se proporcionó una tarea de generación.",
+                "error": "No se proporcionó " "una tarea de generación.",
             }
 
         return {

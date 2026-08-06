@@ -93,8 +93,13 @@ class SkillLoader:
             )
 
             logger.info(
-                "Skill cargada=%s",
+                "Skill cargada=%s capabilities=%s",
                 skill_name,
+                getattr(
+                    obj,
+                    "capabilities",
+                    [],
+                ),
             )
 
     # ==========================================================

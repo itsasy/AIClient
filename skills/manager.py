@@ -77,3 +77,25 @@ class SkillManager:
     ) -> list[str]:
 
         return self.registry.list()
+
+    def metadata(
+        self,
+    ) -> list[dict]:
+
+        return self.registry.metadata()
+
+    def capabilities(
+        self,
+    ) -> dict[str, tuple[str, ...]]:
+
+        result = {}
+
+        for name in self.registry.list():
+
+            skill = self.registry.get(name)
+
+            if skill:
+
+                result[name] = skill.capabilities
+
+        return result

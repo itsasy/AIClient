@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
 from skills.base import Skill
 
 
@@ -11,26 +16,38 @@ class AnalyzeCodeSkill(Skill):
 
     description = "Analiza código fuente y devuelve información estructurada."
 
-    version = "1.0"
+    version = "2.0"
 
-    capabilities = [
+    capabilities = (
         "code_analysis",
         "static_analysis",
-    ]
+    )
 
     def execute(
         self,
-        code_snippet: str = "",
-        language: str = "python",
-        **kwargs: Any,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        code_snippet = params.get(
+            "code_snippet",
+            params.get("code", ""),
+        )
+
+        language = params.get(
+            "language",
+            "python",
+        )
 
         if not code_snippet.strip():
 
             return {
                 "ok": False,
                 "result": None,
-                "error": "No se proporcionó código para analizar.",
+                "error": ("No se proporcionó código " "para analizar."),
             }
 
         return {

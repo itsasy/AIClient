@@ -6,6 +6,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from core.execution_plan import (
+    ExecutionPlan,
+    ExecutionStep,
+)
+
 from skills.base import Skill
 
 
@@ -13,18 +18,33 @@ class CodeExecutorSkill(Skill):
 
     name = "execute_code"
 
-    description = "Ejecuta código Python " "en un entorno temporal aislado."
+    description = "Ejecuta código Python en entorno temporal."
 
-    version = "1.0"
+    version = "2.0"
 
-    capabilities = ["code_execution"]
+    capabilities = (
+        "code_execution",
+        "python_runtime",
+    )
 
     def execute(
         self,
-        code: str = "",
-        timeout: int = 10,
-        **kwargs: Any,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
+
+        params = step.params or {}
+
+        code = params.get(
+            "code",
+            "",
+        )
+
+        timeout = params.get(
+            "timeout",
+            10,
+        )
 
         if not code.strip():
 
@@ -72,7 +92,7 @@ class CodeExecutorSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": (f"Tiempo máximo excedido: {timeout}s"),
+                "error": f"Tiempo máximo excedido: {timeout}s",
             }
 
         except Exception as exc:
