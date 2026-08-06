@@ -12,61 +12,30 @@ logger = logging.getLogger(__name__)
 
 class SkillLoader:
     """
-    Descubrimiento y registro de Skills.
+    Descubrimiento y registro dinámico de Skills.
 
     Responsabilidades:
 
     - Importar módulos.
-    - Detectar clases Skill.
-    - Validar implementaciones.
-    - Registrarlas en SkillRegistry.
-    - Mantener estado de carga.
+    - Detectar Skills.
+    - Registrar factories.
+    - Mantener catálogo cargado.
 
     No:
 
     - Ejecuta Skills.
     - Instancia Skills.
     - Gestiona resultados.
-    - Decide qué Skill utilizar.
     """
-
-    DEFAULT_MODULES = [
-        # Code
-        "skills.code.analyze",
-        "skills.code.executor",
-        "skills.code.generate",
-        "skills.code.project_analyzer",
-        "skills.code.sandbox",
-        # Documentation
-        "skills.docs.readme",
-        # Knowledge
-        "skills.knowledge.ingest",
-        # Migration
-        "skills.migration.project_migrator",
-        "skills.migration.refactor",
-        # Projects
-        "skills.projects.full_generator",
-        "skills.projects.laravel",
-        # Proposals
-        "skills.proposals.generator",
-        # Scraping
-        "skills.scraping.integrations",
-        "skills.scraping.job_scraper",
-    ]
 
     def __init__(
         self,
         registry: SkillRegistry,
-        modules: list[str] | None = None,
     ):
 
         self.registry = registry
 
-        self.modules = modules or self.DEFAULT_MODULES.copy()
-
         self.loaded_modules: set[str] = set()
-
-        self.errors: list[dict[str, str]] = []
 
     # ======================================================
     # Module loading
@@ -80,7 +49,7 @@ class SkillLoader:
         if module_path in self.loaded_modules:
 
             logger.debug(
-                "Skill module ya cargado=%s",
+                "Módulo Skill ya cargado=%s",
                 module_path,
             )
 
@@ -100,31 +69,34 @@ class SkillLoader:
                 module_path,
             )
 
-        except Exception as exc:
-
-            self.errors.append(
-                {
-                    "module": module_path,
-                    "error": str(exc),
-                }
-            )
+        except Exception:
 
             logger.exception(
-                "Error cargando Skill module=%s",
+                "Error cargando módulo Skill=%s",
                 module_path,
             )
+
+    # ======================================================
+    # Discovery
+    # ======================================================
 
     def _register_from_module(
         self,
         module,
     ) -> None:
 
-        for attribute_name in dir(module):
+        for obj_name in dir(module):
 
-            obj = getattr(
-                module,
-                attribute_name,
-            )
+            try:
+
+                obj = getattr(
+                    module,
+                    obj_name,
+                )
+
+            except Exception:
+
+                continue
 
             if not inspect.isclass(obj):
 
@@ -149,57 +121,71 @@ class SkillLoader:
 
                 continue
 
-            skill_name = getattr(
+            self._register_skill(
                 obj,
-                "name",
-                None,
             )
 
-            if not skill_name:
+    # ======================================================
+    # Registration
+    # ======================================================
 
-                logger.warning(
-                    "Skill sin nombre ignorada=%s",
-                    obj,
-                )
+    def _register_skill(
+        self,
+        skill_class: type[Skill],
+    ) -> None:
 
-                continue
+        name = getattr(
+            skill_class,
+            "name",
+            None,
+        )
 
-            if not hasattr(
-                obj,
-                "execute",
-            ):
+        if not name:
 
-                logger.warning(
-                    "Skill inválida sin execute=%s",
-                    skill_name,
-                )
+            logger.warning(
+                "Skill sin nombre ignorada=%s",
+                skill_class,
+            )
 
-                continue
+            return
 
-            if self.registry.has(
-                skill_name,
-            ):
+        aliases = getattr(
+            skill_class,
+            "aliases",
+            None,
+        )
 
-                logger.warning(
-                    "Skill duplicada ignorada=%s",
-                    skill_name,
-                )
-
-                continue
+        try:
 
             self.registry.register(
-                skill_name,
-                obj,
+                name=name,
+                factory=skill_class,
+                aliases=aliases,
             )
 
             logger.info(
-                "Skill registrada=%s capabilities=%s",
-                skill_name,
+                "Skill cargada=%s aliases=%s capabilities=%s",
+                name,
+                aliases,
                 getattr(
-                    obj,
+                    skill_class,
                     "capabilities",
                     (),
                 ),
+            )
+
+        except ValueError:
+
+            logger.debug(
+                "Skill ya registrada=%s",
+                name,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error registrando Skill=%s",
+                name,
             )
 
     # ======================================================
@@ -210,35 +196,32 @@ class SkillLoader:
         self,
     ) -> None:
 
-        self.load_modules(
-            self.modules,
-        )
-
-    def load_modules(
-        self,
-        modules: list[str],
-    ) -> None:
+        modules = [
+            # Code
+            "skills.code.analyze",
+            "skills.code.executor",
+            "skills.code.generate",
+            "skills.code.project_analyzer",
+            "skills.code.sandbox",
+            # Documentation
+            "skills.docs.readme",
+            # Knowledge
+            "skills.knowledge.ingest",
+            # Migration
+            "skills.migration.project_migrator",
+            "skills.migration.refactor",
+            # Projects
+            "skills.projects.full_generator",
+            "skills.projects.laravel",
+            # Proposals
+            "skills.proposals.generator",
+            # Scraping
+            "skills.scraping.integrations",
+            "skills.scraping.job_scraper",
+        ]
 
         for module in modules:
 
             self.load_module(
                 module,
             )
-
-    # ======================================================
-    # Information
-    # ======================================================
-
-    def get_errors(
-        self,
-    ) -> list[dict[str, str]]:
-
-        return self.errors.copy()
-
-    def get_loaded_modules(
-        self,
-    ) -> list[str]:
-
-        return sorted(
-            self.loaded_modules,
-        )

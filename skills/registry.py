@@ -20,13 +20,14 @@ class SkillRegistry:
 
     - Registrar skills.
     - Resolver lazy.
-    - Gestionar catálogo.
     - Gestionar aliases.
+    - Buscar capacidades.
+    - Exponer catálogo.
 
     No:
 
     - Ejecuta skills.
-    - Maneja retries.
+    - Gestiona ejecución.
     """
 
     def __init__(self):
@@ -37,17 +38,21 @@ class SkillRegistry:
 
         self._aliases: dict[str, str] = {}
 
+    # ======================================================
+    # Helpers
+    # ======================================================
+
     def _normalize(
         self,
         name: str,
-    ):
+    ) -> str:
 
         return name.lower().strip().replace("-", "_").replace(" ", "_")
 
     def _resolve_name(
         self,
         name: str,
-    ):
+    ) -> str:
 
         key = self._normalize(name)
 
@@ -56,13 +61,17 @@ class SkillRegistry:
             key,
         )
 
+    # ======================================================
+    # Registration
+    # ======================================================
+
     def register(
         self,
         name: str,
         factory: SkillFactory,
         aliases: list[str] | None = None,
         overwrite: bool = False,
-    ):
+    ) -> None:
 
         key = self._normalize(name)
 
@@ -84,6 +93,10 @@ class SkillRegistry:
 
                 self._aliases[self._normalize(alias)] = key
 
+    # ======================================================
+    # Resolution
+    # ======================================================
+
     def get(
         self,
         name: str,
@@ -97,7 +110,7 @@ class SkillRegistry:
 
         factory = self._factories.get(key)
 
-        if not factory:
+        if factory is None:
 
             return None
 
@@ -122,22 +135,33 @@ class SkillRegistry:
 
             return None
 
+    # ======================================================
+    # Query
+    # ======================================================
+
     def has(
         self,
         name: str,
-    ):
+    ) -> bool:
 
         return self._resolve_name(name) in self._factories
 
-    def list(self):
+    def list(
+        self,
+    ) -> list[str]:
 
         return sorted(self._factories.keys())
 
-    def loaded(self):
+    def loaded(
+        self,
+    ) -> list[str]:
 
         return sorted(self._instances.keys())
 
-    def metadata(self):
+    def find_by_capability(
+        self,
+        capability: str,
+    ) -> list[Skill]:
 
         result = []
 
@@ -145,11 +169,47 @@ class SkillRegistry:
 
             skill = self.get(name)
 
-            if skill:
+            if skill and skill.supports(capability):
 
-                result.append(skill.get_metadata())
+                result.append(skill)
 
         return result
+
+    def capabilities(
+        self,
+    ) -> dict[str, tuple[str, ...]]:
+
+        result = {}
+
+        for name in self.list():
+
+            skill = self.get(name)
+
+            if skill:
+
+                result[name] = skill.capabilities
+
+        return result
+
+    # ======================================================
+    # Metadata
+    # ======================================================
+
+    def metadata(
+        self,
+    ) -> list[dict]:
+
+        return [self.get(name).get_metadata() for name in self.list() if self.get(name)]
+
+    def count(
+        self,
+    ) -> int:
+
+        return len(self._factories)
+
+    # ======================================================
+    # Management
+    # ======================================================
 
     def unregister(
         self,
@@ -168,7 +228,9 @@ class SkillRegistry:
             None,
         )
 
-    def clear(self):
+    def clear(
+        self,
+    ):
 
         self._factories.clear()
 

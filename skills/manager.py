@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from skills.registry import SkillRegistry
 from skills.loader import SkillLoader
 from skills.base import Skill
+
+logger = logging.getLogger(__name__)
 
 
 class SkillManager:
@@ -11,9 +15,10 @@ class SkillManager:
 
     Responsabilidades:
 
-    - Resolver Skills registradas.
     - Inicializar catálogo.
-    - Exponer información.
+    - Resolver Skills.
+    - Exponer metadata.
+    - Gestionar carga.
 
     No:
 
@@ -27,18 +32,38 @@ class SkillManager:
     def __init__(
         self,
         registry: SkillRegistry | None = None,
+        loader: SkillLoader | None = None,
         auto_load: bool = True,
     ):
 
         self.registry = registry or SkillRegistry()
 
-        self.loader = SkillLoader(
+        self.loader = loader or SkillLoader(
             self.registry,
         )
 
         if auto_load:
 
-            self.loader.load_defaults()
+            self.load_defaults()
+
+    # ======================================================
+    # Loading
+    # ======================================================
+
+    def load_defaults(
+        self,
+    ) -> None:
+
+        self.loader.load_defaults()
+
+    def load_module(
+        self,
+        module_path: str,
+    ) -> None:
+
+        self.loader.load_module(
+            module_path,
+        )
 
     # ======================================================
     # Resolution
@@ -46,29 +71,29 @@ class SkillManager:
 
     def get(
         self,
-        skill_name: str,
+        name: str,
     ) -> Skill | None:
 
-        if not skill_name:
+        if not name:
 
             return None
 
         return self.registry.get(
-            skill_name,
+            name,
+        )
+
+    def has(
+        self,
+        name: str,
+    ) -> bool:
+
+        return self.registry.has(
+            name,
         )
 
     # ======================================================
     # Information
     # ======================================================
-
-    def has(
-        self,
-        skill_name: str,
-    ) -> bool:
-
-        return self.registry.has(
-            skill_name,
-        )
 
     def list(
         self,
@@ -82,6 +107,12 @@ class SkillManager:
 
         return self.registry.loaded()
 
+    def aliases(
+        self,
+    ) -> dict[str, str]:
+
+        return self.registry.aliases()
+
     def metadata(
         self,
     ) -> list[dict]:
@@ -90,6 +121,37 @@ class SkillManager:
 
     def capabilities(
         self,
-    ) -> dict:
+    ) -> dict[str, tuple[str, ...]]:
 
-        return self.registry.capabilities()
+        result = {}
+
+        for name in self.list():
+
+            skill = self.get(
+                name,
+            )
+
+            if skill:
+
+                result[name] = skill.capabilities
+
+        return result
+
+    # ======================================================
+    # Management
+    # ======================================================
+
+    def unregister(
+        self,
+        name: str,
+    ) -> None:
+
+        self.registry.unregister(
+            name,
+        )
+
+    def clear(
+        self,
+    ) -> None:
+
+        self.registry.clear()

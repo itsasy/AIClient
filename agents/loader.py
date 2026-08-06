@@ -12,46 +12,31 @@ logger = logging.getLogger(__name__)
 
 class AgentLoader:
     """
-    Descubrimiento y registro de Agents.
+    Descubrimiento y registro dinámico de Agents.
 
     Responsabilidades:
 
     - Importar módulos.
-    - Detectar implementaciones Agent.
-    - Validar contratos básicos.
-    - Registrarlas en AgentRegistry.
-    - Mantener estado de carga.
+    - Detectar clases Agent.
+    - Registrar factories.
+    - Mantener control de módulos cargados.
 
     No:
 
     - Instancia agentes.
     - Ejecuta agentes.
     - Selecciona agentes.
-    - Construye contexto.
+    - Gestiona workflows.
     """
-
-    DEFAULT_MODULES = [
-        "agents.architect",
-        "agents.coder",
-        "agents.executor",
-        "agents.multi_turn",
-        "agents.planner",
-        "agents.task_agent",
-    ]
 
     def __init__(
         self,
         registry: AgentRegistry,
-        modules: list[str] | None = None,
     ):
 
         self.registry = registry
 
-        self.modules = modules or self.DEFAULT_MODULES.copy()
-
         self.loaded_modules: set[str] = set()
-
-        self.errors: list[dict[str, str]] = []
 
     # ======================================================
     # Module loading
@@ -65,7 +50,7 @@ class AgentLoader:
         if module_path in self.loaded_modules:
 
             logger.debug(
-                "Agent module ya cargado=%s",
+                "Módulo Agent ya cargado=%s",
                 module_path,
             )
 
@@ -85,31 +70,34 @@ class AgentLoader:
                 module_path,
             )
 
-        except Exception as exc:
-
-            self.errors.append(
-                {
-                    "module": module_path,
-                    "error": str(exc),
-                }
-            )
+        except Exception:
 
             logger.exception(
-                "Error cargando Agent module=%s",
+                "Error cargando módulo Agent=%s",
                 module_path,
             )
+
+    # ======================================================
+    # Discovery
+    # ======================================================
 
     def _register_from_module(
         self,
         module,
     ) -> None:
 
-        for attribute_name in dir(module):
+        for obj_name in dir(module):
 
-            obj = getattr(
-                module,
-                attribute_name,
-            )
+            try:
+
+                obj = getattr(
+                    module,
+                    obj_name,
+                )
+
+            except Exception:
+
+                continue
 
             if not inspect.isclass(obj):
 
@@ -134,57 +122,66 @@ class AgentLoader:
 
                 continue
 
-            agent_name = getattr(
+            self._register_agent(
                 obj,
-                "name",
-                None,
             )
 
-            if not agent_name:
+    # ======================================================
+    # Registration
+    # ======================================================
 
-                logger.warning(
-                    "Agent sin nombre ignorado=%s",
-                    obj,
-                )
+    def _register_agent(
+        self,
+        agent_class: type[Agent],
+    ) -> None:
 
-                continue
+        name = getattr(
+            agent_class,
+            "name",
+            None,
+        )
 
-            if not hasattr(
-                obj,
-                "process",
-            ):
+        if not name:
 
-                logger.warning(
-                    "Agent inválido sin process=%s",
-                    agent_name,
-                )
+            logger.warning(
+                "Agent sin nombre ignorado=%s",
+                agent_class,
+            )
 
-                continue
+            return
 
-            if self.registry.has(
-                agent_name,
-            ):
+        aliases = getattr(
+            agent_class,
+            "aliases",
+            None,
+        )
 
-                logger.warning(
-                    "Agent duplicado ignorado=%s",
-                    agent_name,
-                )
-
-                continue
+        try:
 
             self.registry.register(
-                agent_name,
-                obj,
+                name=name,
+                factory=agent_class,
+                aliases=aliases,
             )
 
             logger.info(
-                "Agent registrado=%s capabilities=%s",
-                agent_name,
-                getattr(
-                    obj,
-                    "capabilities",
-                    (),
-                ),
+                "Agent cargado=%s aliases=%s",
+                name,
+                aliases,
+            )
+
+        except ValueError:
+
+            logger.debug(
+                "Agent ya registrado=%s",
+                name,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error registrando Agent=%s",
+                name,
             )
 
     # ======================================================
@@ -195,35 +192,17 @@ class AgentLoader:
         self,
     ) -> None:
 
-        self.load_modules(
-            self.modules,
-        )
-
-    def load_modules(
-        self,
-        modules: list[str],
-    ) -> None:
+        modules = [
+            "agents.architect",
+            "agents.coder",
+            "agents.executor",
+            "agents.multi_turn",
+            "agents.planner",
+            "agents.task_agent",
+        ]
 
         for module in modules:
 
             self.load_module(
                 module,
             )
-
-    # ======================================================
-    # Information
-    # ======================================================
-
-    def get_errors(
-        self,
-    ) -> list[dict[str, str]]:
-
-        return self.errors.copy()
-
-    def get_loaded_modules(
-        self,
-    ) -> list[str]:
-
-        return sorted(
-            self.loaded_modules,
-        )
