@@ -23,18 +23,16 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Recibir un ExecutionStep.
-    - Resolver la Skill mediante SkillManager.
+    - Resolver Skills.
     - Ejecutar Skill.execute().
     - Gestionar retries.
     - Normalizar resultados.
 
     No:
 
+    - Gestiona lifecycle del step.
     - Planifica.
-    - Decide Skills.
     - Construye contexto.
-    - Modifica ExecutionPlan.
     """
 
     name = "skill_runtime"
@@ -46,10 +44,6 @@ class SkillRuntime:
 
         self.skill_manager = skill_manager or SkillManager()
 
-    # ======================================================
-    # Execution
-    # ======================================================
-
     def execute(
         self,
         plan: ExecutionPlan,
@@ -58,14 +52,6 @@ class SkillRuntime:
     ) -> ExecutionResult:
 
         context = context or {}
-
-        if step.unit_type != "skill":
-
-            return ExecutionResult.fail(
-                error=("SkillRuntime recibió " f"unidad inválida: {step.unit_type}"),
-                executor=self.name,
-                plan_id=plan.id,
-            )
 
         skill = self.skill_manager.get(
             step.unit_name,
@@ -83,19 +69,9 @@ class SkillRuntime:
 
         max_retries = step.retries if step.retries is not None else plan.max_retries
 
-        start = time.time()
-
         while retries <= max_retries:
 
             try:
-
-                logger.info(
-                    "Ejecutando skill=%s intento=%s",
-                    skill.name,
-                    retries + 1,
-                )
-
-                step.mark_running()
 
                 result = skill.execute(
                     plan=plan,
@@ -103,9 +79,7 @@ class SkillRuntime:
                     context=context,
                 )
 
-                normalized = self._normalize_result(
-                    result,
-                )
+                normalized = self._normalize_result(result)
 
                 if not normalized["ok"]:
 
@@ -115,10 +89,6 @@ class SkillRuntime:
                             "Skill falló",
                         )
                     )
-
-                step.mark_completed(
-                    result,
-                )
 
                 return ExecutionResult.ok(
                     output=result,
@@ -138,10 +108,6 @@ class SkillRuntime:
 
                 if retries > max_retries:
 
-                    step.mark_failed(
-                        str(exc),
-                    )
-
                     return ExecutionResult.fail(
                         error=str(exc),
                         executor=f"skill:{skill.name}",
@@ -154,19 +120,12 @@ class SkillRuntime:
             plan_id=plan.id,
         )
 
-    # ======================================================
-    # Helpers
-    # ======================================================
-
     def _normalize_result(
         self,
         result: Any,
     ) -> dict[str, Any]:
 
-        if isinstance(
-            result,
-            dict,
-        ):
+        if isinstance(result, dict):
 
             if "ok" in result:
 

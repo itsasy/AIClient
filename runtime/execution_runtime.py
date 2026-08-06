@@ -22,18 +22,18 @@ class ExecutionRuntime:
     """
     Router central de ejecución.
 
-    Responsabilidad única:
+    Responsabilidades:
 
-    - Determinar qué runtime debe ejecutar.
+    - Determinar runtime correspondiente.
+    - Gestionar lifecycle de steps.
     - Delegar ejecución.
-    - Consolidar resultados.
+    - Acumular resultados parciales.
 
     No:
 
     - Ejecuta agentes.
     - Ejecuta skills.
-    - Construye contexto.
-    - Modifica planificación.
+    - Construye planes.
     - Decide estrategia.
     """
 
@@ -106,7 +106,7 @@ class ExecutionRuntime:
         )
 
     # ======================================================
-    # Multi step
+    # Multi step execution
     # ======================================================
 
     def _execute_steps(
@@ -117,7 +117,7 @@ class ExecutionRuntime:
 
         outputs = []
 
-        for step in plan.steps:
+        for index, step in enumerate(plan.steps):
 
             result = self._dispatch(
                 plan,
@@ -128,6 +128,8 @@ class ExecutionRuntime:
             outputs.append(
                 result.to_dict(),
             )
+
+            context[f"step_{index}"] = result.output
 
             if not result.success:
 
@@ -142,7 +144,7 @@ class ExecutionRuntime:
         )
 
     # ======================================================
-    # Router
+    # Dispatcher
     # ======================================================
 
     def _dispatch(
@@ -152,29 +154,64 @@ class ExecutionRuntime:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        unit_type = step.unit_type
+        try:
 
-        if unit_type == "agent":
+            step.mark_running()
 
-            return self._execute_agent(
-                plan,
-                step,
-                context,
+            if step.unit_type == "agent":
+
+                result = self._execute_agent(
+                    plan,
+                    step,
+                    context,
+                )
+
+            elif step.unit_type == "skill":
+
+                result = self.skill_runtime.execute(
+                    plan,
+                    step,
+                    context,
+                )
+
+            else:
+
+                result = ExecutionResult.fail(
+                    error=(f"Tipo de unidad inválido: " f"{step.unit_type}"),
+                    executor=self.name,
+                    plan_id=plan.id,
+                )
+
+            if result.success:
+
+                step.mark_completed(
+                    result.output,
+                )
+
+            else:
+
+                step.mark_failed(
+                    result.error or "Error desconocido",
+                )
+
+            return result
+
+        except Exception as exc:
+
+            logger.exception(
+                "Error ejecutando step=%s",
+                step.unit_name,
             )
 
-        if unit_type == "skill":
-
-            return self.skill_runtime.execute(
-                plan,
-                step,
-                context,
+            step.mark_failed(
+                str(exc),
             )
 
-        return ExecutionResult.fail(
-            error=(f"Tipo de unidad inválido: {unit_type}"),
-            executor=self.name,
-            plan_id=plan.id,
-        )
+            return ExecutionResult.fail(
+                error=str(exc),
+                executor=self.name,
+                plan_id=plan.id,
+            )
 
     # ======================================================
     # Agent dispatch

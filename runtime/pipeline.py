@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from typing import Any, Callable
 
 from core.execution_planner import ExecutionPlanner
 from core.execution_result import ExecutionResult
@@ -33,11 +33,14 @@ class Pipeline:
     Execution Result
 
 
-    Responsabilidad:
+    Responsabilidades:
 
     - Coordinar componentes superiores.
-    - Exponer API simple.
-    - Gestionar métricas globales.
+    - Gestionar entrada del usuario.
+    - Crear ExecutionPlan mediante Planner.
+    - Delegar ejecución.
+    - Gestionar aprendizaje externo.
+    - Emitir eventos.
 
 
     No:
@@ -66,6 +69,8 @@ class Pipeline:
 
         self.learner = learner
 
+        self.listeners: dict[str, list[Callable]] = {}
+
         self.metrics = {
             "executions": 0,
             "success": 0,
@@ -86,6 +91,14 @@ class Pipeline:
 
         self.metrics["executions"] += 1
 
+        self.emit(
+            "pipeline_started",
+            {
+                "input": user_input,
+                "metadata": metadata,
+            },
+        )
+
         try:
 
             logger.info(
@@ -98,10 +111,20 @@ class Pipeline:
                 metadata,
             )
 
+            self.emit(
+                "intent_ready",
+                intent,
+            )
+
             plan = self.planner.create(
                 task=user_input,
                 intent=intent,
                 context=metadata,
+            )
+
+            self.emit(
+                "plan_created",
+                plan,
             )
 
             result = self.execution_engine.execute(
@@ -117,9 +140,19 @@ class Pipeline:
 
                 self.metrics["success"] += 1
 
+                self.emit(
+                    "pipeline_completed",
+                    result,
+                )
+
             else:
 
                 self.metrics["failed"] += 1
+
+                self.emit(
+                    "pipeline_failed",
+                    result,
+                )
 
             return result
 
@@ -131,10 +164,17 @@ class Pipeline:
                 "Pipeline error",
             )
 
-            return ExecutionResult.fail(
+            result = ExecutionResult.fail(
                 error=str(exc),
                 executor=self.name,
             )
+
+            self.emit(
+                "pipeline_error",
+                result,
+            )
+
+            return result
 
     # ======================================================
     # Intent
@@ -145,6 +185,14 @@ class Pipeline:
         task: str,
         metadata: dict[str, Any],
     ) -> dict[str, Any]:
+
+        existing_intent = metadata.get(
+            "intent",
+        )
+
+        if existing_intent:
+
+            return existing_intent
 
         if self.intent_analyzer:
 
@@ -184,6 +232,49 @@ class Pipeline:
             logger.exception(
                 "Error aprendizaje continuo",
             )
+
+    # ======================================================
+    # Events
+    # ======================================================
+
+    def on(
+        self,
+        event: str,
+        callback: Callable,
+    ) -> None:
+
+        self.listeners.setdefault(
+            event,
+            [],
+        ).append(
+            callback,
+        )
+
+    def emit(
+        self,
+        event: str,
+        payload: Any,
+    ) -> None:
+
+        callbacks = self.listeners.get(
+            event,
+            [],
+        )
+
+        for callback in callbacks:
+
+            try:
+
+                callback(
+                    payload,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Error listener pipeline=%s",
+                    event,
+                )
 
     # ======================================================
     # Metrics

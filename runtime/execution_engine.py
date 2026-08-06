@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+
+from typing import Any, Callable
 
 from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
@@ -20,9 +21,10 @@ class ExecutionEngine:
     Responsabilidades:
 
     - Validar ExecutionPlan.
-    - Preparar contexto.
     - Gestionar lifecycle global.
+    - Construir contexto.
     - Delegar ejecución.
+    - Emitir eventos.
     - Registrar métricas.
 
     No:
@@ -45,6 +47,8 @@ class ExecutionEngine:
 
         self.execution_runtime = execution_runtime or ExecutionRuntime()
 
+        self.listeners: dict[str, list[Callable]] = {}
+
         self.metrics = {
             "executions": 0,
             "success": 0,
@@ -65,8 +69,13 @@ class ExecutionEngine:
 
         self.metrics["executions"] += 1
 
+        self.emit(
+            "execution_started",
+            plan,
+        )
+
         logger.info(
-            "Inicio ejecución plan=%s",
+            "Ejecutando plan=%s",
             plan.id,
         )
 
@@ -78,13 +87,40 @@ class ExecutionEngine:
 
             plan.mark_running()
 
+            self.emit(
+                "plan_running",
+                plan,
+            )
+
+            context_start = time.time()
+
             context = self.context_manager.build(
                 plan,
             )
 
+            context_time = round(
+                time.time() - context_start,
+                3,
+            )
+
+            self.emit(
+                "context_ready",
+                {
+                    "plan": plan,
+                    "duration": context_time,
+                },
+            )
+
+            execution_start = time.time()
+
             result = self.execution_runtime.execute(
                 plan,
                 context,
+            )
+
+            execution_time = round(
+                time.time() - execution_start,
+                3,
             )
 
             duration = round(
@@ -94,8 +130,10 @@ class ExecutionEngine:
 
             result.metadata.update(
                 {
-                    "duration": duration,
                     "engine": self.name,
+                    "duration": duration,
+                    "context_duration": context_time,
+                    "execution_duration": execution_time,
                 }
             )
 
@@ -109,6 +147,11 @@ class ExecutionEngine:
 
                 self.metrics["success"] += 1
 
+                self.emit(
+                    "execution_completed",
+                    result,
+                )
+
             else:
 
                 plan.mark_failed(
@@ -116,6 +159,11 @@ class ExecutionEngine:
                 )
 
                 self.metrics["failed"] += 1
+
+                self.emit(
+                    "execution_failed",
+                    result,
+                )
 
             return result
 
@@ -128,20 +176,41 @@ class ExecutionEngine:
 
             self.metrics["failed"] += 1
 
-            plan.mark_failed(
-                str(exc),
-            )
+            try:
+
+                plan.mark_failed(
+                    str(exc),
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Error marcando plan fallido",
+                )
 
             logger.exception(
-                "Fallo ExecutionEngine plan=%s",
-                plan.id,
+                "Error crítico ExecutionEngine",
             )
 
-            return ExecutionResult.fail(
+            result = ExecutionResult.fail(
                 error=str(exc),
                 executor=self.name,
                 plan_id=plan.id,
             )
+
+            result.metadata.update(
+                {
+                    "duration": duration,
+                    "engine": self.name,
+                }
+            )
+
+            self.emit(
+                "engine_error",
+                result,
+            )
+
+            return result
 
     # ======================================================
     # Validation
@@ -157,6 +226,49 @@ class ExecutionEngine:
         if errors:
 
             raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
+
+    # ======================================================
+    # Events
+    # ======================================================
+
+    def on(
+        self,
+        event: str,
+        callback: Callable,
+    ) -> None:
+
+        self.listeners.setdefault(
+            event,
+            [],
+        ).append(
+            callback,
+        )
+
+    def emit(
+        self,
+        event: str,
+        payload: Any,
+    ) -> None:
+
+        callbacks = self.listeners.get(
+            event,
+            [],
+        )
+
+        for callback in callbacks:
+
+            try:
+
+                callback(
+                    payload,
+                )
+
+            except Exception:
+
+                logger.exception(
+                    "Error en listener=%s",
+                    event,
+                )
 
     # ======================================================
     # Metrics

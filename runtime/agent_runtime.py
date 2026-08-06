@@ -19,24 +19,18 @@ class AgentRuntime:
 
     Responsabilidades:
 
-    - Recibir un Agent resuelto.
-    - Ejecutar agent.process().
-    - Validar compatibilidad del plan.
-    - Normalizar resultados.
+    - Validar Agent.
+    - Ejecutar process().
+    - Normalizar salida.
 
     No:
 
     - Selecciona agentes.
     - Construye contexto.
-    - Cambia lifecycle del plan.
     - Ejecuta skills.
     """
 
     name = "agent_runtime"
-
-    # ======================================================
-    # Execution
-    # ======================================================
 
     def execute(
         self,
@@ -48,57 +42,24 @@ class AgentRuntime:
         if agent is None:
 
             return ExecutionResult.fail(
-                error="AgentRuntime requiere un Agent.",
+                error="AgentRuntime requiere Agent.",
                 executor=self.name,
                 plan_id=plan.id,
             )
 
-        logger.info(
-            "Ejecutando agent=%s plan=%s",
-            agent.name,
-            plan.id,
-        )
-
-        # ----------------------------------------------
-        # Agent validation
-        # ----------------------------------------------
-
         try:
 
-            validation_errors = agent.validate_plan(plan)
+            errors = agent.validate_plan(
+                plan,
+            )
 
-            if validation_errors:
-
-                logger.warning(
-                    "Plan incompatible con agent=%s errors=%s",
-                    agent.name,
-                    validation_errors,
-                )
+            if errors:
 
                 return ExecutionResult.fail(
-                    error=str(validation_errors),
+                    error=str(errors),
                     executor=f"agent:{agent.name}",
                     plan_id=plan.id,
                 )
-
-        except Exception as exc:
-
-            logger.exception(
-                "Error validando agent=%s",
-                agent.name,
-            )
-
-            return ExecutionResult.fail(
-                error=str(exc),
-                executor=f"agent:{agent.name}",
-                plan_id=plan.id,
-            )
-
-        # ----------------------------------------------
-        # Execution
-        # ----------------------------------------------
-
-        try:
 
             result = agent.process(
                 plan,
