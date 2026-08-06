@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-import logging
-
 from skills.registry import SkillRegistry
 from skills.loader import SkillLoader
-
-logger = logging.getLogger(__name__)
+from skills.base import Skill
 
 
 class SkillManager:
@@ -50,7 +47,7 @@ class SkillManager:
     def get(
         self,
         skill_name: str,
-    ):
+    ) -> Skill | None:
 
         if not skill_name:
 
@@ -93,18 +90,6 @@ class SkillManager:
 
     def capabilities(
         self,
-    ) -> dict[str, tuple[str, ...]]:
+    ) -> dict:
 
-        result = {}
-
-        for name in self.registry.list():
-
-            skill = self.registry.get(
-                name,
-            )
-
-            if skill:
-
-                result[name] = skill.capabilities
-
-        return result
+        return self.registry.capabilities()

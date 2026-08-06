@@ -18,14 +18,15 @@ class SkillRegistry:
 
     Responsabilidades:
 
-    - Registrar Skills.
-    - Resolver instancias lazy.
-    - Mantener catálogo.
+    - Registrar skills.
+    - Resolver lazy.
+    - Gestionar catálogo.
+    - Gestionar aliases.
 
     No:
 
-    - Ejecuta Skills.
-    - Gestiona ejecución.
+    - Ejecuta skills.
+    - Maneja retries.
     """
 
     def __init__(self):
@@ -34,80 +35,79 @@ class SkillRegistry:
 
         self._instances: dict[str, Skill] = {}
 
-    # ======================================================
-    # Helpers
-    # ======================================================
+        self._aliases: dict[str, str] = {}
 
     def _normalize(
         self,
         name: str,
-    ) -> str:
+    ):
 
         return name.lower().strip().replace("-", "_").replace(" ", "_")
 
-    # ======================================================
-    # Register
-    # ======================================================
+    def _resolve_name(
+        self,
+        name: str,
+    ):
+
+        key = self._normalize(name)
+
+        return self._aliases.get(
+            key,
+            key,
+        )
 
     def register(
         self,
         name: str,
         factory: SkillFactory,
-    ) -> None:
+        aliases: list[str] | None = None,
+        overwrite: bool = False,
+    ):
+
+        key = self._normalize(name)
+
+        if key in self._factories and not overwrite:
+
+            raise ValueError(f"Skill ya registrada: {key}")
 
         if isinstance(factory, type):
 
-            if not issubclass(
-                factory,
-                Skill,
-            ):
+            if not issubclass(factory, Skill):
 
-                raise TypeError("Solo pueden registrarse clases Skill.")
-
-        key = self._normalize(
-            name,
-        )
+                raise TypeError("Solo se aceptan clases Skill")
 
         self._factories[key] = factory
 
-        logger.info(
-            "Skill registrada=%s",
-            key,
-        )
+        if aliases:
 
-    # ======================================================
-    # Resolve
-    # ======================================================
+            for alias in aliases:
+
+                self._aliases[self._normalize(alias)] = key
 
     def get(
         self,
         name: str,
     ) -> Skill | None:
 
-        key = self._normalize(
-            name,
-        )
+        key = self._resolve_name(name)
 
         if key in self._instances:
 
             return self._instances[key]
 
-        factory = self._factories.get(
-            key,
-        )
+        factory = self._factories.get(key)
 
-        if factory is None:
-
-            logger.warning(
-                "Skill no registrada=%s",
-                key,
-            )
+        if not factory:
 
             return None
 
         try:
 
             instance = factory()
+
+            if not isinstance(instance, Skill):
+
+                raise TypeError("Factory inválido")
 
             self._instances[key] = instance
 
@@ -116,76 +116,62 @@ class SkillRegistry:
         except Exception:
 
             logger.exception(
-                "Error creando skill=%s",
+                "Error creando Skill=%s",
                 key,
             )
 
             return None
 
-    # ======================================================
-    # Information
-    # ======================================================
-
     def has(
         self,
         name: str,
-    ) -> bool:
+    ):
 
-        return self._normalize(name) in self._factories
+        return self._resolve_name(name) in self._factories
 
-    def contains(
-        self,
-        name: str,
-    ) -> bool:
+    def list(self):
 
-        return self.has(
-            name,
-        )
+        return sorted(self._factories.keys())
 
-    def list(
-        self,
-    ) -> list[str]:
+    def loaded(self):
 
-        return sorted(
-            self._factories.keys(),
-        )
+        return sorted(self._instances.keys())
 
-    def loaded(
-        self,
-    ) -> list[str]:
-
-        return sorted(
-            self._instances.keys(),
-        )
-
-    def metadata(
-        self,
-    ) -> list[dict]:
+    def metadata(self):
 
         result = []
 
         for name in self.list():
 
-            skill = self.get(
-                name,
-            )
+            skill = self.get(name)
 
             if skill:
 
-                result.append(
-                    skill.get_metadata(),
-                )
+                result.append(skill.get_metadata())
 
         return result
 
-    # ======================================================
-    # Management
-    # ======================================================
-
-    def clear(
+    def unregister(
         self,
-    ) -> None:
+        name: str,
+    ):
+
+        key = self._resolve_name(name)
+
+        self._factories.pop(
+            key,
+            None,
+        )
+
+        self._instances.pop(
+            key,
+            None,
+        )
+
+    def clear(self):
 
         self._factories.clear()
 
         self._instances.clear()
+
+        self._aliases.clear()
