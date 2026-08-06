@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-
 from typing import Any
 
 from core.execution_plan import (
@@ -41,6 +40,10 @@ class SkillRuntime:
 
         self.skills = skill_manager or SkillManager()
 
+    # ======================================================
+    # Execution
+    # ======================================================
+
     def execute(
         self,
         plan: ExecutionPlan,
@@ -58,6 +61,18 @@ class SkillRuntime:
                 plan_id=plan.id,
             )
 
+        skill = self.skills.get(
+            step.unit_name,
+        )
+
+        if skill is None:
+
+            return ExecutionResult.fail(
+                error=f"Skill no encontrada: {step.unit_name}",
+                executor="skill_runtime",
+                plan_id=plan.id,
+            )
+
         retries = 0
 
         max_retries = step.retries if step.retries is not None else plan.max_retries
@@ -68,20 +83,19 @@ class SkillRuntime:
 
                 logger.info(
                     "Ejecutando skill=%s intento=%s",
-                    step.unit_name,
+                    skill.name,
                     retries + 1,
                 )
 
                 step.mark_running()
 
-                result = self.skills.execute(
-                    step.unit_name,
+                result = skill.execute(
                     plan=plan,
                     step=step,
                     context=context,
                 )
 
-                normalized = self._validate_result(
+                normalized = self._normalize_result(
                     result,
                 )
 
@@ -90,7 +104,7 @@ class SkillRuntime:
                     raise RuntimeError(
                         normalized.get(
                             "error",
-                            "Skill falló sin error especificado",
+                            "Skill falló",
                         )
                     )
 
@@ -100,7 +114,7 @@ class SkillRuntime:
 
                 return ExecutionResult.ok(
                     output=result,
-                    executor=f"skill:{step.unit_name}",
+                    executor=f"skill:{skill.name}",
                     plan_id=plan.id,
                 )
 
@@ -109,8 +123,8 @@ class SkillRuntime:
                 retries += 1
 
                 logger.exception(
-                    "Error skill=%s intento=%s",
-                    step.unit_name,
+                    "Error ejecutando skill=%s intento=%s",
+                    skill.name,
                     retries,
                 )
 
@@ -122,20 +136,24 @@ class SkillRuntime:
 
                     return ExecutionResult.fail(
                         error=str(exc),
-                        executor=f"skill:{step.unit_name}",
+                        executor=f"skill:{skill.name}",
                         plan_id=plan.id,
                     )
 
         return ExecutionResult.fail(
             error="Max retries alcanzado.",
-            executor=f"skill:{step.unit_name}",
+            executor=f"skill:{skill.name}",
             plan_id=plan.id,
         )
 
-    def _validate_result(
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    def _normalize_result(
         self,
         result: Any,
-    ) -> dict:
+    ) -> dict[str, Any]:
 
         if isinstance(
             result,

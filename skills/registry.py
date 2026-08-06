@@ -13,12 +13,37 @@ SkillFactory = Callable[[], Skill] | type[Skill]
 
 
 class SkillRegistry:
+    """
+    Registro central de Skills.
+
+    Responsabilidades:
+
+    - Registrar Skills.
+    - Resolver instancias lazy.
+    - Mantener catálogo.
+
+    No:
+
+    - Ejecuta Skills.
+    - Gestiona ejecución.
+    """
 
     def __init__(self):
 
         self._factories: dict[str, SkillFactory] = {}
 
         self._instances: dict[str, Skill] = {}
+
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    def _normalize(
+        self,
+        name: str,
+    ) -> str:
+
+        return name.lower().strip().replace("-", "_").replace(" ", "_")
 
     # ======================================================
     # Register
@@ -28,15 +53,20 @@ class SkillRegistry:
         self,
         name: str,
         factory: SkillFactory,
-    ):
+    ) -> None:
 
         if isinstance(factory, type):
 
-            if not issubclass(factory, Skill):
+            if not issubclass(
+                factory,
+                Skill,
+            ):
 
                 raise TypeError("Solo pueden registrarse clases Skill.")
 
-        key = self._normalize(name)
+        key = self._normalize(
+            name,
+        )
 
         self._factories[key] = factory
 
@@ -54,27 +84,30 @@ class SkillRegistry:
         name: str,
     ) -> Skill | None:
 
-        key = self._normalize(name)
+        key = self._normalize(
+            name,
+        )
 
         if key in self._instances:
 
             return self._instances[key]
 
-        factory = self._factories.get(key)
+        factory = self._factories.get(
+            key,
+        )
 
         if factory is None:
+
+            logger.warning(
+                "Skill no registrada=%s",
+                key,
+            )
 
             return None
 
         try:
 
-            if isinstance(factory, type):
-
-                instance = factory()
-
-            else:
-
-                instance = factory()
+            instance = factory()
 
             self._instances[key] = instance
 
@@ -100,11 +133,30 @@ class SkillRegistry:
 
         return self._normalize(name) in self._factories
 
+    def contains(
+        self,
+        name: str,
+    ) -> bool:
+
+        return self.has(
+            name,
+        )
+
     def list(
         self,
     ) -> list[str]:
 
-        return sorted(self._factories.keys())
+        return sorted(
+            self._factories.keys(),
+        )
+
+    def loaded(
+        self,
+    ) -> list[str]:
+
+        return sorted(
+            self._instances.keys(),
+        )
 
     def metadata(
         self,
@@ -112,36 +164,28 @@ class SkillRegistry:
 
         result = []
 
-        for name, factory in self._factories.items():
+        for name in self.list():
 
-            if isinstance(factory, type):
+            skill = self.get(
+                name,
+            )
+
+            if skill:
 
                 result.append(
-                    {
-                        "name": factory.name,
-                        "description": factory.description,
-                        "version": factory.version,
-                        "capabilities": list(factory.capabilities),
-                    }
+                    skill.get_metadata(),
                 )
-
-            else:
-
-                instance = self.get(name)
-
-                if instance:
-
-                    result.append(instance.get_metadata())
 
         return result
 
     # ======================================================
-    # Helpers
+    # Management
     # ======================================================
 
-    def _normalize(
+    def clear(
         self,
-        name: str,
-    ) -> str:
+    ) -> None:
 
-        return name.lower().strip().replace("-", "_").replace(" ", "_")
+        self._factories.clear()
+
+        self._instances.clear()

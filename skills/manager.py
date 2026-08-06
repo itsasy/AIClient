@@ -16,14 +16,13 @@ class SkillManager:
 
     - Resolver Skills registradas.
     - Inicializar catálogo.
-    - Exponer consulta de capacidades.
+    - Exponer información.
 
     No:
 
     - Ejecuta Skills.
-    - Gestiona lifecycle.
+    - Maneja retries.
     - Normaliza resultados.
-    - Maneja errores de ejecución.
 
     La ejecución pertenece a SkillRuntime.
     """
@@ -41,11 +40,12 @@ class SkillManager:
         )
 
         if auto_load:
+
             self.loader.load_defaults()
 
-    # ==========================================================
+    # ======================================================
     # Resolution
-    # ==========================================================
+    # ======================================================
 
     def get(
         self,
@@ -53,15 +53,16 @@ class SkillManager:
     ):
 
         if not skill_name:
+
             return None
 
         return self.registry.get(
             skill_name,
         )
 
-    # ==========================================================
+    # ======================================================
     # Information
-    # ==========================================================
+    # ======================================================
 
     def has(
         self,
@@ -78,6 +79,12 @@ class SkillManager:
 
         return self.registry.list()
 
+    def loaded(
+        self,
+    ) -> list[str]:
+
+        return self.registry.loaded()
+
     def metadata(
         self,
     ) -> list[dict]:
@@ -92,7 +99,9 @@ class SkillManager:
 
         for name in self.registry.list():
 
-            skill = self.registry.get(name)
+            skill = self.registry.get(
+                name,
+            )
 
             if skill:
 

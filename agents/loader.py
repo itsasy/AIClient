@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 
 from agents.base import Agent
@@ -11,12 +12,19 @@ logger = logging.getLogger(__name__)
 
 class AgentLoader:
     """
-    Descubre y registra agentes.
+    Descubrimiento y registro de Agents.
+
+    Responsabilidades:
+
+    - Importar módulos.
+    - Detectar implementaciones Agent.
+    - Registrarlas en AgentRegistry.
 
     No:
 
+    - Instancia agentes.
     - Ejecuta agentes.
-    - Decide selección.
+    - Selecciona agentes.
     """
 
     def __init__(
@@ -26,10 +34,25 @@ class AgentLoader:
 
         self.registry = registry
 
+        self.loaded_modules: set[str] = set()
+
+    # ==========================================================
+    # Module loading
+    # ==========================================================
+
     def load_module(
         self,
         module_path: str,
     ) -> None:
+
+        if module_path in self.loaded_modules:
+
+            logger.debug(
+                "Módulo Agent ya cargado=%s",
+                module_path,
+            )
+
+            return
 
         try:
 
@@ -41,10 +64,14 @@ class AgentLoader:
                 module,
             )
 
+            self.loaded_modules.add(
+                module_path,
+            )
+
         except Exception:
 
             logger.exception(
-                "Error cargando agente módulo=%s",
+                "Error cargando módulo Agent=%s",
                 module_path,
             )
 
@@ -60,16 +87,27 @@ class AgentLoader:
                 name,
             )
 
-            if not isinstance(obj, type):
-                continue
+            if not inspect.isclass(obj):
 
-            if not issubclass(obj, Agent):
                 continue
 
             if obj is Agent:
+
+                continue
+
+            if not issubclass(
+                obj,
+                Agent,
+            ):
+
+                continue
+
+            if inspect.isabstract(obj):
+
                 continue
 
             if obj.__module__ != module.__name__:
+
                 continue
 
             agent_name = getattr(
@@ -79,12 +117,27 @@ class AgentLoader:
             )
 
             if not agent_name:
+
+                logger.warning(
+                    "Agent sin nombre ignorado=%s",
+                    obj,
+                )
+
                 continue
 
             self.registry.register(
                 agent_name,
                 obj,
             )
+
+            logger.info(
+                "Agent cargado=%s",
+                agent_name,
+            )
+
+    # ==========================================================
+    # Defaults
+    # ==========================================================
 
     def load_defaults(
         self,

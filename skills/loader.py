@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 
 from skills.base import Skill
@@ -12,6 +13,18 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """
     Descubrimiento y registro de Skills.
+
+    Responsabilidades:
+
+    - Importar módulos.
+    - Detectar clases Skill.
+    - Registrarlas.
+
+    No:
+
+    - Ejecuta Skills.
+    - Instancia Skills.
+    - Gestiona resultados.
     """
 
     def __init__(
@@ -21,6 +34,8 @@ class SkillLoader:
 
         self.registry = registry
 
+        self.loaded_modules: set[str] = set()
+
     # ==========================================================
     # Module loading
     # ==========================================================
@@ -28,7 +43,16 @@ class SkillLoader:
     def load_module(
         self,
         module_path: str,
-    ):
+    ) -> None:
+
+        if module_path in self.loaded_modules:
+
+            logger.debug(
+                "Módulo Skill ya cargado=%s",
+                module_path,
+            )
+
+            return
 
         try:
 
@@ -40,17 +64,21 @@ class SkillLoader:
                 module,
             )
 
+            self.loaded_modules.add(
+                module_path,
+            )
+
         except Exception:
 
             logger.exception(
-                "Error cargando módulo=%s",
+                "Error cargando módulo Skill=%s",
                 module_path,
             )
 
     def _register_from_module(
         self,
         module,
-    ):
+    ) -> None:
 
         for name in dir(module):
 
@@ -59,22 +87,27 @@ class SkillLoader:
                 name,
             )
 
-            if not isinstance(
-                obj,
-                type,
-            ):
+            if not inspect.isclass(obj):
+
+                continue
+
+            if obj is Skill:
+
                 continue
 
             if not issubclass(
                 obj,
                 Skill,
             ):
+
                 continue
 
-            if obj is Skill:
+            if inspect.isabstract(obj):
+
                 continue
 
             if obj.__module__ != module.__name__:
+
                 continue
 
             skill_name = getattr(
@@ -84,6 +117,12 @@ class SkillLoader:
             )
 
             if not skill_name:
+
+                logger.warning(
+                    "Skill sin nombre ignorada=%s",
+                    obj,
+                )
+
                 continue
 
             self.registry.register(
@@ -107,42 +146,28 @@ class SkillLoader:
 
     def load_defaults(
         self,
-    ):
+    ) -> None:
 
         modules = [
-            # -----------------------------
             # Code
-            # -----------------------------
             "skills.code.analyze",
             "skills.code.executor",
             "skills.code.generate",
             "skills.code.project_analyzer",
             "skills.code.sandbox",
-            # -----------------------------
             # Documentation
-            # -----------------------------
             "skills.docs.readme",
-            # -----------------------------
             # Knowledge
-            # -----------------------------
             "skills.knowledge.ingest",
-            # -----------------------------
             # Migration
-            # -----------------------------
             "skills.migration.project_migrator",
             "skills.migration.refactor",
-            # -----------------------------
             # Projects
-            # -----------------------------
             "skills.projects.full_generator",
             "skills.projects.laravel",
-            # -----------------------------
             # Proposals
-            # -----------------------------
             "skills.proposals.generator",
-            # -----------------------------
             # Scraping
-            # -----------------------------
             "skills.scraping.integrations",
             "skills.scraping.job_scraper",
         ]

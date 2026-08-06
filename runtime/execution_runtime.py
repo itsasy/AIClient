@@ -23,9 +23,10 @@ class ExecutionRuntime:
     Runtime unificado.
 
     Ejecuta:
-    - Agents
-    - Skills
-    - Steps completos
+
+    - Agents.
+    - Skills.
+    - Steps completos.
     """
 
     def __init__(
@@ -41,9 +42,9 @@ class ExecutionRuntime:
 
         self.skill_runtime = skill_runtime or SkillRuntime()
 
-    # ==========================================================
+    # ======================================================
     # Public execution
-    # ==========================================================
+    # ======================================================
 
     def execute(
         self,
@@ -59,15 +60,16 @@ class ExecutionRuntime:
             )
 
         return self.execute_unit(
-            plan.execution_unit_type,
-            plan,
-            None,
-            context,
+            unit_type=plan.execution_unit_type,
+            unit_name=plan.execution_unit,
+            plan=plan,
+            step=None,
+            context=context,
         )
 
-    # ==========================================================
-    # Steps execution
-    # ==========================================================
+    # ======================================================
+    # Steps
+    # ======================================================
 
     def execute_steps(
         self,
@@ -80,13 +82,16 @@ class ExecutionRuntime:
         for step in plan.steps:
 
             result = self.execute_unit(
-                step.unit_type,
-                plan,
-                step,
-                context,
+                unit_type=step.unit_type,
+                unit_name=step.unit_name,
+                plan=plan,
+                step=step,
+                context=context,
             )
 
-            results.append(result.to_dict())
+            results.append(
+                result.to_dict(),
+            )
 
             if not result.success and plan.stop_on_error:
 
@@ -98,13 +103,14 @@ class ExecutionRuntime:
             plan_id=plan.id,
         )
 
-    # ==========================================================
+    # ======================================================
     # Unit execution
-    # ==========================================================
+    # ======================================================
 
     def execute_unit(
         self,
         unit_type: str | None,
+        unit_name: str | None,
         plan: ExecutionPlan,
         step: ExecutionStep | None,
         context: dict[str, Any],
@@ -115,9 +121,9 @@ class ExecutionRuntime:
             if step is None:
 
                 step = ExecutionStep(
-                    description=plan.objective or plan.original_task,
+                    description=(plan.objective or plan.original_task),
                     unit_type="skill",
-                    unit_name=plan.execution_unit,
+                    unit_name=unit_name,
                     params=plan.params,
                 )
 
@@ -129,12 +135,14 @@ class ExecutionRuntime:
 
         if unit_type == "agent":
 
-            agent = self.agent_manager.get(plan.execution_unit)
+            agent = self.agent_manager.get(
+                unit_name,
+            )
 
             if agent is None:
 
                 return ExecutionResult.fail(
-                    error=f"Agent no encontrado: {plan.execution_unit}",
+                    error=f"Agent no encontrado: {unit_name}",
                     executor="execution_runtime",
                     plan_id=plan.id,
                 )

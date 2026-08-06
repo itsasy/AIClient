@@ -1,7 +1,8 @@
-import logging
-from typing import Any
+from __future__ import annotations
 
-from obsidian.rag import RAG
+import logging
+
+from typing import Any
 
 from core.context.base import BaseContextProvider
 from core.execution_plan import ExecutionPlan
@@ -15,7 +16,17 @@ class ObsidianProvider(BaseContextProvider):
 
     def __init__(self):
 
-        self.rag = RAG()
+        self.rag = None
+
+        try:
+
+            from obsidian.rag import RAG
+
+            self.rag = RAG()
+
+        except Exception:
+
+            logger.warning("Obsidian RAG no disponible.")
 
     def load(
         self,
@@ -23,11 +34,16 @@ class ObsidianProvider(BaseContextProvider):
         context: dict[str, Any],
     ) -> None:
 
+        if self.rag is None:
+
+            return
+
         result = self.rag.get_relevant_context(
             plan.original_task,
         )
 
         if not result:
+
             return
 
         context[self.key] = result

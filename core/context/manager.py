@@ -6,6 +6,7 @@ from typing import Callable
 from core.execution_plan import ExecutionPlan
 
 from core.context.base import BaseContextProvider
+from core.context.registry import ContextRegistry
 
 from core.context.project_provider import ProjectProvider
 from core.context.engram_provider import EngramProvider
@@ -25,35 +26,25 @@ class ContextManager:
 
     Responsabilidades:
 
-    - Resolver providers requeridos por ExecutionPlan.
-    - Cargar información contextual.
-    - Gestionar ciclo de vida de providers.
-    - Aislar errores individuales.
-    - Entregar contexto al sistema de ejecución.
+    - Resolver providers.
+    - Construir contexto.
+    - Gestionar cache.
 
     No:
 
-    - Analiza intención.
-    - Decide qué contexto usar.
-    - Ejecuta skills.
-    - Construye prompts.
+    - Ejecuta Skills.
+    - Ejecuta Agents.
+    - Decide planes.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        registry: ContextRegistry | None = None,
+    ):
 
-        self.provider_factories: dict[
-            str,
-            Callable[[], BaseContextProvider],
-        ] = {
-            "project": ProjectProvider,
-            "engram": EngramProvider,
-            "memory": MemoryProvider,
-            "obsidian": ObsidianProvider,
-            "documents": DocumentsProvider,
-            "gentleman": GentlemanProvider,
-            "standards": StandardsProvider,
-            "spec": SpecProvider,
-        }
+        self.registry = registry or ContextRegistry()
+
+        self._register_defaults()
 
         self.providers: dict[
             str,
@@ -66,22 +57,39 @@ class ContextManager:
             "contexts_generated": 0,
         }
 
-        self._context_cache: dict[str, dict] = {}
+        self._context_cache: dict[
+            str,
+            dict,
+        ] = {}
 
-    # ==========================================================
-    # Provider Normalization
-    # ==========================================================
+    # ======================================================
+    # Defaults
+    # ======================================================
 
-    def _normalize_provider(
+    def _register_defaults(
         self,
-        name: str,
-    ) -> str:
+    ):
 
-        return ExecutionPlan.normalize_provider(name)
+        providers = [
+            ProjectProvider,
+            MemoryProvider,
+            EngramProvider,
+            DocumentsProvider,
+            GentlemanProvider,
+            StandardsProvider,
+            SpecProvider,
+            ObsidianProvider,
+        ]
 
-    # ==========================================================
-    # Provider lifecycle
-    # ==========================================================
+        for provider in providers:
+
+            self.registry.register(
+                provider,
+            )
+
+    # ======================================================
+    # Provider resolution
+    # ======================================================
 
     def _get_provider(
         self,
@@ -92,46 +100,30 @@ class ContextManager:
 
             return self.providers[name]
 
-        factory = self.provider_factories.get(name)
+        provider = self.registry.get(
+            name,
+        )
 
-        if not factory:
+        if provider is None:
 
             logger.warning(
-                "Provider de contexto no registrado: %s",
+                "Provider no encontrado=%s",
                 name,
             )
-
-            return None
-
-        try:
-
-            provider = factory()
-
-            self.providers[name] = provider
-
-            self.metrics["providers_loaded"] += 1
-
-            logger.info(
-                "Context provider inicializado: %s",
-                name,
-            )
-
-            return provider
-
-        except Exception:
 
             self.metrics["providers_failed"] += 1
 
-            logger.exception(
-                "Error inicializando provider: %s",
-                name,
-            )
-
             return None
 
-    # ==========================================================
+        self.providers[name] = provider
+
+        self.metrics["providers_loaded"] += 1
+
+        return provider
+
+    # ======================================================
     # Context generation
-    # ==========================================================
+    # ======================================================
 
     def build(
         self,
@@ -142,11 +134,6 @@ class ContextManager:
 
         if cache_key in self._context_cache:
 
-            logger.debug(
-                "Contexto recuperado desde cache: %s",
-                cache_key,
-            )
-
             return self._context_cache[cache_key]
 
         context: dict = {
@@ -154,31 +141,22 @@ class ContextManager:
             "execution_plan": plan.to_dict(),
         }
 
-        requirements = list(dict.fromkeys(plan.context_requirements))
-
-        invalid = plan.validate_context_requirements()
-
-        if invalid:
-
-            logger.warning(
-                "Context providers inválidos detectados: %s",
-                invalid,
+        requirements = list(
+            dict.fromkeys(
+                plan.context_requirements,
             )
+        )
 
         for requirement in requirements:
 
-            provider = self._get_provider(requirement)
+            provider = self._get_provider(
+                requirement,
+            )
 
             if provider is None:
-
                 continue
 
             try:
-
-                logger.info(
-                    "Cargando contexto provider=%s",
-                    requirement,
-                )
 
                 provider.load(
                     plan,
@@ -190,7 +168,7 @@ class ContextManager:
                 self.metrics["providers_failed"] += 1
 
                 logger.exception(
-                    "Falló carga de contexto provider=%s",
+                    "Error provider=%s",
                     requirement,
                 )
 
@@ -198,34 +176,24 @@ class ContextManager:
 
         self._context_cache[cache_key] = context
 
-        logger.info(
-            "Contexto generado keys=%s",
-            list(context.keys()),
-        )
-
         return context
 
-    # ==========================================================
-    # Provider management
-    # ==========================================================
+    # ======================================================
+    # Management
+    # ======================================================
 
     def register_provider(
         self,
-        name: str,
-        factory: Callable[
-            [],
-            BaseContextProvider,
-        ],
-    ) -> None:
-        """
-        Permite agregar providers dinámicamente.
-        """
+        provider: type[BaseContextProvider],
+    ):
 
-        self.provider_factories[name] = factory
+        self.registry.register(
+            provider,
+        )
 
     def clear_cache(
         self,
-    ) -> None:
+    ):
 
         self._context_cache.clear()
 
@@ -233,7 +201,9 @@ class ContextManager:
         self,
     ) -> list[str]:
 
-        return list(self.providers.keys())
+        return list(
+            self.providers.keys(),
+        )
 
     def get_metrics(
         self,

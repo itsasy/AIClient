@@ -1,38 +1,39 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from agents.base import Agent
 from agents.registry import AgentRegistry
 from agents.loader import AgentLoader
-
-from core.execution_plan import ExecutionPlan
+from agents.base import Agent
 
 logger = logging.getLogger(__name__)
 
 
 class AgentManager:
     """
-    Gestiona ejecución de agentes.
+    Resolver central de Agents.
 
     Responsabilidades:
 
-    - Seleccionar agente.
-    - Validar plan.
-    - Delegar ejecución.
+    - Inicializar catálogo.
+    - Resolver agentes.
+    - Exponer información.
 
     No:
 
-    - Registra agentes.
-    - Descubre módulos.
-    - Construye contexto.
+    - Ejecuta agentes.
+    - Valida planes.
+    - Gestiona contexto.
+    - Maneja resultados.
+
+    La ejecución pertenece a AgentRuntime.
     """
 
     def __init__(
         self,
         registry: AgentRegistry | None = None,
         loader: AgentLoader | None = None,
+        auto_load: bool = True,
     ):
 
         self.registry = registry or AgentRegistry()
@@ -41,117 +42,12 @@ class AgentManager:
             self.registry,
         )
 
-        self.loader.load_defaults()
+        if auto_load:
+
+            self.loader.load_defaults()
 
     # ==========================================================
-    # Agent normalization
-    # ==========================================================
-
-    def _normalize_agent(
-        self,
-        name: str | None,
-    ) -> str | None:
-
-        if not name:
-
-            return None
-
-        return name.lower().strip().replace(" ", "_").replace("-", "_")
-
-    # ==========================================================
-    # Delegation
-    # ==========================================================
-
-    def delegate(
-        self,
-        plan: ExecutionPlan,
-        context: dict[str, Any] | None = None,
-    ) -> Any:
-
-        if plan.execution_unit_type != "agent":
-
-            raise RuntimeError(
-                "AgentManager solo ejecuta unidades de tipo 'agent'. "
-                f"Recibido: {plan.execution_unit_type}"
-            )
-
-        context = context or {}
-
-        if plan.execution_unit:
-
-            plan.execution_unit = self._normalize_agent(plan.execution_unit)
-
-        agent = self._select(
-            plan,
-        )
-
-        if agent is None:
-
-            raise RuntimeError("No existe agente disponible.")
-
-        errors = agent.validate_plan(
-            plan,
-        )
-
-        if errors:
-
-            logger.warning(
-                "Validación agente=%s errores=%s",
-                agent.name,
-                errors,
-            )
-
-            plan.metadata.setdefault(
-                "agent_validation_errors",
-                [],
-            )
-
-            plan.metadata["agent_validation_errors"].extend(errors)
-
-        return agent.process(
-            plan,
-            context,
-        )
-
-    # ==========================================================
-    # Selection
-    # ==========================================================
-
-    def _select(
-        self,
-        plan: ExecutionPlan,
-    ) -> Agent | None:
-
-        if plan.execution_unit:
-
-            agent_name = self._normalize_agent(plan.execution_unit)
-
-            agent = self.registry.get(
-                agent_name,
-            )
-
-            if agent:
-
-                return agent
-
-            raise RuntimeError(f"Agent '{agent_name}' no encontrado en el registro.")
-
-        if plan.execution_mode == "multi_step":
-
-            agent = self.registry.get(
-                "planner",
-            )
-
-            if agent:
-
-                return agent
-
-        return self.registry.get(
-            "task",
-        )
-
-    # ==========================================================
-    # Access
+    # Resolution
     # ==========================================================
 
     def get(
@@ -159,24 +55,41 @@ class AgentManager:
         name: str,
     ) -> Agent | None:
 
-        normalized = self._normalize_agent(name)
-
-        if not normalized:
+        if not name:
 
             return None
 
         return self.registry.get(
-            normalized,
+            name,
         )
 
-    def list_agents(
+    # ==========================================================
+    # Information
+    # ==========================================================
+
+    def has(
+        self,
+        name: str,
+    ) -> bool:
+
+        return self.registry.has(
+            name,
+        )
+
+    def list(
         self,
     ) -> list[str]:
 
         return self.registry.list()
 
-    def loaded_agents(
+    def loaded(
         self,
     ) -> list[str]:
 
         return self.registry.loaded()
+
+    def metadata(
+        self,
+    ) -> list[dict]:
+
+        return self.registry.metadata()
