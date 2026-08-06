@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import logging
+
 from collections.abc import Callable
 
 from skills.base import Skill
 
 logger = logging.getLogger(__name__)
+
+
+SkillFactory = Callable[[], Skill] | type[Skill]
 
 
 class SkillRegistry:
@@ -14,30 +18,41 @@ class SkillRegistry:
 
     Responsabilidades:
 
-    - Registrar clases Skill.
+    - Registrar Skills.
     - Crear instancias lazy.
-    - Resolver skills.
+    - Resolver instancias.
 
     No:
 
-    - Ejecuta skills.
+    - Ejecuta Skills.
     - Gestiona planes.
-    - Gestiona contexto.
     """
 
     def __init__(self):
 
-        self._factories: dict[str, Callable[[], Skill]] = {}
+        self._factories: dict[
+            str,
+            SkillFactory,
+        ] = {}
 
-        self._instances: dict[str, Skill] = {}
+        self._instances: dict[
+            str,
+            Skill,
+        ] = {}
+
+    # ==========================================================
+    # Register
+    # ==========================================================
 
     def register(
         self,
         name: str,
-        factory: Callable[[], Skill],
+        factory: SkillFactory,
     ):
 
-        key = self._normalize(name)
+        key = self._normalize(
+            name,
+        )
 
         self._factories[key] = factory
 
@@ -46,23 +61,31 @@ class SkillRegistry:
             key,
         )
 
+    # ==========================================================
+    # Resolve
+    # ==========================================================
+
     def get(
         self,
         name: str,
     ) -> Skill | None:
 
-        key = self._normalize(name)
+        key = self._normalize(
+            name,
+        )
 
         if key in self._instances:
 
             return self._instances[key]
 
-        factory = self._factories.get(key)
+        factory = self._factories.get(
+            key,
+        )
 
-        if not factory:
+        if factory is None:
 
             logger.warning(
-                "Skill no encontrada=%s",
+                "Skill no registrada=%s",
                 key,
             )
 
@@ -70,7 +93,7 @@ class SkillRegistry:
 
         try:
 
-            instance = factory()
+            instance = factory() if callable(factory) else factory
 
             self._instances[key] = instance
 
@@ -85,9 +108,9 @@ class SkillRegistry:
 
             return None
 
-    def list(self) -> list[str]:
-
-        return sorted(self._factories.keys())
+    # ==========================================================
+    # Information
+    # ==========================================================
 
     def has(
         self,
@@ -95,6 +118,18 @@ class SkillRegistry:
     ) -> bool:
 
         return self._normalize(name) in self._factories
+
+    def list(
+        self,
+    ) -> list[str]:
+
+        return sorted(
+            self._factories.keys(),
+        )
+
+    # ==========================================================
+    # Helpers
+    # ==========================================================
 
     def _normalize(
         self,

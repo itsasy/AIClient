@@ -4,6 +4,7 @@ import importlib
 import logging
 
 from skills.base import Skill
+
 from skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -11,20 +12,8 @@ logger = logging.getLogger(__name__)
 
 class SkillLoader:
     """
-    Descubre Skills y las registra.
-
-    No ejecuta nada.
+    Descubrimiento y registro de Skills.
     """
-
-    DEFAULT_MODULES = [
-        "skills.code.analyze",
-        "skills.code.executor",
-        "skills.code.generate",
-        "skills.code.project_analyzer",
-        "skills.code.sandbox",
-        "skills.docs.readme",
-        "skills.knowledge.ingest",
-    ]
 
     def __init__(
         self,
@@ -33,11 +22,9 @@ class SkillLoader:
 
         self.registry = registry
 
-    def load_defaults(self):
-
-        for module in self.DEFAULT_MODULES:
-
-            self.load_module(module)
+    # ==========================================================
+    # Module loading
+    # ==========================================================
 
     def load_module(
         self,
@@ -46,18 +33,22 @@ class SkillLoader:
 
         try:
 
-            module = importlib.import_module(module_path)
+            module = importlib.import_module(
+                module_path,
+            )
 
-            self._register_module(module)
+            self._register_from_module(
+                module,
+            )
 
         except Exception:
 
             logger.exception(
-                "Error cargando skills módulo=%s",
+                "Error cargando módulo=%s",
                 module_path,
             )
 
-    def _register_module(
+    def _register_from_module(
         self,
         module,
     ):
@@ -73,22 +64,18 @@ class SkillLoader:
                 obj,
                 type,
             ):
-
                 continue
 
             if not issubclass(
                 obj,
                 Skill,
             ):
-
                 continue
 
             if obj is Skill:
-
                 continue
 
             if obj.__module__ != module.__name__:
-
                 continue
 
             skill_name = getattr(
@@ -98,10 +85,36 @@ class SkillLoader:
             )
 
             if not skill_name:
-
                 continue
 
             self.registry.register(
                 skill_name,
                 obj,
+            )
+
+            logger.info(
+                "Skill cargada=%s",
+                skill_name,
+            )
+
+    # ==========================================================
+    # Defaults
+    # ==========================================================
+
+    def load_defaults(
+        self,
+    ):
+
+        modules = [
+            "skills.code.analyze",
+            "skills.code.executor",
+            "skills.code.generate",
+            "skills.code.project_analyzer",
+            "skills.code.sandbox",
+        ]
+
+        for module in modules:
+
+            self.load_module(
+                module,
             )

@@ -12,83 +12,68 @@ class SkillManager:
     """
     Resolver central de Skills.
 
-    No conoce implementaciones concretas.
+    Responsabilidades:
+
+    - Resolver Skills registradas.
+    - Inicializar catálogo.
+    - Exponer consulta de capacidades.
+
+    No:
+
+    - Ejecuta Skills.
+    - Gestiona lifecycle.
+    - Normaliza resultados.
+    - Maneja errores de ejecución.
+
+    La ejecución pertenece a SkillRuntime.
     """
 
     def __init__(
         self,
         registry: SkillRegistry | None = None,
-        loader: SkillLoader | None = None,
+        auto_load: bool = True,
     ):
 
         self.registry = registry or SkillRegistry()
 
-        self.loader = loader or SkillLoader(self.registry)
+        self.loader = SkillLoader(
+            self.registry,
+        )
 
-        self.loader.load_defaults()
+        if auto_load:
+            self.loader.load_defaults()
+
+    # ==========================================================
+    # Resolution
+    # ==========================================================
 
     def get(
         self,
         skill_name: str,
     ):
 
-        skill = self.registry.get(skill_name)
+        if not skill_name:
+            return None
 
-        if skill is None:
-
-            logger.warning(
-                "Skill inexistente=%s",
-                skill_name,
-            )
-
-        return skill
-
-    def execute(
-        self,
-        skill_name: str,
-        **kwargs,
-    ):
-
-        skill = self.get(skill_name)
-
-        if skill is None:
-
-            raise ValueError(f"Skill '{skill_name}' no registrada")
-
-        logger.info(
-            "Ejecutando skill=%s",
+        return self.registry.get(
             skill_name,
         )
 
-        result = skill.execute(**kwargs)
-
-        return self.normalize(result)
-
-    def normalize(
-        self,
-        result,
-    ):
-
-        if isinstance(
-            result,
-            dict,
-        ):
-
-            return result
-
-        return {
-            "ok": True,
-            "result": result,
-            "error": None,
-        }
-
-    def list(self):
-
-        return self.registry.list()
+    # ==========================================================
+    # Information
+    # ==========================================================
 
     def has(
         self,
         skill_name: str,
-    ):
+    ) -> bool:
 
-        return self.registry.has(skill_name)
+        return self.registry.has(
+            skill_name,
+        )
+
+    def list(
+        self,
+    ) -> list[str]:
+
+        return self.registry.list()
