@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class PlannerAgent(Agent):
+    """
+    Agente encargado de construir ExecutionPlans multi-step.
+    """
 
     name = "planner"
 
@@ -50,7 +53,9 @@ class PlannerAgent(Agent):
 
         if not plan.steps:
 
-            logger.warning("Planner no generó pasos.")
+            logger.warning(
+                "Planner no generó pasos.",
+            )
 
         return self._format_plan(
             plan,
@@ -65,16 +70,17 @@ class PlannerAgent(Agent):
         context: dict[str, Any],
     ) -> dict[str, Any]:
 
-        planning = {}
+        planning: dict[str, Any] = {}
 
-        allowed = [
+        allowed = (
             "project",
             "documents",
             "obsidian",
             "gentleman",
             "standards",
             "spec",
-        ]
+            "engram",
+        )
 
         for key in allowed:
 
@@ -82,18 +88,14 @@ class PlannerAgent(Agent):
                 key,
             )
 
-            if value:
+            if value is not None:
 
                 planning[key] = value
-
-        if "engram" in context:
-
-            planning["engram"] = context["engram"]
 
         return planning
 
     # ==========================================================
-    # Steps parser
+    # Steps
     # ==========================================================
 
     def _load_steps(
@@ -115,7 +117,9 @@ class PlannerAgent(Agent):
                 list,
             ):
 
-                logger.warning("Planner no devolvió lista de pasos.")
+                logger.warning(
+                    "Planner no devolvió una lista de pasos.",
+                )
 
                 return
 
@@ -138,14 +142,11 @@ class PlannerAgent(Agent):
 
                 plan.add_step(
                     description=description,
-                    skill=item.get(
-                        "skill",
+                    unit_type=item.get(
+                        "unit_type",
                     ),
-                    tool=item.get(
-                        "tool",
-                    ),
-                    provider=item.get(
-                        "provider",
+                    unit_name=item.get(
+                        "unit_name",
                     ),
                     params=item.get(
                         "params",
@@ -155,29 +156,25 @@ class PlannerAgent(Agent):
 
         except Exception:
 
-            logger.exception("Error cargando pasos del planner.")
+            logger.exception(
+                "Error cargando pasos del planner.",
+            )
 
     def _extract_json(
         self,
         response: str,
     ) -> list | dict | None:
 
-        start = response.find(
-            "[",
-        )
+        start = response.find("[")
 
-        end = response.rfind(
-            "]",
-        )
+        end = response.rfind("]")
 
         if start == -1 or end == -1:
 
             return None
 
-        payload = response[start : end + 1]
-
         return json.loads(
-            payload,
+            response[start : end + 1],
         )
 
     # ==========================================================
@@ -193,7 +190,9 @@ class PlannerAgent(Agent):
 
         if not plan.original_task:
 
-            errors.append("Planner requiere una tarea.")
+            errors.append(
+                "Planner requiere una tarea.",
+            )
 
         return errors
 
@@ -221,15 +220,17 @@ class PlannerAgent(Agent):
 
             suffix = ""
 
-            if step.skill:
+            if step.unit_type:
 
-                suffix += f" [{step.skill}]"
+                suffix += f" [{step.unit_type}]"
 
-            if step.tool:
+            if step.unit_name:
 
-                suffix += f" ({step.tool})"
+                suffix += f" {step.unit_name}"
 
-            output.append(f"{index}. {step.description}{suffix}")
+            output.append(
+                f"{index}. {step.description}{suffix}",
+            )
 
         return "\n".join(
             output,

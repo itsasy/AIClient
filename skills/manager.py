@@ -1,65 +1,47 @@
+from __future__ import annotations
+
 import logging
 
-from skills.projects.laravel import LaravelProjectSkill
-from skills.projects.full_generator import FullProjectGeneratorSkill
-
-from skills.code.project_analyzer import ProjectAnalyzerSkill
-from skills.code.generate import GenerateCodeSkill
-from skills.code.executor import CodeExecutorSkill
-from skills.code.sandbox import CodeSandboxSkill
-from skills.code.analyze import AnalyzeCodeSkill
-
-from skills.docs.readme import GenerateReadmeSkill
-
-from skills.knowledge.ingest import IngestDocumentSkill
-
-from skills.tools.docker import DockerTool
-from skills.tools.shell import ShellTool
-from skills.tools.write_file import WriteFileSkill
+from skills.registry import SkillRegistry
+from skills.loader import SkillLoader
 
 logger = logging.getLogger(__name__)
 
 
 class SkillManager:
+    """
+    Resolver central de Skills.
 
-    def __init__(self):
+    No conoce implementaciones concretas.
+    """
 
-        self.skills = {
-            "readme": GenerateReadmeSkill(),
-            "code": GenerateCodeSkill(),
-            "analyze": AnalyzeCodeSkill(),
-            "analyze_project": ProjectAnalyzerSkill(),
-            "execute_code": CodeExecutorSkill(),
-            "sandbox": CodeSandboxSkill(),
-            "shell": ShellTool(),
-            "docker": DockerTool(),
-            "laravel_project": LaravelProjectSkill(),
-            "full_project": FullProjectGeneratorSkill(),
-            "ingest": IngestDocumentSkill(),
-            "write_file": WriteFileSkill(),
-        }
-
-    # ==========================================================
-    # Normalization
-    # ==========================================================
-
-    def _normalize_skill(
+    def __init__(
         self,
-        name: str,
-    ) -> str:
+        registry: SkillRegistry | None = None,
+        loader: SkillLoader | None = None,
+    ):
 
-        return name.lower().strip().replace("-", "_").replace(" ", "_")
+        self.registry = registry or SkillRegistry()
 
-    # ==========================================================
-    # Public API
-    # ==========================================================
+        self.loader = loader or SkillLoader(self.registry)
+
+        self.loader.load_defaults()
 
     def get(
         self,
         skill_name: str,
     ):
 
-        return self.skills.get(self._normalize_skill(skill_name))
+        skill = self.registry.get(skill_name)
+
+        if skill is None:
+
+            logger.warning(
+                "Skill inexistente=%s",
+                skill_name,
+            )
+
+        return skill
 
     def execute(
         self,
@@ -67,28 +49,22 @@ class SkillManager:
         **kwargs,
     ):
 
-        skill = self.get(
-            skill_name,
-        )
+        skill = self.get(skill_name)
 
         if skill is None:
 
-            raise ValueError(f"Skill '{skill_name}' no encontrada.")
+            raise ValueError(f"Skill '{skill_name}' no registrada")
 
         logger.info(
-            "Skill -> %s",
+            "Ejecutando skill=%s",
             skill_name,
         )
 
-        result = skill.execute(
-            **kwargs,
-        )
+        result = skill.execute(**kwargs)
 
-        return self._normalize(
-            result,
-        )
+        return self.normalize(result)
 
-    def _normalize(
+    def normalize(
         self,
         result,
     ):
@@ -97,26 +73,22 @@ class SkillManager:
             result,
             dict,
         ):
+
             return result
 
         return {
-            "type": "skill_result",
-            "payload": {
-                "output": str(result),
-            },
+            "ok": True,
+            "result": result,
+            "error": None,
         }
+
+    def list(self):
+
+        return self.registry.list()
 
     def has(
         self,
         skill_name: str,
-    ) -> bool:
-
-        return self._normalize_skill(skill_name) in self.skills
-
-    def list(
-        self,
     ):
 
-        return sorted(
-            self.skills.keys(),
-        )
+        return self.registry.has(skill_name)

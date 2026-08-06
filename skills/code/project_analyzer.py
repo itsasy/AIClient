@@ -15,6 +15,8 @@ class ProjectAnalyzerSkill(Skill):
 
     version = "1.0"
 
+    capabilities = ["project_analysis"]
+
     def __init__(self):
 
         self.inspector = ProjectInspector()

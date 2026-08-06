@@ -13,6 +13,8 @@ class GenerateCodeSkill(Skill):
 
     version = "1.0"
 
+    capabilities = ["code_generation"]
+
     def execute(
         self,
         task: str = "",

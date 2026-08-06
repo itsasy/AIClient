@@ -5,7 +5,7 @@ from typing import Any
 
 from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
-
+from core.execution_result import ExecutionResult
 from runtime.execution_runtime import ExecutionRuntime
 
 logger = logging.getLogger(__name__)
@@ -111,11 +111,11 @@ class ExecutionEngine:
                 str(exc),
             )
 
-            return {
-                "success": False,
-                "error": str(exc),
-                "plan_id": plan.id,
-            }
+            return ExecutionResult.fail(
+                error=str(exc),
+                executor="execution_engine",
+                plan_id=plan.id,
+            )
 
     # ==========================================================
     # Information

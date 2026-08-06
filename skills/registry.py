@@ -14,27 +14,22 @@ class SkillRegistry:
 
     Responsabilidades:
 
-    - Registrar skills.
+    - Registrar clases Skill.
     - Crear instancias lazy.
-    - Resolver ejecución.
+    - Resolver skills.
 
     No:
 
     - Ejecuta skills.
-    - Gestiona agentes.
+    - Gestiona planes.
+    - Gestiona contexto.
     """
 
     def __init__(self):
 
-        self._factories: dict[
-            str,
-            Callable[[], Skill],
-        ] = {}
+        self._factories: dict[str, Callable[[], Skill]] = {}
 
-        self._instances: dict[
-            str,
-            Skill,
-        ] = {}
+        self._instances: dict[str, Skill] = {}
 
     def register(
         self,
@@ -42,29 +37,32 @@ class SkillRegistry:
         factory: Callable[[], Skill],
     ):
 
-        key = name.lower().strip()
+        key = self._normalize(name)
 
         self._factories[key] = factory
+
+        logger.info(
+            "Skill registrada=%s",
+            key,
+        )
 
     def get(
         self,
         name: str,
     ) -> Skill | None:
 
-        key = name.lower().strip()
+        key = self._normalize(name)
 
         if key in self._instances:
 
             return self._instances[key]
 
-        factory = self._factories.get(
-            key,
-        )
+        factory = self._factories.get(key)
 
         if not factory:
 
             logger.warning(
-                "Skill no registrada=%s",
+                "Skill no encontrada=%s",
                 key,
             )
 
@@ -87,6 +85,20 @@ class SkillRegistry:
 
             return None
 
-    def list(self):
+    def list(self) -> list[str]:
 
         return sorted(self._factories.keys())
+
+    def has(
+        self,
+        name: str,
+    ) -> bool:
+
+        return self._normalize(name) in self._factories
+
+    def _normalize(
+        self,
+        name: str,
+    ) -> str:
+
+        return name.lower().strip().replace("-", "_").replace(" ", "_")

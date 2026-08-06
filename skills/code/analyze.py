@@ -13,6 +13,11 @@ class AnalyzeCodeSkill(Skill):
 
     version = "1.0"
 
+    capabilities = [
+        "code_analysis",
+        "static_analysis",
+    ]
+
     def execute(
         self,
         code_snippet: str = "",

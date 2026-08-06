@@ -19,6 +19,8 @@ class CodeSandboxSkill(Skill):
 
     version = "1.0"
 
+    capabilities = ["isolated_execution"]
+
     def execute(
         self,
         code: str = "",

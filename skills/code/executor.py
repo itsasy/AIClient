@@ -17,6 +17,8 @@ class CodeExecutorSkill(Skill):
 
     version = "1.0"
 
+    capabilities = ["code_execution"]
+
     def execute(
         self,
         code: str = "",

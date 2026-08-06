@@ -21,17 +21,16 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Resolver Skills.
-    - Ejecutar SkillManager.
-    - Gestionar lifecycle del step.
-    - Aplicar retries.
+    - Resolver skills.
+    - Ejecutar skills.
+    - Gestionar retries.
     - Normalizar resultados.
 
     No:
 
-    - Selecciona agentes.
+    - Planifica.
+    - Selecciona skills.
     - Construye contexto.
-    - Decide planificación.
     """
 
     def __init__(
@@ -60,24 +59,40 @@ class SkillRuntime:
 
         retries = 0
 
-        max_retries = step.retries or plan.max_retries
+        max_retries = step.retries if step.retries is not None else plan.max_retries
 
         while retries <= max_retries:
 
             try:
 
                 logger.info(
-                    "Ejecutando skill=%s step=%s",
+                    "Ejecutando skill=%s intento=%s",
                     step.unit_name,
-                    step.description,
+                    retries + 1,
                 )
 
                 step.mark_running()
 
                 result = self.skills.execute(
                     step.unit_name,
+                    plan=plan,
+                    step=step,
+                    context=context,
                     **step.params,
                 )
+
+                normalized = self._validate_result(
+                    result,
+                )
+
+                if not normalized["ok"]:
+
+                    raise RuntimeError(
+                        normalized.get(
+                            "error",
+                            "Skill falló sin error especificado",
+                        )
+                    )
 
                 step.mark_completed(
                     result,
@@ -94,7 +109,7 @@ class SkillRuntime:
                 retries += 1
 
                 logger.exception(
-                    "Error ejecutando skill=%s intento=%s",
+                    "Error skill=%s intento=%s",
                     step.unit_name,
                     retries,
                 )
@@ -116,3 +131,31 @@ class SkillRuntime:
             executor=f"skill:{step.unit_name}",
             plan_id=plan.id,
         )
+
+    def _validate_result(
+        self,
+        result: Any,
+    ) -> dict:
+        """
+        Normaliza resultados de skills.
+
+        Permite que skills antiguos sigan funcionando.
+        """
+
+        if isinstance(result, dict):
+
+            if "ok" in result:
+
+                return result
+
+            return {
+                "ok": True,
+                "result": result,
+                "error": None,
+            }
+
+        return {
+            "ok": True,
+            "result": result,
+            "error": None,
+        }

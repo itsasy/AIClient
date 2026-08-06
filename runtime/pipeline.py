@@ -132,7 +132,6 @@ class Pipeline:
                     errors,
                 )
 
-
             # --------------------------------------------------
             # 3. Execution
             # --------------------------------------------------
@@ -148,7 +147,10 @@ class Pipeline:
                 result,
             )
 
-            self.metrics["success"] += 1
+            if getattr(result, "success", False):
+                self.metrics["success"] += 1
+            else:
+                self.metrics["failed"] += 1
 
             return result
 

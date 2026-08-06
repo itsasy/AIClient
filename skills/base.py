@@ -1,30 +1,50 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-
-from core.execution_plan import ExecutionPlan, ExecutionStep
+from typing import Any
 
 
 class Skill(ABC):
     """
-    Contrato base para Skills.
+    Contrato base de una Skill.
 
     Una Skill representa una capacidad ejecutable.
 
-    No:
+    El Runtime es responsable de:
+    - Planificación.
+    - Contexto.
+    - Lifecycle.
+    - Errores.
+    - Retries.
 
-    - Decide agentes.
-    - Gestiona contexto.
-    - Planifica.
+    La Skill solamente ejecuta una capacidad concreta.
     """
 
     name: str = "base"
 
+    description: str = ""
+
+    version: str = "1.0"
+
+    capabilities: list[str] = []
+
     @abstractmethod
     def execute(
         self,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-        context: dict,
-    ):
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Ejecuta la capacidad.
+
+        Los argumentos vienen desde ExecutionStep.params.
+
+        Puede recibir:
+        - parámetros específicos.
+        - context.
+        - plan.
+        - step.
+
+        mediante kwargs.
+        """
+
         raise NotImplementedError
