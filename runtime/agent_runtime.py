@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from agents.base import Agent
@@ -14,38 +15,43 @@ logger = logging.getLogger(__name__)
 
 class AgentRuntime:
     """
-    Runtime de ejecución de agentes.
+    Runtime encargado de ejecutar Agents.
 
     Responsabilidades:
 
-    - Ejecutar un Agent.
-    - Validar ExecutionPlan.
-    - Gestionar lifecycle.
-    - Normalizar errores.
+    - Recibir un Agent resuelto.
+    - Ejecutar agent.process().
+    - Validar compatibilidad del plan.
+    - Normalizar resultados.
 
     No:
 
     - Selecciona agentes.
     - Construye contexto.
+    - Cambia lifecycle del plan.
     - Ejecuta skills.
     """
 
     name = "agent_runtime"
 
-    # ==========================================================
-    # Public execution
-    # ==========================================================
+    # ======================================================
+    # Execution
+    # ======================================================
 
     def execute(
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
         agent: Agent | None = None,
-    ) -> Any:
+    ) -> ExecutionResult:
 
         if agent is None:
 
-            raise RuntimeError("AgentRuntime requiere un Agent.")
+            return ExecutionResult.fail(
+                error="AgentRuntime requiere un Agent.",
+                executor=self.name,
+                plan_id=plan.id,
+            )
 
         logger.info(
             "Ejecutando agent=%s plan=%s",
@@ -53,36 +59,50 @@ class AgentRuntime:
             plan.id,
         )
 
-        validation_errors = agent.validate_plan(
-            plan,
-        )
-
-        if validation_errors:
-
-            logger.warning(
-                "Validación agent=%s errores=%s",
-                agent.name,
-                validation_errors,
-            )
-
-            plan.metadata.setdefault(
-                "validation_warnings",
-                [],
-            ).extend(
-                validation_errors,
-            )
+        # ----------------------------------------------
+        # Agent validation
+        # ----------------------------------------------
 
         try:
 
-            plan.mark_running()
+            validation_errors = agent.validate_plan(plan)
+
+            if validation_errors:
+
+                logger.warning(
+                    "Plan incompatible con agent=%s errors=%s",
+                    agent.name,
+                    validation_errors,
+                )
+
+                return ExecutionResult.fail(
+                    error=str(validation_errors),
+                    executor=f"agent:{agent.name}",
+                    plan_id=plan.id,
+                )
+
+        except Exception as exc:
+
+            logger.exception(
+                "Error validando agent=%s",
+                agent.name,
+            )
+
+            return ExecutionResult.fail(
+                error=str(exc),
+                executor=f"agent:{agent.name}",
+                plan_id=plan.id,
+            )
+
+        # ----------------------------------------------
+        # Execution
+        # ----------------------------------------------
+
+        try:
 
             result = agent.process(
                 plan,
                 context,
-            )
-
-            plan.mark_completed(
-                result,
             )
 
             return ExecutionResult.ok(
@@ -96,10 +116,6 @@ class AgentRuntime:
             logger.exception(
                 "Error ejecutando agent=%s",
                 agent.name,
-            )
-
-            plan.mark_failed(
-                str(exc),
             )
 
             return ExecutionResult.fail(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from core.execution_plan import ExecutionPlan
@@ -10,24 +11,21 @@ logger = logging.getLogger(__name__)
 
 class ExecutionPlanner:
     """
-    Construye planes de ejecución a partir de una intención
-    y contexto disponible.
+    Construye ExecutionPlans.
 
     Responsabilidades:
 
-    - Convertir Intent -> ExecutionPlan.
-    - Seleccionar estrategia inicial.
-    - Definir agente.
-    - Definir skills.
-    - Definir modo de ejecución.
-    - Preparar parámetros.
+    - Transformar intención en plan.
+    - Definir unidad ejecutable.
+    - Definir pasos.
+    - Definir contexto requerido.
 
     No:
 
-    - Ejecuta skills.
-    - Llama LLM.
-    - Recupera memoria.
+    - Ejecuta.
+    - Selecciona LLM.
     - Ejecuta agentes.
+    - Ejecuta skills.
     """
 
     @staticmethod
@@ -62,10 +60,17 @@ class ExecutionPlanner:
 
         plan.intent_category = domain
 
-        plan.execution_mode = "multi_step" if complexity in ("high", "complex") else "single"
+        if complexity in (
+            "high",
+            "complex",
+        ):
+            plan.execution_mode = "multi_step"
+
+        else:
+            plan.execution_mode = "single"
 
         logger.info(
-            "Creando ExecutionPlan | intent=%s domain=%s complexity=%s",
+            "Creando plan intent=%s domain=%s complexity=%s",
             intent_name,
             domain,
             complexity,
@@ -92,9 +97,9 @@ class ExecutionPlanner:
 
         return plan
 
-    # ==========================================================
+    # ======================================================
     # PROJECT CREATION
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_project_creation(
@@ -105,21 +110,29 @@ class ExecutionPlanner:
 
         plan.objective = "Crear un nuevo proyecto de software"
 
-        plan.agent = "architect"
-
-        plan.add_skill(
-            "analyze_project",
-        )
-
         plan.execution_mode = "multi_step"
 
-        plan.params = {
-            "task": task,
-        }
+        plan.add_step(
+            description="Analizar requisitos del proyecto",
+            unit_type="agent",
+            unit_name="architect",
+            params={
+                "task": task,
+            },
+        )
 
-    # ==========================================================
+        plan.add_step(
+            description="Generar estructura inicial",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+            },
+        )
+
+    # ======================================================
     # CODE GENERATION
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_code_generation(
@@ -130,19 +143,17 @@ class ExecutionPlanner:
 
         plan.objective = "Generar código"
 
-        plan.agent = "coder"
+        plan.execution_unit_type = "agent"
 
-        plan.add_skill(
-            "generate",
-        )
+        plan.execution_unit = "coder"
 
         plan.params = {
             "task": task,
         }
 
-    # ==========================================================
+    # ======================================================
     # DEBUG
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_debug(
@@ -153,25 +164,29 @@ class ExecutionPlanner:
 
         plan.objective = "Analizar y resolver problema técnico"
 
-        plan.agent = "coder"
-
-        plan.add_skill(
-            "analyze",
-        )
-
-        plan.add_skill(
-            "sandbox",
-        )
-
         plan.execution_mode = "multi_step"
 
-        plan.params = {
-            "task": task,
-        }
+        plan.add_step(
+            description="Analizar problema",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+            },
+        )
 
-    # ==========================================================
+        plan.add_step(
+            description="Ejecutar validaciones",
+            unit_type="skill",
+            unit_name="sandbox",
+            params={
+                "task": task,
+            },
+        )
+
+    # ======================================================
     # REFACTOR
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_refactor(
@@ -182,25 +197,29 @@ class ExecutionPlanner:
 
         plan.objective = "Refactorizar código existente"
 
-        plan.agent = "architect"
-
-        plan.add_skill(
-            "analyze",
-        )
-
-        plan.add_skill(
-            "generate",
-        )
-
         plan.execution_mode = "multi_step"
 
-        plan.params = {
-            "task": task,
-        }
+        plan.add_step(
+            description="Analizar arquitectura actual",
+            unit_type="agent",
+            unit_name="architect",
+            params={
+                "task": task,
+            },
+        )
 
-    # ==========================================================
+        plan.add_step(
+            description="Aplicar cambios",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+            },
+        )
+
+    # ======================================================
     # DOCUMENTATION
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_documentation(
@@ -211,15 +230,17 @@ class ExecutionPlanner:
 
         plan.objective = "Crear documentación"
 
-        plan.agent = "writer"
+        plan.execution_unit_type = "agent"
 
-        plan.add_skill(
-            "readme",
-        )
+        plan.execution_unit = "writer"
 
-    # ==========================================================
+        plan.params = {
+            "task": task,
+        }
+
+    # ======================================================
     # FILE CREATION
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_file_creation(
@@ -230,19 +251,17 @@ class ExecutionPlanner:
 
         plan.objective = "Crear archivo"
 
-        plan.agent = "executor"
+        plan.execution_unit_type = "skill"
 
-        plan.add_skill(
-            "write_file",
-        )
+        plan.execution_unit = "write_file"
 
         plan.params = {
             "task": task,
         }
 
-    # ==========================================================
+    # ======================================================
     # COMMAND EXECUTION
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_command_execution(
@@ -253,19 +272,17 @@ class ExecutionPlanner:
 
         plan.objective = "Ejecutar comando"
 
-        plan.agent = "executor"
+        plan.execution_unit_type = "skill"
 
-        plan.add_skill(
-            "shell",
-        )
+        plan.execution_unit = "shell"
 
         plan.params = {
             "task": task,
         }
 
-    # ==========================================================
+    # ======================================================
     # DOCKER
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_docker(
@@ -276,19 +293,17 @@ class ExecutionPlanner:
 
         plan.objective = "Operación Docker"
 
-        plan.agent = "executor"
+        plan.execution_unit_type = "skill"
 
-        plan.add_skill(
-            "sandbox",
-        )
+        plan.execution_unit = "sandbox"
 
         plan.params = {
             "task": task,
         }
 
-    # ==========================================================
+    # ======================================================
     # DEFAULT
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _plan_default(
@@ -301,15 +316,17 @@ class ExecutionPlanner:
 
         plan.objective = task
 
-        plan.agent = "task"
+        plan.execution_unit_type = "agent"
 
-        plan.add_skill(
-            "conversation",
-        )
+        plan.execution_unit = "task"
 
-    # ==========================================================
+        plan.params = {
+            "task": task,
+        }
+
+    # ======================================================
     # CONTEXT
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _apply_context_requirements(
@@ -317,11 +334,9 @@ class ExecutionPlanner:
         context: dict[str, Any],
     ):
 
-        available = set(
-            context.keys(),
-        )
+        available = set(context.keys())
 
-        for item in [
+        for provider in (
             "project",
             "memory",
             "engram",
@@ -329,10 +344,8 @@ class ExecutionPlanner:
             "standards",
             "knowledge",
             "gentleman",
-        ]:
+        ):
 
-            if item in available:
+            if provider in available:
 
-                plan.add_context_requirement(
-                    item,
-                )
+                plan.add_context_requirement(provider)

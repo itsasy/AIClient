@@ -20,14 +20,24 @@ logger = logging.getLogger(__name__)
 
 class ExecutionRuntime:
     """
-    Runtime unificado.
+    Router central de ejecución.
 
-    Ejecuta:
+    Responsabilidad única:
 
-    - Agents.
-    - Skills.
-    - Steps completos.
+    - Determinar qué runtime debe ejecutar.
+    - Delegar ejecución.
+    - Consolidar resultados.
+
+    No:
+
+    - Ejecuta agentes.
+    - Ejecuta skills.
+    - Construye contexto.
+    - Modifica planificación.
+    - Decide estrategia.
     """
+
+    name = "execution_runtime"
 
     def __init__(
         self,
@@ -43,7 +53,7 @@ class ExecutionRuntime:
         self.skill_runtime = skill_runtime or SkillRuntime()
 
     # ======================================================
-    # Public execution
+    # Public API
     # ======================================================
 
     def execute(
@@ -54,78 +64,105 @@ class ExecutionRuntime:
 
         if plan.steps:
 
-            return self.execute_steps(
+            return self._execute_steps(
                 plan,
                 context,
             )
 
-        return self.execute_unit(
-            unit_type=plan.execution_unit_type,
-            unit_name=plan.execution_unit,
-            plan=plan,
-            step=None,
-            context=context,
+        return self._execute_single(
+            plan,
+            context,
         )
 
     # ======================================================
-    # Steps
+    # Single execution
     # ======================================================
 
-    def execute_steps(
+    def _execute_single(
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        results = []
+        if not plan.execution_unit_type:
+
+            return ExecutionResult.fail(
+                error="Plan sin unidad de ejecución.",
+                executor=self.name,
+                plan_id=plan.id,
+            )
+
+        step = ExecutionStep(
+            description=(plan.objective or plan.original_task),
+            unit_type=plan.execution_unit_type,
+            unit_name=plan.execution_unit,
+            params=plan.params,
+        )
+
+        return self._dispatch(
+            plan,
+            step,
+            context,
+        )
+
+    # ======================================================
+    # Multi step
+    # ======================================================
+
+    def _execute_steps(
+        self,
+        plan: ExecutionPlan,
+        context: dict[str, Any],
+    ) -> ExecutionResult:
+
+        outputs = []
 
         for step in plan.steps:
 
-            result = self.execute_unit(
-                unit_type=step.unit_type,
-                unit_name=step.unit_name,
-                plan=plan,
-                step=step,
-                context=context,
+            result = self._dispatch(
+                plan,
+                step,
+                context,
             )
 
-            results.append(
+            outputs.append(
                 result.to_dict(),
             )
 
-            if not result.success and plan.stop_on_error:
+            if not result.success:
 
-                return result
+                if plan.stop_on_error:
+
+                    return result
 
         return ExecutionResult.ok(
-            output=results,
-            executor="execution_runtime",
+            output=outputs,
+            executor=self.name,
             plan_id=plan.id,
         )
 
     # ======================================================
-    # Unit execution
+    # Router
     # ======================================================
 
-    def execute_unit(
+    def _dispatch(
         self,
-        unit_type: str | None,
-        unit_name: str | None,
         plan: ExecutionPlan,
-        step: ExecutionStep | None,
+        step: ExecutionStep,
         context: dict[str, Any],
     ) -> ExecutionResult:
 
+        unit_type = step.unit_type
+
+        if unit_type == "agent":
+
+            return self._execute_agent(
+                plan,
+                step,
+                context,
+            )
+
         if unit_type == "skill":
-
-            if step is None:
-
-                step = ExecutionStep(
-                    description=(plan.objective or plan.original_task),
-                    unit_type="skill",
-                    unit_name=unit_name,
-                    params=plan.params,
-                )
 
             return self.skill_runtime.execute(
                 plan,
@@ -133,28 +170,37 @@ class ExecutionRuntime:
                 context,
             )
 
-        if unit_type == "agent":
-
-            agent = self.agent_manager.get(
-                unit_name,
-            )
-
-            if agent is None:
-
-                return ExecutionResult.fail(
-                    error=f"Agent no encontrado: {unit_name}",
-                    executor="execution_runtime",
-                    plan_id=plan.id,
-                )
-
-            return self.agent_runtime.execute(
-                plan,
-                context,
-                agent,
-            )
-
         return ExecutionResult.fail(
-            error=f"Unidad desconocida: {unit_type}",
-            executor="execution_runtime",
+            error=(f"Tipo de unidad inválido: {unit_type}"),
+            executor=self.name,
             plan_id=plan.id,
+        )
+
+    # ======================================================
+    # Agent dispatch
+    # ======================================================
+
+    def _execute_agent(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        context: dict[str, Any],
+    ) -> ExecutionResult:
+
+        agent = self.agent_manager.get(
+            step.unit_name,
+        )
+
+        if agent is None:
+
+            return ExecutionResult.fail(
+                error=(f"Agent no encontrado: " f"{step.unit_name}"),
+                executor=self.name,
+                plan_id=plan.id,
+            )
+
+        return self.agent_runtime.execute(
+            plan,
+            context,
+            agent,
         )

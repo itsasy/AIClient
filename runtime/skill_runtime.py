@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+
 from typing import Any
 
 from core.execution_plan import (
@@ -21,24 +23,28 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Resolver Skills.
-    - Ejecutar Skills.
+    - Recibir un ExecutionStep.
+    - Resolver la Skill mediante SkillManager.
+    - Ejecutar Skill.execute().
     - Gestionar retries.
     - Normalizar resultados.
 
     No:
 
     - Planifica.
-    - Selecciona Skills.
+    - Decide Skills.
     - Construye contexto.
+    - Modifica ExecutionPlan.
     """
+
+    name = "skill_runtime"
 
     def __init__(
         self,
         skill_manager: SkillManager | None = None,
     ):
 
-        self.skills = skill_manager or SkillManager()
+        self.skill_manager = skill_manager or SkillManager()
 
     # ======================================================
     # Execution
@@ -56,26 +62,28 @@ class SkillRuntime:
         if step.unit_type != "skill":
 
             return ExecutionResult.fail(
-                error=("SkillRuntime recibió unidad inválida: " f"{step.unit_type}"),
-                executor="skill_runtime",
+                error=("SkillRuntime recibió " f"unidad inválida: {step.unit_type}"),
+                executor=self.name,
                 plan_id=plan.id,
             )
 
-        skill = self.skills.get(
+        skill = self.skill_manager.get(
             step.unit_name,
         )
 
         if skill is None:
 
             return ExecutionResult.fail(
-                error=f"Skill no encontrada: {step.unit_name}",
-                executor="skill_runtime",
+                error=(f"Skill no encontrada: " f"{step.unit_name}"),
+                executor=self.name,
                 plan_id=plan.id,
             )
 
         retries = 0
 
         max_retries = step.retries if step.retries is not None else plan.max_retries
+
+        start = time.time()
 
         while retries <= max_retries:
 
@@ -123,7 +131,7 @@ class SkillRuntime:
                 retries += 1
 
                 logger.exception(
-                    "Error ejecutando skill=%s intento=%s",
+                    "Error skill=%s intento=%s",
                     skill.name,
                     retries,
                 )
@@ -142,7 +150,7 @@ class SkillRuntime:
 
         return ExecutionResult.fail(
             error="Max retries alcanzado.",
-            executor=f"skill:{skill.name}",
+            executor=self.name,
             plan_id=plan.id,
         )
 

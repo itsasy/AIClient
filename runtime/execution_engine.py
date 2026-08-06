@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
+
 from runtime.execution_runtime import ExecutionRuntime
 
 logger = logging.getLogger(__name__)
@@ -13,40 +15,25 @@ logger = logging.getLogger(__name__)
 
 class ExecutionEngine:
     """
-    Motor principal de ejecución.
-
-    Flujo:
-
-    ExecutionPlan
-          |
-          v
-    ContextManager
-          |
-          v
-    ExecutionRuntime
-          |
-          v
-    Agent / Skill
-          |
-          v
-       Result
-
+    Motor principal del sistema.
 
     Responsabilidades:
 
-    - Ejecutar ExecutionPlans completos.
-    - Construir contexto.
-    - Delegar ejecución al runtime unificado.
-    - Gestionar lifecycle general.
+    - Validar ExecutionPlan.
+    - Preparar contexto.
+    - Gestionar lifecycle global.
+    - Delegar ejecución.
+    - Registrar métricas.
 
     No:
 
     - Analiza intención.
-    - Crea ExecutionPlans.
-    - Selecciona LLM.
-    - Ejecuta Agents directamente.
-    - Ejecuta Skills directamente.
+    - Crea planes.
+    - Ejecuta agentes.
+    - Ejecuta skills.
     """
+
+    name = "execution_engine"
 
     def __init__(
         self,
@@ -60,69 +47,123 @@ class ExecutionEngine:
 
         self.metrics = {
             "executions": 0,
+            "success": 0,
             "failed": 0,
+            "duration": 0,
         }
 
-    # ==========================================================
-    # Execution
-    # ==========================================================
+    # ======================================================
+    # Public API
+    # ======================================================
 
     def execute(
         self,
         plan: ExecutionPlan,
-    ) -> Any:
+    ) -> ExecutionResult:
+
+        start = time.time()
+
+        self.metrics["executions"] += 1
 
         logger.info(
             "Inicio ejecución plan=%s",
             plan.id,
         )
 
-        self.metrics["executions"] += 1
-
         try:
 
-            errors = plan.validate()
+            self._validate_plan(
+                plan,
+            )
 
-            if errors:
-
-                logger.warning(
-                    "ExecutionPlan inválido errors=%s",
-                    errors,
-                )
+            plan.mark_running()
 
             context = self.context_manager.build(
                 plan,
             )
 
-            result = self.execution_runtime.execute(plan, context)
+            result = self.execution_runtime.execute(
+                plan,
+                context,
+            )
+
+            duration = round(
+                time.time() - start,
+                3,
+            )
+
+            result.metadata.update(
+                {
+                    "duration": duration,
+                    "engine": self.name,
+                }
+            )
+
+            self.metrics["duration"] += duration
+
+            if result.success:
+
+                plan.mark_completed(
+                    result.output,
+                )
+
+                self.metrics["success"] += 1
+
+            else:
+
+                plan.mark_failed(
+                    result.error or "Error desconocido",
+                )
+
+                self.metrics["failed"] += 1
 
             return result
 
         except Exception as exc:
 
-            self.metrics["failed"] += 1
-
-            logger.exception(
-                "ExecutionEngine fallo plan=%s",
-                plan.id,
+            duration = round(
+                time.time() - start,
+                3,
             )
+
+            self.metrics["failed"] += 1
 
             plan.mark_failed(
                 str(exc),
             )
 
+            logger.exception(
+                "Fallo ExecutionEngine plan=%s",
+                plan.id,
+            )
+
             return ExecutionResult.fail(
                 error=str(exc),
-                executor="execution_engine",
+                executor=self.name,
                 plan_id=plan.id,
             )
 
-    # ==========================================================
-    # Information
-    # ==========================================================
+    # ======================================================
+    # Validation
+    # ======================================================
+
+    def _validate_plan(
+        self,
+        plan: ExecutionPlan,
+    ) -> None:
+
+        errors = plan.validate()
+
+        if errors:
+
+            raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
+
+    # ======================================================
+    # Metrics
+    # ======================================================
 
     def get_metrics(
         self,
-    ) -> dict:
+    ) -> dict[str, Any]:
 
         return self.metrics.copy()

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import logging
-
 from typing import Any
 
+
 from core.execution_planner import ExecutionPlanner
-from core.context.manager import ContextManager
+from core.execution_result import ExecutionResult
 
 from runtime.execution_engine import ExecutionEngine
 
@@ -14,48 +14,47 @@ logger = logging.getLogger(__name__)
 
 class Pipeline:
     """
-    Orquestador principal del flujo de ejecución.
+    Fachada principal del sistema.
 
     Flujo:
 
     User Input
         |
         v
-    Intent
+    Intent Analyzer
         |
         v
-    ExecutionPlanner
+    Execution Planner
         |
         v
-    ExecutionPlan
+    Execution Engine
         |
         v
-    ExecutionEngine
-        |
-        v
-       Result
+    Execution Result
 
 
-    Responsabilidades:
+    Responsabilidad:
 
-    - Coordinar componentes.
-    - Mantener ciclo de vida.
-    - Centralizar métricas.
+    - Coordinar componentes superiores.
+    - Exponer API simple.
+    - Gestionar métricas globales.
 
 
     No:
 
-    - Ejecuta Skills.
-    - Ejecuta Agents.
-    - Ejecuta Tools.
+    - Ejecuta agentes.
+    - Ejecuta skills.
+    - Valida planes.
+    - Construye contexto.
     """
+
+    name = "pipeline"
 
     def __init__(
         self,
         intent_analyzer=None,
-        planner=None,
-        context_manager=None,
-        execution_engine=None,
+        planner: ExecutionPlanner | None = None,
+        execution_engine: ExecutionEngine | None = None,
         learner=None,
     ):
 
@@ -63,11 +62,7 @@ class Pipeline:
 
         self.planner = planner or ExecutionPlanner()
 
-        self.context_manager = context_manager or ContextManager()
-
-        self.execution_engine = execution_engine or ExecutionEngine(
-            context_manager=self.context_manager,
-        )
+        self.execution_engine = execution_engine or ExecutionEngine()
 
         self.learner = learner
 
@@ -77,15 +72,15 @@ class Pipeline:
             "failed": 0,
         }
 
-    # ==========================================================
+    # ======================================================
     # Public API
-    # ==========================================================
+    # ======================================================
 
     def run(
         self,
         user_input: str,
         metadata: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> ExecutionResult:
 
         metadata = metadata or {}
 
@@ -94,11 +89,11 @@ class Pipeline:
         try:
 
             logger.info(
-                "Pipeline iniciado | task=%s",
+                "Pipeline iniciado: %s",
                 user_input[:100],
             )
 
-            intent = self._understand_intent(
+            intent = self._analyze_intent(
                 user_input,
                 metadata,
             )
@@ -109,20 +104,6 @@ class Pipeline:
                 context=metadata,
             )
 
-            logger.info(
-                "Plan creado=%s",
-                plan,
-            )
-
-            errors = plan.validate()
-
-            if errors:
-
-                logger.warning(
-                    "ExecutionPlan con advertencias=%s",
-                    errors,
-                )
-
             result = self.execution_engine.execute(
                 plan,
             )
@@ -132,11 +113,7 @@ class Pipeline:
                 result,
             )
 
-            if getattr(
-                result,
-                "success",
-                False,
-            ):
+            if result.success:
 
                 self.metrics["success"] += 1
 
@@ -151,20 +128,22 @@ class Pipeline:
             self.metrics["failed"] += 1
 
             logger.exception(
-                "Error Pipeline=%s",
-                exc,
+                "Pipeline error",
             )
 
-            raise
+            return ExecutionResult.fail(
+                error=str(exc),
+                executor=self.name,
+            )
 
-    # ==========================================================
+    # ======================================================
     # Intent
-    # ==========================================================
+    # ======================================================
 
-    def _understand_intent(
+    def _analyze_intent(
         self,
         task: str,
-        metadata: dict,
+        metadata: dict[str, Any],
     ) -> dict[str, Any]:
 
         if self.intent_analyzer:
@@ -179,15 +158,15 @@ class Pipeline:
             "complexity": "normal",
         }
 
-    # ==========================================================
+    # ======================================================
     # Learning
-    # ==========================================================
+    # ======================================================
 
     def _learn(
         self,
         query: str,
-        result: Any,
-    ):
+        result: ExecutionResult,
+    ) -> None:
 
         if not self.learner:
 
@@ -197,7 +176,7 @@ class Pipeline:
 
             self.learner.extract_and_learn(
                 query,
-                str(result),
+                result.to_dict(),
             )
 
         except Exception:
@@ -206,12 +185,12 @@ class Pipeline:
                 "Error aprendizaje continuo",
             )
 
-    # ==========================================================
+    # ======================================================
     # Metrics
-    # ==========================================================
+    # ======================================================
 
     def get_metrics(
         self,
-    ) -> dict:
+    ) -> dict[str, Any]:
 
         return self.metrics.copy()

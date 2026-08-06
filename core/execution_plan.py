@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import copy
 import uuid
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+VALID_STATUS = {
+    "pending",
+    "planned",
+    "validated",
+    "running",
+    "completed",
+    "failed",
+    "learning",
+    "cancelled",
+}
 
 
 @dataclass(slots=True)
@@ -37,14 +49,12 @@ class ExecutionStep:
 
     def set_status(self, status: str):
 
-        if status not in ExecutionPlan.VALID_STATUS:
-
+        if status not in VALID_STATUS:
             raise ValueError(f"Estado inválido: {status}")
 
         self.status = status
 
     def mark_running(self):
-
         self.set_status("running")
 
     def mark_completed(self, result: Any = None):
@@ -52,10 +62,7 @@ class ExecutionStep:
         self.status = "completed"
         self.result = result
 
-    def mark_failed(
-        self,
-        error: str,
-    ):
+    def mark_failed(self, error: str):
 
         self.status = "failed"
         self.error = error
@@ -103,17 +110,6 @@ class ExecutionPlan:
         "multi_step",
     }
 
-    VALID_STATUS = {
-        "pending",
-        "planned",
-        "validated",
-        "running",
-        "completed",
-        "failed",
-        "learning",
-        "cancelled",
-    }
-
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
@@ -132,9 +128,9 @@ class ExecutionPlan:
 
     execution_mode: str = "single"
 
-    execution_unit_type: str | None = None  # "agent" o "skill"
+    execution_unit_type: str | None = None
 
-    execution_unit: str | None = None  # nombre (ej. "architect", "shell")
+    execution_unit: str | None = None
 
     steps: list[ExecutionStep] = field(default_factory=list)
 
@@ -177,7 +173,6 @@ class ExecutionPlan:
     ) -> str:
 
         if not provider:
-
             return provider
 
         key = provider.lower().strip().replace(" ", "_")
@@ -188,16 +183,18 @@ class ExecutionPlan:
         )
 
     @classmethod
-    def normalize_unit_type(cls, unit_type: str | None):
+    def normalize_unit_type(
+        cls,
+        unit_type: str | None,
+    ):
 
         if not unit_type:
-
             return None
 
         return unit_type.lower().strip()
 
     # ======================================================
-    # Context requirements
+    # Context
     # ======================================================
 
     def add_context_requirement(
@@ -211,13 +208,11 @@ class ExecutionPlan:
             provider in self.AVAILABLE_CONTEXT_PROVIDERS
             and provider not in self.context_requirements
         ):
-
             self.context_requirements.append(provider)
 
     def validate_context_requirements(self):
 
         invalid = []
-
         normalized = []
 
         for provider in self.context_requirements:
@@ -225,11 +220,9 @@ class ExecutionPlan:
             canonical = self.normalize_provider(provider)
 
             if canonical not in self.AVAILABLE_CONTEXT_PROVIDERS:
-
                 invalid.append(provider)
 
             else:
-
                 normalized.append(canonical)
 
         self.context_requirements = list(dict.fromkeys(normalized))
@@ -243,8 +236,8 @@ class ExecutionPlan:
     def add_step(
         self,
         description: str,
-        unit_type: str | None = None,
-        unit_name: str | None = None,
+        unit_type: str,
+        unit_name: str,
         params: dict[str, Any] | None = None,
     ):
 
@@ -262,7 +255,6 @@ class ExecutionPlan:
         for step in self.steps:
 
             if step.status != "completed":
-
                 return step
 
         return None
@@ -270,6 +262,10 @@ class ExecutionPlan:
     # ======================================================
     # Lifecycle
     # ======================================================
+
+    def mark_planned(self):
+
+        self.status = "planned"
 
     def mark_running(self):
 
@@ -300,27 +296,23 @@ class ExecutionPlan:
         errors = []
 
         if not self.original_task:
-
             errors.append("original_task vacío")
 
         if not self.intent:
-
             errors.append("intent no definido")
 
         if self.execution_mode not in self.AVAILABLE_EXECUTION_MODES:
-
             errors.append("execution_mode inválido")
 
-        if self.execution_unit_type and self.execution_unit_type not in self.UNIT_TYPES:
+        if self.execution_unit_type:
 
-            errors.append("execution_unit_type inválido")
+            if self.execution_unit_type not in self.UNIT_TYPES:
+                errors.append("execution_unit_type inválido")
 
-        if self.execution_unit_type and not self.execution_unit:
-
-            errors.append("execution_unit no definido")
+            if not self.execution_unit:
+                errors.append("execution_unit no definido")
 
         if not self.execution_unit_type and not self.steps:
-
             errors.append("sin unidad de ejecución")
 
         errors.extend(
@@ -328,10 +320,17 @@ class ExecutionPlan:
         )
 
         if self.execution_mode == "multi_step" and not self.steps:
-
             errors.append("multi_step sin pasos")
 
         return errors
+
+    # ======================================================
+    # Utilities
+    # ======================================================
+
+    def clone(self) -> ExecutionPlan:
+
+        return copy.deepcopy(self)
 
     # ======================================================
     # Serialization
@@ -367,6 +366,7 @@ class ExecutionPlan:
         return (
             "<ExecutionPlan "
             f"{self.intent} "
-            f"{self.execution_unit_type}:{self.execution_unit} "
+            f"{self.execution_unit_type}:"
+            f"{self.execution_unit} "
             f"{self.status}>"
         )
