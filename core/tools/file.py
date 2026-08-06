@@ -4,19 +4,16 @@ from pathlib import Path
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.config import Config
 
-from skills.base import Skill
+from core.tools.base import Tool
 
 
-class WriteFileSkill(Skill):
+class FileTool(Tool):
 
-    name = "write_file"
+    name = "file"
 
-    description = "Escribe contenido en un archivo. " "No genera contenido."
+    description = "Operaciones seguras sobre archivos."
 
     version = "2.0"
 
@@ -27,29 +24,18 @@ class WriteFileSkill(Skill):
 
     def execute(
         self,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-        context: dict[str, Any],
+        operation: str,
+        path: str,
+        content: str = "",
+        **kwargs,
     ) -> dict[str, Any]:
 
-        params = step.params or {}
-
-        path = params.get(
-            "path",
-            "",
-        )
-
-        content = params.get(
-            "content",
-            "",
-        )
-
-        if not content:
+        if operation != "write":
 
             return {
                 "ok": False,
                 "result": None,
-                "error": ("No se proporcionó contenido " "para escribir."),
+                "error": (f"Operación no soportada: {operation}"),
             }
 
         if not path:
@@ -57,12 +43,30 @@ class WriteFileSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": ("No se proporcionó ruta " "del archivo."),
+                "error": "No se proporcionó ruta.",
+            }
+
+        if not content:
+
+            return {
+                "ok": False,
+                "result": None,
+                "error": "No se proporcionó contenido.",
             }
 
         try:
 
-            filepath = Path(path).expanduser().resolve()
+            root = Path(Config.TARGET_PROJECT_ROOT).resolve()
+
+            filepath = (root / path).resolve()
+
+            if not str(filepath).startswith(str(root)):
+
+                return {
+                    "ok": False,
+                    "result": None,
+                    "error": ("Ruta fuera del proyecto bloqueada."),
+                }
 
             filepath.parent.mkdir(
                 parents=True,
@@ -77,7 +81,6 @@ class WriteFileSkill(Skill):
             return {
                 "ok": True,
                 "result": {
-                    "type": "write_file_result",
                     "path": str(filepath),
                 },
                 "error": None,

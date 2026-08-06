@@ -14,13 +14,13 @@ class ProposalGeneratorSkill(Skill):
 
     name = "generate_proposal"
 
-    description = "Genera estructuras de propuestas " "para trabajos freelance o empleo."
+    description = "Genera propuestas para freelance o LinkedIn."
 
     version = "2.0"
 
     capabilities = (
         "proposal_generation",
-        "freelance_support",
+        "freelance_assistance",
     )
 
     def execute(
@@ -42,20 +42,22 @@ class ProposalGeneratorSkill(Skill):
             "freelance",
         )
 
-        if not job_description.strip():
+        if not job_description:
 
             return {
                 "ok": False,
                 "result": None,
-                "error": ("No se proporcionó " "descripción del trabajo."),
+                "error": "No se proporcionó descripción del trabajo.",
             }
 
         return {
             "ok": True,
             "result": {
                 "type": "proposal",
-                "job_description": job_description,
-                "mode": mode,
+                "payload": {
+                    "job_description": job_description,
+                    "mode": mode,
+                },
             },
             "error": None,
         }

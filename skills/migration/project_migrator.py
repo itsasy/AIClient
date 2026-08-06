@@ -16,13 +16,14 @@ class ProjectMigratorSkill(Skill):
 
     name = "migrate_project"
 
-    description = "Analiza y prepara la migración " "de proyectos antiguos."
+    description = "Migra proyecto antiguo a estándares modernos."
 
     version = "2.0"
 
     capabilities = (
         "project_migration",
-        "architecture_review",
+        "architecture_upgrade",
+        "project_analysis",
     )
 
     def __init__(self):
@@ -45,7 +46,7 @@ class ProjectMigratorSkill(Skill):
 
         new_standards = params.get(
             "new_standards",
-            ("Laravel 11, Docker, Sanctum, " "buenas prácticas modernas, " "arquitectura limpia"),
+            "",
         )
 
         try:
@@ -56,9 +57,18 @@ class ProjectMigratorSkill(Skill):
                 "ok": True,
                 "result": {
                     "type": "migration",
-                    "snapshot": snapshot,
-                    "old_project_path": old_project_path,
-                    "new_standards": new_standards,
+                    "payload": {
+                        "snapshot": snapshot,
+                        "new_standards": (
+                            new_standards
+                            or (
+                                "Laravel 11, Docker, Sanctum, "
+                                "buenas prácticas modernas, "
+                                "arquitectura limpia"
+                            )
+                        ),
+                        "old_project_path": old_project_path,
+                    },
                 },
                 "error": None,
             }

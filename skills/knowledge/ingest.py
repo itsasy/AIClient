@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from typing import Any
 
 from core.document_ingestor import DocumentIngestor
@@ -18,13 +17,13 @@ class IngestDocumentSkill(Skill):
 
     name = "ingest"
 
-    description = "Ingiere documentos y los almacena " "en el sistema de conocimiento."
+    description = "Ingiere un documento " "(PDF, DOCX, TXT, imagen) y lo guarda en Engram."
 
     version = "2.0"
 
     capabilities = (
         "document_ingestion",
-        "knowledge_management",
+        "knowledge_storage",
     )
 
     def execute(
@@ -61,14 +60,15 @@ class IngestDocumentSkill(Skill):
             return {
                 "ok": False,
                 "result": {
+                    "type": "ingest_result",
                     "filepath": str(path),
                 },
-                "error": (f"Archivo no encontrado: {filepath}"),
+                "error": f"Archivo no encontrado: {filepath}",
             }
 
-        try:
+        tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else []
 
-            tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
+        try:
 
             ingestor = DocumentIngestor()
 
@@ -85,7 +85,7 @@ class IngestDocumentSkill(Skill):
                     "filename": path.name,
                     "tags": tag_list,
                 },
-                "error": (None if success else "Error ingiriendo documento."),
+                "error": None if success else "Error ingiriendo documento.",
             }
 
         except Exception as exc:

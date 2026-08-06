@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from core.execution_planner import ExecutionPlanner
@@ -29,28 +30,24 @@ class Pipeline:
     ExecutionPlan
         |
         v
-    ContextManager
-        |
-        v
     ExecutionEngine
         |
         v
-    Result
+       Result
 
 
     Responsabilidades:
 
     - Coordinar componentes.
-    - Mantener ciclo de vida de una tarea.
+    - Mantener ciclo de vida.
     - Centralizar métricas.
 
 
     No:
 
-    - Analiza intención internamente.
-    - Ejecuta agentes.
-    - Ejecuta skills.
-    - Genera prompts.
+    - Ejecuta Skills.
+    - Ejecuta Agents.
+    - Ejecuta Tools.
     """
 
     def __init__(
@@ -64,11 +61,13 @@ class Pipeline:
 
         self.intent_analyzer = intent_analyzer
 
-        self.planner = planner or ExecutionPlanner
+        self.planner = planner or ExecutionPlanner()
 
         self.context_manager = context_manager or ContextManager()
 
-        self.execution_engine = execution_engine or ExecutionEngine()
+        self.execution_engine = execution_engine or ExecutionEngine(
+            context_manager=self.context_manager,
+        )
 
         self.learner = learner
 
@@ -99,18 +98,10 @@ class Pipeline:
                 user_input[:100],
             )
 
-            # --------------------------------------------------
-            # 1. Intent Understanding
-            # --------------------------------------------------
-
             intent = self._understand_intent(
                 user_input,
                 metadata,
             )
-
-            # --------------------------------------------------
-            # 2. Execution Planning
-            # --------------------------------------------------
 
             plan = self.planner.create(
                 task=user_input,
@@ -119,7 +110,7 @@ class Pipeline:
             )
 
             logger.info(
-                "Plan creado: %s",
+                "Plan creado=%s",
                 plan,
             )
 
@@ -128,28 +119,29 @@ class Pipeline:
             if errors:
 
                 logger.warning(
-                    "ExecutionPlan con advertencias: %s",
+                    "ExecutionPlan con advertencias=%s",
                     errors,
                 )
 
-            # --------------------------------------------------
-            # 3. Execution
-            # --------------------------------------------------
-
-            result = self.execution_engine.execute(plan)
-
-            # --------------------------------------------------
-            # 4. Learning
-            # --------------------------------------------------
+            result = self.execution_engine.execute(
+                plan,
+            )
 
             self._learn(
                 user_input,
                 result,
             )
 
-            if getattr(result, "success", False):
+            if getattr(
+                result,
+                "success",
+                False,
+            ):
+
                 self.metrics["success"] += 1
+
             else:
+
                 self.metrics["failed"] += 1
 
             return result
@@ -159,7 +151,7 @@ class Pipeline:
             self.metrics["failed"] += 1
 
             logger.exception(
-                "Error en Pipeline: %s",
+                "Error Pipeline=%s",
                 exc,
             )
 
@@ -174,24 +166,12 @@ class Pipeline:
         task: str,
         metadata: dict,
     ) -> dict[str, Any]:
-        """
-        Actualmente permite inyectar
-        un analizador externo.
-
-        Luego conectará:
-
-        IntentClassifier
-        LLM Router
-        Rules Engine
-        """
 
         if self.intent_analyzer:
 
             return self.intent_analyzer.analyze(
                 task,
             )
-
-        # fallback temporal
 
         return {
             "intent": "conversation",
@@ -223,7 +203,7 @@ class Pipeline:
         except Exception:
 
             logger.exception(
-                "Error en aprendizaje continuo",
+                "Error aprendizaje continuo",
             )
 
     # ==========================================================

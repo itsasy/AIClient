@@ -14,14 +14,14 @@ class CodeRefactorSkill(Skill):
 
     name = "refactor_code"
 
-    description = "Prepara solicitudes estructuradas " "de refactorización de código."
+    description = "Refactoriza código a estándares modernos."
 
     version = "2.0"
 
     capabilities = (
         "code_refactoring",
         "clean_code",
-        "architecture_review",
+        "architecture_improvement",
     )
 
     def execute(
@@ -40,10 +40,10 @@ class CodeRefactorSkill(Skill):
 
         standards = params.get(
             "standards",
-            ("Clean Code, SOLID, tipado, " "manejo de errores, Laravel 11"),
+            "",
         )
 
-        if not code.strip():
+        if not code:
 
             return {
                 "ok": False,
@@ -55,8 +55,12 @@ class CodeRefactorSkill(Skill):
             "ok": True,
             "result": {
                 "type": "refactor",
-                "code": code,
-                "standards": standards,
+                "payload": {
+                    "code": code,
+                    "standards": (
+                        standards or ("Clean Code, SOLID, tipado, " "manejo de errores, Laravel 11")
+                    ),
+                },
             },
             "error": None,
         }

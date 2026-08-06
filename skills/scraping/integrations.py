@@ -2,23 +2,20 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
-
-from bs4 import BeautifulSoup
-
 from core.execution_plan import (
     ExecutionPlan,
     ExecutionStep,
 )
 
 from skills.base import Skill
+from skills.scraping.page_scraper import PageScraper
 
 
 class IntegrationScraperSkill(Skill):
 
     name = "scrape_integration"
 
-    description = "Extrae información básica " "de integraciones externas."
+    description = "Extrae información básica de integraciones externas."
 
     version = "2.0"
 
@@ -26,6 +23,10 @@ class IntegrationScraperSkill(Skill):
         "web_scraping",
         "integration_analysis",
     )
+
+    def __init__(self):
+
+        self.scraper = PageScraper()
 
     def execute(
         self,
@@ -56,32 +57,17 @@ class IntegrationScraperSkill(Skill):
 
         try:
 
-            response = requests.get(
+            page = self.scraper.fetch(
                 url,
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                },
-                timeout=10,
             )
-
-            soup = BeautifulSoup(
-                response.text,
-                "html.parser",
-            )
-
-            title_node = soup.find("title")
-
-            title = title_node.text if title_node else "Sin título"
-
-            description = soup.get_text()[:1500]
 
             return {
                 "ok": True,
                 "result": {
                     "type": "integration_analysis",
                     "platform": platform,
-                    "title": title,
-                    "description": description,
+                    "title": page["title"],
+                    "description": page["text"][:1500],
                     "url": url,
                 },
                 "error": None,

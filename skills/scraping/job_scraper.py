@@ -2,31 +2,32 @@ from __future__ import annotations
 
 from typing import Any
 
-import requests
-
-from bs4 import BeautifulSoup
-
 from core.execution_plan import (
     ExecutionPlan,
     ExecutionStep,
 )
 
 from skills.base import Skill
+from skills.scraping.page_scraper import PageScraper
 
 
-class FreelanceScraperSkill(Skill):
+class JobScraperSkill(Skill):
 
-    name = "scrape_freelance"
+    name = "scrape_job"
 
-    description = "Analiza páginas de trabajos " "freelance y extrae información."
+    description = "Analiza publicaciones laborales de LinkedIn y Workana."
 
     version = "2.0"
 
     capabilities = (
         "web_scraping",
         "job_analysis",
-        "freelance_analysis",
+        "market_research",
     )
+
+    def __init__(self):
+
+        self.scraper = PageScraper()
 
     def execute(
         self,
@@ -44,12 +45,7 @@ class FreelanceScraperSkill(Skill):
 
         platform = params.get(
             "platform",
-            "linkedin",
-        )
-
-        mode = params.get(
-            "mode",
-            "freelance",
+            "unknown",
         )
 
         if not url:
@@ -62,42 +58,19 @@ class FreelanceScraperSkill(Skill):
 
         try:
 
-            response = requests.get(
+            page = self.scraper.fetch(
                 url,
-                headers={
-                    "User-Agent": "Mozilla/5.0",
-                },
-                timeout=10,
             )
 
-            soup = BeautifulSoup(
-                response.text,
-                "html.parser",
-            )
-
-            title_node = soup.find("title")
-
-            title = title_node.text if title_node else "Sin título"
-
-            description_node = soup.find(
-                "meta",
-                attrs={
-                    "name": "description",
-                },
-            )
-
-            description = (
-                description_node["content"] if description_node else soup.get_text()[:1200]
-            )
+            description = page["text"][:1500]
 
             return {
                 "ok": True,
                 "result": {
-                    "type": "freelance_analysis",
+                    "type": "job_analysis",
                     "platform": platform,
-                    "mode": mode,
-                    "title": title,
-                    "description": description[:1000],
+                    "title": page["title"],
+                    "description": description,
                     "pain_points": self._analyze_pain(
                         description,
                     ),
@@ -130,6 +103,6 @@ class FreelanceScraperSkill(Skill):
             "requerimiento",
         ]
 
-        result = [word for word in keywords if word in text.lower()]
+        normalized = text.lower()
 
-        return result or ["No se identificaron dolores claros"]
+        return [keyword for keyword in keywords if keyword in normalized]

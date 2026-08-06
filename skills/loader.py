@@ -4,7 +4,6 @@ import importlib
 import logging
 
 from skills.base import Skill
-
 from skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
@@ -98,7 +97,7 @@ class SkillLoader:
                 getattr(
                     obj,
                     "capabilities",
-                    [],
+                    (),
                 ),
             )
 
@@ -111,11 +110,41 @@ class SkillLoader:
     ):
 
         modules = [
+            # -----------------------------
+            # Code
+            # -----------------------------
             "skills.code.analyze",
             "skills.code.executor",
             "skills.code.generate",
             "skills.code.project_analyzer",
             "skills.code.sandbox",
+            # -----------------------------
+            # Documentation
+            # -----------------------------
+            "skills.docs.readme",
+            # -----------------------------
+            # Knowledge
+            # -----------------------------
+            "skills.knowledge.ingest",
+            # -----------------------------
+            # Migration
+            # -----------------------------
+            "skills.migration.project_migrator",
+            "skills.migration.refactor",
+            # -----------------------------
+            # Projects
+            # -----------------------------
+            "skills.projects.full_generator",
+            "skills.projects.laravel",
+            # -----------------------------
+            # Proposals
+            # -----------------------------
+            "skills.proposals.generator",
+            # -----------------------------
+            # Scraping
+            # -----------------------------
+            "skills.scraping.integrations",
+            "skills.scraping.job_scraper",
         ]
 
         for module in modules:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from core.execution_plan import (
@@ -21,15 +22,15 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Resolver skills.
-    - Ejecutar skills.
+    - Resolver Skills.
+    - Ejecutar Skills.
     - Gestionar retries.
     - Normalizar resultados.
 
     No:
 
     - Planifica.
-    - Selecciona skills.
+    - Selecciona Skills.
     - Construye contexto.
     """
 
@@ -78,7 +79,6 @@ class SkillRuntime:
                     plan=plan,
                     step=step,
                     context=context,
-                    **step.params,
                 )
 
                 normalized = self._validate_result(
@@ -136,13 +136,11 @@ class SkillRuntime:
         self,
         result: Any,
     ) -> dict:
-        """
-        Normaliza resultados de skills.
 
-        Permite que skills antiguos sigan funcionando.
-        """
-
-        if isinstance(result, dict):
+        if isinstance(
+            result,
+            dict,
+        ):
 
             if "ok" in result:
 

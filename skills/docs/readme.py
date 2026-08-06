@@ -16,14 +16,14 @@ class GenerateReadmeSkill(Skill):
 
     name = "readme"
 
-    description = "Genera una estructura de README profesional " "basada en el proyecto real."
+    description = "Genera un README profesional basado en el proyecto real."
 
     version = "2.0"
 
     capabilities = (
-        "documentation",
-        "readme_generation",
+        "documentation_generation",
         "project_analysis",
+        "readme_generation",
     )
 
     def __init__(self):
@@ -57,9 +57,11 @@ class GenerateReadmeSkill(Skill):
                 "ok": True,
                 "result": {
                     "type": "readme",
-                    "request": request,
-                    "description": description,
-                    "snapshot": snapshot,
+                    "payload": {
+                        "request": request,
+                        "description": description,
+                        "snapshot": snapshot,
+                    },
                 },
                 "error": None,
             }
