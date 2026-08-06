@@ -18,27 +18,44 @@ class AgentLoader:
 
     - Importar módulos.
     - Detectar implementaciones Agent.
+    - Validar contratos básicos.
     - Registrarlas en AgentRegistry.
+    - Mantener estado de carga.
 
     No:
 
     - Instancia agentes.
     - Ejecuta agentes.
     - Selecciona agentes.
+    - Construye contexto.
     """
+
+    DEFAULT_MODULES = [
+        "agents.architect",
+        "agents.coder",
+        "agents.executor",
+        "agents.multi_turn",
+        "agents.planner",
+        "agents.task_agent",
+    ]
 
     def __init__(
         self,
         registry: AgentRegistry,
+        modules: list[str] | None = None,
     ):
 
         self.registry = registry
 
+        self.modules = modules or self.DEFAULT_MODULES.copy()
+
         self.loaded_modules: set[str] = set()
 
-    # ==========================================================
+        self.errors: list[dict[str, str]] = []
+
+    # ======================================================
     # Module loading
-    # ==========================================================
+    # ======================================================
 
     def load_module(
         self,
@@ -48,7 +65,7 @@ class AgentLoader:
         if module_path in self.loaded_modules:
 
             logger.debug(
-                "Módulo Agent ya cargado=%s",
+                "Agent module ya cargado=%s",
                 module_path,
             )
 
@@ -68,10 +85,17 @@ class AgentLoader:
                 module_path,
             )
 
-        except Exception:
+        except Exception as exc:
+
+            self.errors.append(
+                {
+                    "module": module_path,
+                    "error": str(exc),
+                }
+            )
 
             logger.exception(
-                "Error cargando módulo Agent=%s",
+                "Error cargando Agent module=%s",
                 module_path,
             )
 
@@ -80,11 +104,11 @@ class AgentLoader:
         module,
     ) -> None:
 
-        for name in dir(module):
+        for attribute_name in dir(module):
 
             obj = getattr(
                 module,
-                name,
+                attribute_name,
             )
 
             if not inspect.isclass(obj):
@@ -125,35 +149,81 @@ class AgentLoader:
 
                 continue
 
+            if not hasattr(
+                obj,
+                "process",
+            ):
+
+                logger.warning(
+                    "Agent inválido sin process=%s",
+                    agent_name,
+                )
+
+                continue
+
+            if self.registry.has(
+                agent_name,
+            ):
+
+                logger.warning(
+                    "Agent duplicado ignorado=%s",
+                    agent_name,
+                )
+
+                continue
+
             self.registry.register(
                 agent_name,
                 obj,
             )
 
             logger.info(
-                "Agent cargado=%s",
+                "Agent registrado=%s capabilities=%s",
                 agent_name,
+                getattr(
+                    obj,
+                    "capabilities",
+                    (),
+                ),
             )
 
-    # ==========================================================
+    # ======================================================
     # Defaults
-    # ==========================================================
+    # ======================================================
 
     def load_defaults(
         self,
     ) -> None:
 
-        modules = [
-            "agents.architect",
-            "agents.coder",
-            "agents.executor",
-            "agents.multi_turn",
-            "agents.planner",
-            "agents.task_agent",
-        ]
+        self.load_modules(
+            self.modules,
+        )
+
+    def load_modules(
+        self,
+        modules: list[str],
+    ) -> None:
 
         for module in modules:
 
             self.load_module(
                 module,
             )
+
+    # ======================================================
+    # Information
+    # ======================================================
+
+    def get_errors(
+        self,
+    ) -> list[dict[str, str]]:
+
+        return self.errors.copy()
+
+    def get_loaded_modules(
+        self,
+    ) -> list[str]:
+
+        return sorted(
+            self.loaded_modules,
+        )

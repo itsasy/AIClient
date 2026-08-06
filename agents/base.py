@@ -16,17 +16,82 @@ class Agent(ABC):
 
     - Ejecutar la intención representada en el plan.
     - Consumir contexto generado por ContextManager.
-    - Delegar tareas específicas al LLMRouter o herramientas.
+    - Coordinar herramientas, skills o LLM.
 
-    No debe:
+    No:
 
-    - Analizar intención.
-    - Crear ExecutionPlans.
-    - Resolver contexto.
-    - Elegir proveedores LLM directamente.
+    - Analiza intención.
+    - Construye ExecutionPlans.
+    - Resuelve contexto.
+    - Selecciona modelos directamente.
     """
 
+    # ======================================================
+    # Identity
+    # ======================================================
+
     name: str = "base"
+
+    description: str = ""
+
+    version: str = "1.0"
+
+    capabilities: tuple[str, ...] = ()
+
+    # ======================================================
+    # Metadata
+    # ======================================================
+
+    def get_metadata(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "version": self.version,
+            "capabilities": list(
+                self.capabilities,
+            ),
+        }
+
+    # ======================================================
+    # Validation
+    # ======================================================
+
+    def validate_plan(
+        self,
+        plan: ExecutionPlan,
+    ) -> list[str]:
+        """
+        Hook de validación específico.
+
+        Puede comprobar:
+
+        - parámetros requeridos.
+        - contexto necesario.
+        - capacidades disponibles.
+        - compatibilidad del plan.
+
+        No bloquea por defecto.
+        """
+
+        return []
+
+    # ======================================================
+    # Capability helpers
+    # ======================================================
+
+    def supports(
+        self,
+        capability: str,
+    ) -> bool:
+
+        return capability in self.capabilities
+
+    # ======================================================
+    # Execution
+    # ======================================================
 
     @abstractmethod
     def process(
@@ -36,38 +101,6 @@ class Agent(ABC):
     ) -> Any:
         """
         Ejecuta un ExecutionPlan.
-
-        Args:
-            plan:
-                Contrato central de ejecución.
-
-            context:
-                Contexto construido por ContextManager.
-
-        Returns:
-            Respuesta generada por el agente.
         """
 
         raise NotImplementedError("Los agentes deben implementar process()")
-
-    # ==========================================================
-    # Validation hook
-    # ==========================================================
-
-    def validate_plan(
-        self,
-        plan: ExecutionPlan,
-    ) -> list[str]:
-        """
-        Hook opcional para validaciones específicas.
-
-        Ejemplo:
-
-        - CoderAgent puede requerir lenguaje.
-        - ExecutorAgent puede requerir comandos.
-        - ArchitectAgent puede requerir contexto de proyecto.
-
-        No bloquea la ejecución por defecto.
-        """
-
-        return []
