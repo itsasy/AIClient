@@ -35,15 +35,9 @@ class AgentRuntime:
     - Construye contexto.
     - Ejecuta Skills.
     - Decide workflows.
-    - Gestiona memoria.
-    - Gestiona aprendizaje.
     """
 
     name = "agent_runtime"
-
-    # ==================================================
-    # Execution
-    # ==================================================
 
     def execute(
         self,
@@ -57,41 +51,33 @@ class AgentRuntime:
 
         if agent is None:
 
-            step.mark_failed("AgentRuntime requiere Agent.")
+            error = "AgentRuntime requiere Agent."
+
+            step.mark_failed(error)
 
             return ExecutionResult.fail(
-                error="AgentRuntime requiere Agent.",
+                error=error,
                 executor=self.name,
                 plan_id=plan.id,
             )
-
-        # ----------------------------------------------
-        # Step validation
-        # ----------------------------------------------
 
         errors = step.validate()
 
         if errors:
 
-            step.mark_failed(
-                str(errors),
-            )
+            error = "; ".join(errors)
+
+            step.mark_failed(error)
 
             return ExecutionResult.fail(
-                error=str(errors),
+                error=error,
                 executor=f"agent:{agent.name}",
                 plan_id=plan.id,
             )
 
-        # ----------------------------------------------
-        # Agent validation
-        # ----------------------------------------------
-
         try:
 
-            warnings = agent.validate_plan(
-                plan,
-            )
+            warnings = agent.validate_plan(plan)
 
             if warnings:
 
@@ -99,19 +85,15 @@ class AgentRuntime:
 
         except Exception as exc:
 
-            step.mark_failed(
-                str(exc),
-            )
+            error = str(exc)
+
+            step.mark_failed(error)
 
             return ExecutionResult.fail(
-                error=str(exc),
+                error=error,
                 executor=f"agent:{agent.name}",
                 plan_id=plan.id,
             )
-
-        # ----------------------------------------------
-        # Execution
-        # ----------------------------------------------
 
         start = time.time()
 
@@ -131,9 +113,7 @@ class AgentRuntime:
                 context=context,
             )
 
-            normalized = self._normalize_result(
-                result,
-            )
+            normalized = self._normalize_result(result)
 
             if not normalized["ok"]:
 
@@ -144,32 +124,35 @@ class AgentRuntime:
                     )
                 )
 
+            output = normalized.get(
+                "result",
+                result,
+            )
+
             duration = round(
                 time.time() - start,
                 3,
             )
 
-            step.mark_completed(
-                result,
-            )
+            step.mark_completed(output)
 
             step.metadata.update(
                 {
-                    "duration": duration,
                     "agent": agent.name,
+                    "duration": duration,
                 }
             )
 
             execution_result = ExecutionResult.ok(
-                output=result,
+                output=output,
                 executor=f"agent:{agent.name}",
                 plan_id=plan.id,
             )
 
             execution_result.metadata.update(
                 {
-                    "step_id": step.id,
                     "agent": agent.name,
+                    "step_id": step.id,
                     "duration": duration,
                 }
             )
@@ -178,9 +161,9 @@ class AgentRuntime:
 
         except Exception as exc:
 
-            step.mark_failed(
-                str(exc),
-            )
+            error = str(exc)
+
+            step.mark_failed(error)
 
             logger.exception(
                 "Error ejecutando Agent=%s",
@@ -188,24 +171,17 @@ class AgentRuntime:
             )
 
             return ExecutionResult.fail(
-                error=str(exc),
+                error=error,
                 executor=f"agent:{agent.name}",
                 plan_id=plan.id,
             )
-
-    # ==================================================
-    # Normalization
-    # ==================================================
 
     def _normalize_result(
         self,
         result: Any,
     ) -> dict[str, Any]:
 
-        if isinstance(
-            result,
-            dict,
-        ):
+        if isinstance(result, dict):
 
             if "ok" in result:
 

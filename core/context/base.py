@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+
 from typing import Any, ClassVar
 
 from core.execution_plan import ExecutionPlan
@@ -6,20 +9,50 @@ from core.execution_plan import ExecutionPlan
 
 class BaseContextProvider(ABC):
     """
-    Contrato base para cualquier proveedor de contexto.
+    Contrato base para proveedores de contexto.
+
+    Cada provider debe:
+
+    - Tener una key única.
+    - Cargar información dentro del contexto.
+
+    No:
+
+    - Decide cuándo se ejecuta.
+    - Modifica ExecutionPlan.
+    - Ejecuta agentes o skills.
     """
 
-    key: ClassVar[str]
+    key: ClassVar[str] = ""
 
-    def __init_subclass__(cls, **kwargs):
-        """
-        Fuerza que cada provider concreto defina su identificador.
-        """
+    name: ClassVar[str] = ""
+
+    description: ClassVar[str] = ""
+
+    def __init_subclass__(
+        cls,
+        **kwargs,
+    ):
 
         super().__init_subclass__(**kwargs)
 
-        if not getattr(cls, "key", None):
-            raise TypeError(f"{cls.__name__} debe definir " "un atributo de clase 'key'.")
+        if not getattr(
+            cls,
+            "key",
+            None,
+        ):
+
+            raise TypeError(f"{cls.__name__} debe definir key")
+
+    def metadata(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "key": self.key,
+            "name": self.name or self.key,
+            "description": self.description,
+        }
 
     @abstractmethod
     def load(
@@ -27,5 +60,5 @@ class BaseContextProvider(ABC):
         plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> None:
-        """ """
+
         raise NotImplementedError

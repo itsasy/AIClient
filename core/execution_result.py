@@ -5,23 +5,15 @@ from datetime import datetime
 
 from typing import Any
 
+VALID_RESULT_STATUS = {
+    "completed",
+    "failed",
+    "partial",
+}
+
 
 @dataclass
 class ExecutionResult:
-    """
-    Resultado estándar de ejecución.
-
-    Usado por:
-
-    - AgentRuntime.
-    - SkillRuntime.
-    - ExecutionRuntime.
-    - ExecutionEngine.
-    - Pipeline.
-
-    Representa el resultado final
-    de una unidad ejecutable.
-    """
 
     success: bool
 
@@ -35,29 +27,25 @@ class ExecutionResult:
 
     status: str = "completed"
 
-    created_at: datetime = field(
-        default_factory=lambda: datetime.now().astimezone(),
-    )
+    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
-    metadata: dict[str, Any] = field(
-        default_factory=dict,
-    )
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    children: list["ExecutionResult"] = field(
-        default_factory=list,
-    )
+    children: list["ExecutionResult"] = field(default_factory=list)
 
-    # ======================================================
-    # Factory
-    # ======================================================
+    def __post_init__(self):
+
+        if self.status not in VALID_RESULT_STATUS:
+
+            raise ValueError(f"Estado inválido: {self.status}")
 
     @classmethod
     def ok(
         cls,
-        output: Any = None,
-        executor: str | None = None,
-        plan_id: str | None = None,
-    ) -> "ExecutionResult":
+        output=None,
+        executor=None,
+        plan_id=None,
+    ):
 
         return cls(
             success=True,
@@ -70,14 +58,13 @@ class ExecutionResult:
     @classmethod
     def fail(
         cls,
-        error: str,
-        executor: str | None = None,
-        plan_id: str | None = None,
-    ) -> "ExecutionResult":
+        error,
+        executor=None,
+        plan_id=None,
+    ):
 
         return cls(
             success=False,
-            output=None,
             error=error,
             executor=executor,
             plan_id=plan_id,
@@ -87,11 +74,11 @@ class ExecutionResult:
     @classmethod
     def partial(
         cls,
-        output: Any = None,
-        executor: str | None = None,
-        plan_id: str | None = None,
-        children: list["ExecutionResult"] | None = None,
-    ) -> "ExecutionResult":
+        output=None,
+        executor=None,
+        plan_id=None,
+        children=None,
+    ):
 
         return cls(
             success=True,
@@ -102,52 +89,43 @@ class ExecutionResult:
             children=children or [],
         )
 
-    # ======================================================
-    # Helpers
-    # ======================================================
+    def is_success(self):
 
-    def is_success(
-        self,
-    ) -> bool:
-
-        return self.success and self.status in (
+        return self.success and self.status in {
             "completed",
             "partial",
-        )
+        }
 
-    def is_failed(
-        self,
-    ) -> bool:
+    def is_failed(self):
 
         return self.status == "failed"
 
     def add_child(
         self,
         result: "ExecutionResult",
-    ) -> None:
+    ):
 
-        self.children.append(
-            result,
-        )
+        self.children.append(result)
 
     def with_metadata(
         self,
-        **values: Any,
-    ) -> "ExecutionResult":
+        **values,
+    ):
 
-        self.metadata.update(
-            values,
-        )
+        self.metadata.update(values)
 
         return self
 
-    # ======================================================
-    # Serialization
-    # ======================================================
-
-    def to_dict(
+    def merge_metadata(
         self,
-    ) -> dict[str, Any]:
+        values: dict[str, Any],
+    ):
+
+        self.metadata.update(values)
+
+        return self
+
+    def to_dict(self):
 
         return {
             "success": self.success,
