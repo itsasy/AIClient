@@ -1,312 +1,402 @@
+from __future__ import annotations
+
 import json
 import logging
-
-from core.execution_plan import ExecutionPlan
-from core.execution_step import ExecutionStep
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
     """
-    Construye el prompt final para proveedores LLM.
+    Construye prompts para el LLM.
 
-    Usa ExecutionPlan + Context (ya construido).
+    Responsabilidad:
 
-    No busca contexto ni selecciona proveedores.
+        structured context
+            ↓
+        task prompt
+
+    No debe serializar indiscriminadamente todo el runtime.
     """
 
-    @staticmethod
-    def build(plan: ExecutionPlan, context: dict | None = None) -> str:
-        context = context or {}
+    MAX_CONTEXT_CHARS = 30_000
 
-        logger.info("Construyendo prompt | context=%s", list(context.keys()))
+    SYSTEM_INSTRUCTIONS = """
+Eres un arquitecto de software senior.
 
-        parts = []
+Analiza únicamente la evidencia proporcionada en el contexto.
 
-        # 1. System role
-        parts.append(PromptBuilder._build_system_role(plan, context))
+Reglas obligatorias:
 
-        # 2. Identity (usando nuevo modelo)
-        identity = PromptBuilder._build_identity(plan)
-        if identity:
-            parts.append(identity)
+1. No inventes componentes.
+2. No inventes tecnologías.
+3. No afirmes que el sistema utiliza microservicios salvo que
+   exista evidencia explícita de ello.
+4. No confundas carpetas con límites arquitectónicos.
+5. Diferencia hechos observados de inferencias.
+6. Si la evidencia no permite determinar algo, indícalo.
+7. Prioriza la arquitectura real sobre descripciones genéricas.
+8. Responde en español.
+""".strip()
 
-        # 3. Objective
-        if plan.objective:
-            parts.append(f"# OBJECTIVE\n\n{plan.objective}")
+    def __init__(
+        self,
+        max_context_chars: int | None = None,
+    ) -> None:
 
-        # 4. User request
-        parts.append(f"# USER REQUEST\n\n{plan.original_task}")
+        self.max_context_chars = max_context_chars or self.MAX_CONTEXT_CHARS
 
-        # 5. Required context
-        required = PromptBuilder._build_context_requirements(plan)
-        if required:
-            parts.append(required)
+    # ==========================================================
+    # Public API
+    # ==========================================================
 
-        # 6. Constraints
-        constraints = PromptBuilder._build_constraints(plan)
-        if constraints:
-            parts.append(constraints)
+    def build(
+        self,
+        plan: Any,
+        context: dict[str, Any] | None = None,
+    ) -> str:
 
-        # 7. Execution plan (sin pasos, la info va abajo)
-        parts.append(PromptBuilder._build_execution_plan(plan))
+        context = dict(
+            context or {},
+        )
 
-        # 8. Steps
-        steps = PromptBuilder._build_steps(plan)
-        if steps:
-            parts.append(steps)
+        intent = getattr(
+            plan,
+            "intent",
+            None,
+        )
 
-        # 9. Context
-        parts.extend(PromptBuilder._build_context(context))
+        original_task = getattr(
+            plan,
+            "original_task",
+            "",
+        )
 
-        # 10. Settings
-        settings = PromptBuilder._build_llm_settings(plan)
-        if settings:
-            parts.append(settings)
+        unit_type = getattr(
+            plan,
+            "execution_unit_type",
+            None,
+        )
 
-        # 11. Execution mode
-        parts.append(PromptBuilder._build_execution_mode(plan))
+        unit_name = getattr(
+            plan,
+            "execution_unit",
+            None,
+        )
 
-        prompt = "\n\n".join(parts)
+        logger.info(
+            "Construyendo prompt | context=%s",
+            list(context.keys()),
+        )
 
-        logger.info("Prompt construido chars=%s", len(prompt))
+        compact_context = self._prepare_context(
+            context,
+        )
+
+        serialized_context = self._serialize(
+            compact_context,
+        )
+
+        if len(serialized_context) > self.max_context_chars:
+            logger.warning(
+                "Contexto excede límite | chars=%s | max=%s",
+                len(serialized_context),
+                self.max_context_chars,
+            )
+
+            serialized_context = self._truncate_context(
+                serialized_context,
+            )
+
+        prompt = self._compose(
+            original_task=original_task,
+            intent=intent,
+            unit_type=unit_type,
+            unit_name=unit_name,
+            context=serialized_context,
+        )
+
+        logger.info(
+            "Prompt construido chars=%s",
+            len(prompt),
+        )
+
         return prompt
 
     # ==========================================================
-    # System role
+    # Context preparation
     # ==========================================================
 
-    @staticmethod
-    def _build_system_role(plan: ExecutionPlan, context: dict) -> str:
-        role = context.get("agent_role")
+    def _prepare_context(
+        self,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
 
-        if role:
-            return (
-                "Eres AIClient.\n\n"
-                "Rol actual:\n"
-                f"{json.dumps(role, indent=2, ensure_ascii=False)}\n\n"
-                "Actúa siguiendo estrictamente esta responsabilidad."
+        prepared: dict[str, Any] = {}
+
+        # ------------------------------------------------------
+        # Agent role
+        # ------------------------------------------------------
+
+        if "agent_role" in context:
+            prepared["agent_role"] = context["agent_role"]
+
+        # ------------------------------------------------------
+        # Analysis requirements
+        # ------------------------------------------------------
+
+        if "analysis_requirements" in context:
+            prepared["analysis_requirements"] = context["analysis_requirements"]
+
+        # ------------------------------------------------------
+        # Requested output
+        # ------------------------------------------------------
+
+        if "requested_output" in context:
+            prepared["requested_output"] = context["requested_output"]
+
+        # ------------------------------------------------------
+        # Project summary
+        # ------------------------------------------------------
+
+        if "project_summary" in context:
+            prepared["project_summary"] = context["project_summary"]
+
+        # ------------------------------------------------------
+        # Architecture
+        # ------------------------------------------------------
+
+        if "architecture" in context:
+            prepared["architecture"] = self._sanitize_architecture(
+                context["architecture"],
             )
 
-        if plan.metadata.get("system_role"):
-            return plan.metadata["system_role"]
+        # ------------------------------------------------------
+        # Execution
+        # ------------------------------------------------------
 
-        return """
-Eres AIClient.
+        if "execution" in context:
+            prepared["execution"] = self._sanitize_execution(
+                context["execution"],
+            )
 
-Actúas como ingeniero de software senior.
-
-Especialidades:
-- Arquitectura de software
-- Clean Architecture
-- Domain Driven Design
-- Laravel
-- NestJS
-- Python
-- Docker
-- DevOps
-- Inteligencia Artificial
-
-Reglas:
-- Usa primero el contexto proporcionado.
-- Respeta estándares internos.
-- Respeta Gentleman Skills.
-- No inventes información.
-- Mantén consistencia con decisiones anteriores.
-- Prioriza conocimiento confirmado.
-"""
+        return prepared
 
     # ==========================================================
-    # Identity (nuevo modelo)
+    # Architecture sanitization
     # ==========================================================
 
-    @staticmethod
-    def _build_identity(plan: ExecutionPlan) -> str | None:
-        data = {}
+    def _sanitize_architecture(
+        self,
+        architecture: Any,
+    ) -> Any:
 
-        if plan.intent:
-            data["intent"] = plan.intent
-        if plan.intent_category:
-            data["category"] = plan.intent_category
-        if plan.execution_unit_type:
-            data["unit_type"] = plan.execution_unit_type
-        if plan.execution_unit:
-            data["unit_name"] = plan.execution_unit
-        if plan.steps:
-            data["steps_count"] = len(plan.steps)
+        if not isinstance(
+            architecture,
+            dict,
+        ):
+            return architecture
 
-        if not data:
-            return None
-
-        return "# TASK IDENTITY\n\n" + json.dumps(data, indent=2, ensure_ascii=False)
-
-    # ==========================================================
-    # Context requirements
-    # ==========================================================
-
-    @staticmethod
-    def _build_context_requirements(plan: ExecutionPlan) -> str | None:
-        if not plan.context_requirements:
-            return None
-        return "# REQUIRED CONTEXT\n\n" + "\n".join(
-            f"- {item}" for item in plan.context_requirements
+        result = dict(
+            architecture,
         )
 
-    # ==========================================================
-    # Constraints
-    # ==========================================================
+        files = result.get(
+            "files",
+        )
+
+        if isinstance(
+            files,
+            list,
+        ):
+            clean_files = []
+
+            for file_data in files:
+                if not isinstance(
+                    file_data,
+                    dict,
+                ):
+                    continue
+
+                clean_files.append(
+                    {
+                        key: file_data.get(key)
+                        for key in (
+                            "path",
+                            "filename",
+                            "extension",
+                            "language",
+                            "lines",
+                            "size",
+                        )
+                        if key in file_data
+                    }
+                )
+
+            result["files"] = clean_files
+
+        directories = result.get(
+            "directories",
+        )
+
+        if isinstance(
+            directories,
+            list,
+        ):
+            result["directories"] = [
+                self._sanitize_directory(
+                    item,
+                )
+                for item in directories
+            ]
+
+        # Never allow source content through
+        # the architecture context.
+        result.pop(
+            "content",
+            None,
+        )
+
+        return result
 
     @staticmethod
-    def _build_constraints(plan: ExecutionPlan) -> str | None:
-        if not plan.constraints:
-            return None
-        return "# CONSTRAINTS\n\n" + "\n".join(f"- {item}" for item in plan.constraints)
+    def _sanitize_directory(
+        directory: Any,
+    ) -> Any:
 
-    # ==========================================================
-    # Execution plan
-    # ==========================================================
+        if not isinstance(
+            directory,
+            dict,
+        ):
+            return directory
 
-    @staticmethod
-    def _build_execution_plan(plan: ExecutionPlan) -> str:
-        data = plan.to_dict()
-        data.pop("steps", None)  # se añaden aparte
-        return "# EXECUTION PLAN\n" + json.dumps(data, indent=2, ensure_ascii=False)
-
-    # ==========================================================
-    # Steps (nuevo modelo)
-    # ==========================================================
-
-    @staticmethod
-    def _build_steps(plan: ExecutionPlan) -> str | None:
-        if not plan.steps:
-            return None
-
-        steps = [
-            {
-                "description": step.description,
-                "unit_type": step.unit_type,
-                "unit_name": step.unit_name,
-                "params": step.params,
-                "expected_output": step.expected_output,
-                "retries": step.retries,
-                "timeout": step.timeout,
-                "status": step.status,
-                "metadata": step.metadata,
-            }
-            for step in plan.steps
-        ]
-
-        return "# EXECUTION STEPS\n" + json.dumps(steps, indent=2, ensure_ascii=False)
-
-    # ==========================================================
-    # LLM settings
-    # ==========================================================
-
-    @staticmethod
-    def _build_llm_settings(plan: ExecutionPlan) -> str | None:
-        values = []
-
-        # Provider puede estar en metadata
-        if plan.metadata.get("preferred_provider"):
-            values.append(f"Provider: {plan.metadata['preferred_provider']}")
-
-        if plan.metadata.get("temperature") is not None:
-            values.append(f"Temperature: {plan.metadata['temperature']}")
-
-        if plan.metadata.get("max_tokens") is not None:
-            values.append(f"Max Tokens: {plan.metadata['max_tokens']}")
-
-        if not values:
-            return None
-
-        return "# LLM SETTINGS\n\n" + "\n".join(values)
-
-    # ==========================================================
-    # Execution mode
-    # ==========================================================
-
-    @staticmethod
-    def _build_execution_mode(plan: ExecutionPlan) -> str:
-        return "# EXECUTION MODE\n\n" + plan.execution_mode
-
-    # ==========================================================
-    # Context
-    # ==========================================================
-
-    @staticmethod
-    def _build_context(context: dict) -> list[str]:
-        sections = []
-
-        titles = {
-            "project": "PROJECT CONTEXT",
-            "memory": "CONVERSATION MEMORY",
-            "documents": "DOCUMENTS",
-            "obsidian": "OBSIDIAN KNOWLEDGE",
-            "spec": "SPECIFICATION",
-            "standards": "PROJECT STANDARDS",
-            "gentleman": "GENTLEMAN SKILLS",
+        return {
+            key: directory.get(key)
+            for key in (
+                "path",
+                "name",
+                "files_count",
+                "directories_count",
+            )
+            if key in directory
         }
 
-        handled = set(titles.keys())
-
-        for key, title in titles.items():
-            value = context.get(key)
-            if not value:
-                continue
-            if key == "gentleman":
-                sections.append(PromptBuilder._build_gentleman_context(value))
-                continue
-            sections.append(f"#{title}\n\n" + PromptBuilder._format_value(value))
-
-        handled.add("engram")
-        engram = context.get("engram")
-        if isinstance(engram, dict):
-            if engram.get("memory"):
-                sections.append(
-                    "# ENGRAM MEMORY\n\n" + PromptBuilder._format_value(engram["memory"])
-                )
-            if engram.get("skills"):
-                sections.append(
-                    "# ENGRAM SKILLS\n\n" + PromptBuilder._format_value(engram["skills"])
-                )
-
-        for key, value in context.items():
-            if key in handled:
-                continue
-            if not value:
-                continue
-            sections.append(f"#{key.upper()}\n\n" + PromptBuilder._format_value(value))
-
-        return sections
-
     # ==========================================================
-    # Gentleman context
+    # Execution sanitization
     # ==========================================================
 
     @staticmethod
-    def _build_gentleman_context(value: dict) -> str:
-        skills = {}
-        for name, data in value.items():
-            if isinstance(data, dict):
-                skills[name] = data.get("content", "")
-            else:
-                skills[name] = data
+    def _sanitize_execution(
+        execution: Any,
+    ) -> Any:
+
+        if not isinstance(
+            execution,
+            dict,
+        ):
+            return execution
+
+        return {
+            key: execution.get(key)
+            for key in (
+                "plan_id",
+                "intent",
+                "original_task",
+                "current_step",
+            )
+            if key in execution
+        }
+
+    # ==========================================================
+    # Serialization
+    # ==========================================================
+
+    @staticmethod
+    def _serialize(
+        value: Any,
+    ) -> str:
+
+        try:
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+
+        except Exception:
+            return str(value)
+
+    # ==========================================================
+    # Truncation
+    # ==========================================================
+
+    def _truncate_context(
+        self,
+        serialized: str,
+    ) -> str:
+
+        limit = self.max_context_chars
+
+        if len(serialized) <= limit:
+            return serialized
+
+        truncated = serialized[:limit]
+
         return (
-            "# GENTLEMAN SKILLS\n\n"
-            + PromptBuilder._format_value(skills)
-            + "\n\nEstas instrucciones tienen prioridad sobre conocimiento general."
+            truncated + "\n\n"
+            "[SYSTEM NOTICE]\n"
+            "El contexto fue limitado por tamaño. "
+            "No inferir información ausente."
         )
 
     # ==========================================================
-    # Format
+    # Prompt composition
     # ==========================================================
 
-    @staticmethod
-    def _format_value(value):
-        if isinstance(value, str):
-            return value
-        try:
-            return json.dumps(value, indent=2, ensure_ascii=False)
-        except Exception:
-            return str(value)
+    def _compose(
+        self,
+        original_task: str,
+        intent: str | None,
+        unit_type: str | None,
+        unit_name: str | None,
+        context: str,
+    ) -> str:
+
+        return f"""
+{self.SYSTEM_INSTRUCTIONS}
+
+## Tarea del usuario
+
+{original_task}
+
+## Intent
+
+{intent or "unknown"}
+
+## Unidad ejecutora
+
+{unit_type or "unknown"}:{unit_name or "unknown"}
+
+## Contexto disponible
+
+{context}
+
+## Instrucciones de análisis
+
+Realiza el análisis solicitado utilizando únicamente el contexto
+proporcionado.
+
+Cuando describas la arquitectura:
+
+- identifica primero lo que está explícitamente observado;
+- después explica las relaciones que puedan inferirse;
+- no presentes inferencias como hechos;
+- no inventes patrones arquitectónicos;
+- no inventes infraestructura;
+- no inventes comunicación entre servicios;
+- no describas el sistema como microservicios sin evidencia.
+
+Entrega un análisis ejecutivo, concreto y específico para este proyecto.
+""".strip()
