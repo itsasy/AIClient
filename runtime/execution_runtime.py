@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+
 from typing import Any
 
 from core.execution_plan import (
@@ -24,17 +25,16 @@ class ExecutionRuntime:
 
     Responsabilidades:
 
-    - Determinar runtime correspondiente.
-    - Gestionar lifecycle de steps.
-    - Delegar ejecución.
-    - Acumular resultados parciales.
+    - Resolver tipo de unidad.
+    - Delegar ejecución al runtime correspondiente.
+    - Consolidar resultados.
 
     No:
 
-    - Ejecuta agentes.
-    - Ejecuta skills.
-    - Construye planes.
-    - Decide estrategia.
+    - Ejecuta Agents.
+    - Ejecuta Skills.
+    - Construye contexto.
+    - Modifica planificación.
     """
 
     name = "execution_runtime"
@@ -52,6 +52,12 @@ class ExecutionRuntime:
 
         self.skill_runtime = skill_runtime or SkillRuntime()
 
+        self.metrics = {
+            "executions": 0,
+            "success": 0,
+            "failed": 0,
+        }
+
     # ======================================================
     # Public API
     # ======================================================
@@ -59,20 +65,36 @@ class ExecutionRuntime:
     def execute(
         self,
         plan: ExecutionPlan,
-        context: dict[str, Any],
+        context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
+
+        self.metrics["executions"] += 1
+
+        context = context or {}
 
         if plan.steps:
 
-            return self._execute_steps(
+            result = self._execute_steps(
                 plan,
                 context,
             )
 
-        return self._execute_single(
-            plan,
-            context,
-        )
+        else:
+
+            result = self._execute_single(
+                plan,
+                context,
+            )
+
+        if result.success:
+
+            self.metrics["success"] += 1
+
+        else:
+
+            self.metrics["failed"] += 1
+
+        return result
 
     # ======================================================
     # Single execution
@@ -106,7 +128,7 @@ class ExecutionRuntime:
         )
 
     # ======================================================
-    # Multi step execution
+    # Multi step
     # ======================================================
 
     def _execute_steps(
@@ -117,7 +139,7 @@ class ExecutionRuntime:
 
         outputs = []
 
-        for index, step in enumerate(plan.steps):
+        for step in plan.steps:
 
             result = self._dispatch(
                 plan,
@@ -128,8 +150,6 @@ class ExecutionRuntime:
             outputs.append(
                 result.to_dict(),
             )
-
-            context[f"step_{index}"] = result.output
 
             if not result.success:
 
@@ -144,7 +164,7 @@ class ExecutionRuntime:
         )
 
     # ======================================================
-    # Dispatcher
+    # Dispatch
     # ======================================================
 
     def _dispatch(
@@ -154,64 +174,37 @@ class ExecutionRuntime:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        try:
+        validation_errors = step.validate()
 
-            step.mark_running()
-
-            if step.unit_type == "agent":
-
-                result = self._execute_agent(
-                    plan,
-                    step,
-                    context,
-                )
-
-            elif step.unit_type == "skill":
-
-                result = self.skill_runtime.execute(
-                    plan,
-                    step,
-                    context,
-                )
-
-            else:
-
-                result = ExecutionResult.fail(
-                    error=(f"Tipo de unidad inválido: " f"{step.unit_type}"),
-                    executor=self.name,
-                    plan_id=plan.id,
-                )
-
-            if result.success:
-
-                step.mark_completed(
-                    result.output,
-                )
-
-            else:
-
-                step.mark_failed(
-                    result.error or "Error desconocido",
-                )
-
-            return result
-
-        except Exception as exc:
-
-            logger.exception(
-                "Error ejecutando step=%s",
-                step.unit_name,
-            )
-
-            step.mark_failed(
-                str(exc),
-            )
+        if validation_errors:
 
             return ExecutionResult.fail(
-                error=str(exc),
+                error=str(validation_errors),
                 executor=self.name,
                 plan_id=plan.id,
             )
+
+        if step.unit_type == "agent":
+
+            return self._execute_agent(
+                plan,
+                step,
+                context,
+            )
+
+        if step.unit_type == "skill":
+
+            return self.skill_runtime.execute(
+                plan,
+                step,
+                context,
+            )
+
+        return ExecutionResult.fail(
+            error=("Tipo de unidad inválido: " f"{step.unit_type}"),
+            executor=self.name,
+            plan_id=plan.id,
+        )
 
     # ======================================================
     # Agent dispatch
@@ -231,13 +224,14 @@ class ExecutionRuntime:
         if agent is None:
 
             return ExecutionResult.fail(
-                error=(f"Agent no encontrado: " f"{step.unit_name}"),
+                error=("Agent no encontrado: " f"{step.unit_name}"),
                 executor=self.name,
                 plan_id=plan.id,
             )
 
         return self.agent_runtime.execute(
             plan,
+            step,
             context,
             agent,
         )
