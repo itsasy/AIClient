@@ -15,12 +15,21 @@ class ExecutionPlanner:
 
     name = "execution_planner"
 
+    # ======================================================
+    # Public API
+    # ======================================================
+
     @classmethod
-    def create(cls, task: str, intent: dict[str, Any] | None = None) -> ExecutionPlan:
+    def create(
+        cls,
+        task: str,
+        intent: dict[str, Any] | None = None,
+    ) -> ExecutionPlan:
         if not task or not task.strip():
             raise ValueError("ExecutionPlanner requiere una tarea.")
 
         intent = intent or {}
+
         plan = ExecutionPlan(original_task=task.strip())
 
         intent_name = cls._normalize(intent.get("intent", "conversation"))
@@ -30,7 +39,7 @@ class ExecutionPlanner:
         plan.intent = intent_name
         plan.intent_category = domain
 
-        plan.metadata.update(
+        plan.planning_metadata.update(
             {
                 "planner": cls.name,
                 "intent": intent_name,
@@ -56,6 +65,10 @@ class ExecutionPlanner:
 
         return plan
 
+    # ======================================================
+    # Helpers
+    # ======================================================
+
     @staticmethod
     def _normalize(value: str | None) -> str:
         if not value:
@@ -73,6 +86,10 @@ class ExecutionPlanner:
         plan.execution_unit = unit_name
         plan.params = params or {}
 
+    # ======================================================
+    # Project creation
+    # ======================================================
+
     @staticmethod
     def _plan_project_creation(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Crear un nuevo proyecto de software"
@@ -84,6 +101,7 @@ class ExecutionPlanner:
             unit_name="architect",
             params={"task": task},
         )
+
         generate = plan.add_step(
             description="Generar estructura inicial",
             unit_type="agent",
@@ -92,21 +110,31 @@ class ExecutionPlanner:
         )
         generate.depends_on.append(analyze.id)
 
+    # ======================================================
+    # Code generation
+    # ======================================================
+
     @staticmethod
     def _plan_code_generation(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Generar código"
         ExecutionPlanner._set_execution_unit(plan, "agent", "coder", {"task": task})
 
+    # ======================================================
+    # Debug
+    # ======================================================
+
     @staticmethod
     def _plan_debug(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Analizar y resolver problema técnico"
         plan.execution_mode = "multi_step"
+
         analyze = plan.add_step(
             description="Analizar problema",
             unit_type="agent",
             unit_name="coder",
             params={"task": task},
         )
+
         validate = plan.add_step(
             description="Ejecutar validaciones",
             unit_type="skill",
@@ -115,16 +143,22 @@ class ExecutionPlanner:
         )
         validate.depends_on.append(analyze.id)
 
+    # ======================================================
+    # Refactor
+    # ======================================================
+
     @staticmethod
     def _plan_refactor(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Refactorizar código existente"
         plan.execution_mode = "multi_step"
+
         analyze = plan.add_step(
             description="Analizar arquitectura actual",
             unit_type="agent",
             unit_name="architect",
             params={"task": task},
         )
+
         modify = plan.add_step(
             description="Aplicar cambios",
             unit_type="agent",
@@ -133,29 +167,65 @@ class ExecutionPlanner:
         )
         modify.depends_on.append(analyze.id)
 
+    # ======================================================
+    # Project analysis (CORREGIDO)
+    # ======================================================
+
+    @staticmethod
+    def _plan_project_analysis(plan: ExecutionPlan, task: str) -> None:
+        plan.objective = "Analizar el proyecto actual"
+        plan.execution_mode = "multi_step"
+
+        plan.add_step(
+            description="Analizar estructura y código del proyecto",
+            unit_type="skill",
+            unit_name="analyze_project",
+            params={"task": task},
+        )
+
+    # ======================================================
+    # Documentation
+    # ======================================================
+
     @staticmethod
     def _plan_documentation(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Crear documentación"
         ExecutionPlanner._set_execution_unit(plan, "agent", "writer", {"task": task})
+
+    # ======================================================
+    # File creation
+    # ======================================================
 
     @staticmethod
     def _plan_file_creation(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Crear archivo"
         ExecutionPlanner._set_execution_unit(plan, "skill", "write_file", {"task": task})
 
+    # ======================================================
+    # Command execution
+    # ======================================================
+
     @staticmethod
     def _plan_command_execution(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Ejecutar comando"
         ExecutionPlanner._set_execution_unit(plan, "skill", "shell", {"task": task})
+
+    # ======================================================
+    # Docker
+    # ======================================================
 
     @staticmethod
     def _plan_docker(plan: ExecutionPlan, task: str) -> None:
         plan.objective = "Operación Docker"
         ExecutionPlanner._set_execution_unit(plan, "skill", "sandbox", {"task": task})
 
+    # ======================================================
+    # Default
+    # ======================================================
+
     @staticmethod
     def _plan_default(plan: ExecutionPlan, task: str) -> None:
         if not plan.intent:
             plan.intent = "conversation"
         plan.objective = task
-        ExecutionPlanner._set_execution_unit(plan, "agent", "task", {"task": task})
+        ExecutionPlanner._set_execution_unit(plan, "agent", "task_agent", {"task": task})
