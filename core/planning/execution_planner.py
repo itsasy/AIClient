@@ -39,7 +39,7 @@ class ExecutionPlanner:
         plan.intent = intent_name
         plan.intent_category = domain
 
-        plan.planning_metadata.update(
+        plan.metadata.update(
             {
                 "planner": cls.name,
                 "intent": intent_name,
@@ -228,4 +228,4 @@ class ExecutionPlanner:
         if not plan.intent:
             plan.intent = "conversation"
         plan.objective = task
-        ExecutionPlanner._set_execution_unit(plan, "agent", "task_agent", {"task": task})
+        ExecutionPlanner._set_execution_unit(plan, "agent", "task", {"task": task})
