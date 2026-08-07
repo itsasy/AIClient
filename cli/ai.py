@@ -34,54 +34,34 @@ console = Console() if RICH_AVAILABLE else None
 
 def format_output(result_data):
     """
-    Convierte el resultado de ExecutionEngine en un texto legible.
-    Maneja estructuras comunes devueltas por skills y agentes.
+    Convierte el resultado de una ejecución exitosa en texto legible.
     """
     if result_data is None:
         return "✅ Ejecución completada (sin salida)."
 
-    # Si es string, devolverlo directamente
     if isinstance(result_data, str):
         return result_data
 
-    # Si es diccionario, extraer contenido legible
     if isinstance(result_data, dict):
-        # 1. Si es un error (ok=False)
-        if "ok" in result_data and not result_data.get("ok"):
-            error = result_data.get("error", "Error desconocido")
-            return f"❌ {error}"
-
-        # 2. Si tiene "snapshot" (ProjectAnalyzerSkill)
+        # Si tiene "snapshot" (ProjectAnalyzerSkill)
         if "snapshot" in result_data:
             return result_data["snapshot"]
-
-        # 3. Si tiene "result" con snapshot dentro
+        # Si tiene "result" con snapshot dentro
         if "result" in result_data and isinstance(result_data["result"], dict):
             if "snapshot" in result_data["result"]:
                 return result_data["result"]["snapshot"]
-
-        # 4. Si tiene un mensaje simple
+        # Si tiene un mensaje simple
         if "message" in result_data:
             return result_data["message"]
-
-        # 5. Si tiene "output"
         if "output" in result_data:
             return str(result_data["output"])
-
-        # 6. Si tiene "result" sin más, procesar recursivamente
         if "result" in result_data:
             return format_output(result_data["result"])
-
-        # 7. Fallback: mostrar el dict como string
         return str(result_data)
 
-    # Si es lista, procesar cada elemento
     if isinstance(result_data, list):
-        # Si es una lista de un solo elemento, extraer ese elemento
         if len(result_data) == 1:
             return format_output(result_data[0])
-
-        # Si son varios pasos, mostrar cada uno con su número
         parts = []
         for i, item in enumerate(result_data, 1):
             formatted = format_output(item)
@@ -89,11 +69,37 @@ def format_output(result_data):
                 parts.append(f"📌 Paso {i}:\n{formatted}")
         if parts:
             return "\n\n".join(parts)
-
         return str(result_data)
 
-    # Cualquier otro tipo, convertir a string
     return str(result_data)
+
+
+def extract_error(result):
+    """
+    Extrae el mensaje de error de un ExecutionResult no exitoso.
+    """
+    if result.error:
+        # Si hay un error general
+        return result.error
+
+    # Si es partial o failure, puede tener lista de resultados de pasos
+    if isinstance(result.result, list):
+        errors = []
+        for step_result in result.result:
+            if isinstance(step_result, dict) and not step_result.get("ok", True):
+                error_msg = step_result.get("error", "Error desconocido en paso")
+                errors.append(f"• {error_msg}")
+        if errors:
+            return "Fallaron los siguientes pasos:\n" + "\n".join(errors)
+
+    # Si el resultado es un dict con "error"
+    if isinstance(result.result, dict):
+        if "error" in result.result:
+            return result.result["error"]
+        if "ok" in result.result and not result.result.get("ok"):
+            return result.result.get("error", "Error desconocido")
+
+    return "Error desconocido en la ejecución."
 
 
 def main():
@@ -327,11 +333,7 @@ Ejemplos:
                     output = format_output(result.result)
                     print(f"\nAI: {output}\n")
                 else:
-                    # Intentar extraer el error del resultado
-                    if result.result:
-                        error = format_output(result.result)
-                    else:
-                        error = result.error or "Error desconocido."
+                    error = extract_error(result)
                     print(f"\n❌ Error: {error}\n")
             except KeyboardInterrupt:
                 break
@@ -345,12 +347,7 @@ Ejemplos:
             else:
                 print(f"\n🤖 {output}\n")
         else:
-            # Intentar extraer el error del resultado
-            if result.result:
-                error = format_output(result.result)
-            else:
-                error = result.error or "Error desconocido."
-
+            error = extract_error(result)
             if RICH_AVAILABLE:
                 console.print(f"\n[bold red]❌[/bold red] {error}\n")
             else:
