@@ -6,7 +6,9 @@ import time
 from typing import Any, Callable
 
 from core.execution_result import ExecutionResult
-from core.intent_analyzer import IntentAnalyzer
+from core.intent import IntentAnalyzer, IntentResult
+
+from core.planning.plan_builder import PlanBuilder
 
 from runtime.execution_engine import ExecutionEngine
 
@@ -23,6 +25,9 @@ class Pipeline:
             |
             v
         IntentAnalyzer
+            |
+            v
+        PlanBuilder
             |
             v
         ExecutionPlan
@@ -57,10 +62,13 @@ class Pipeline:
     def __init__(
         self,
         intent_analyzer: IntentAnalyzer | None = None,
+        plan_builder: PlanBuilder | None = None,
         execution_engine: ExecutionEngine | None = None,
     ):
 
         self.intent_analyzer = intent_analyzer or IntentAnalyzer()
+
+        self.plan_builder = plan_builder or PlanBuilder()
 
         self.execution_engine = execution_engine or ExecutionEngine()
 
@@ -103,23 +111,33 @@ class Pipeline:
             # Intent Analysis
             # ==========================================
 
-            plan = self.intent_analyzer.analyze(
+            intent: IntentResult = self.intent_analyzer.analyze(
                 user_input,
             )
 
             self.emit(
-                "plan_created",
-                plan,
+                "intent_detected",
+                intent,
             )
 
             # ==========================================
-            # Attach external metadata
+            # Plan creation
             # ==========================================
+
+            plan = self.plan_builder.build(
+                intent=intent,
+                original_task=user_input,
+            )
 
             plan.metadata.update(
                 {
                     "pipeline_metadata": metadata,
                 }
+            )
+
+            self.emit(
+                "plan_created",
+                plan,
             )
 
             # ==========================================
@@ -139,17 +157,31 @@ class Pipeline:
                 {
                     "pipeline": self.name,
                     "duration": duration,
+                    "intent": intent.intent,
                 }
             )
 
             self.metrics["duration"] += duration
 
-            if result.success:
+            # ==========================================
+            # Result lifecycle
+            # ==========================================
+
+            if result.status == "completed":
 
                 self.metrics["success"] += 1
 
                 self.emit(
                     "pipeline_completed",
+                    result,
+                )
+
+            elif result.status == "partial":
+
+                self.metrics["success"] += 1
+
+                self.emit(
+                    "pipeline_partial",
                     result,
                 )
 

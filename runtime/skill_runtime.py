@@ -37,18 +37,22 @@ class SkillRuntime:
 
         context = context or {}
 
-        skill = self.skill_manager.get(step.unit_name)
+        skill = self.skill_manager.get(
+            step.unit_name,
+        )
 
         if skill is None:
 
             error = f"Skill no encontrada: " f"{step.unit_name}"
 
-            step.mark_failed(error)
+            step.mark_failed(
+                error,
+            )
 
-            return ExecutionResult.fail(
-                error=error,
-                executor=self.name,
-                plan_id=plan.id,
+            return self._fail_result(
+                error,
+                plan,
+                step,
             )
 
         errors = step.validate()
@@ -57,17 +61,22 @@ class SkillRuntime:
 
             error = "; ".join(errors)
 
-            step.mark_failed(error)
+            step.mark_failed(
+                error,
+            )
 
-            return ExecutionResult.fail(
-                error=error,
-                executor=f"skill:{skill.name}",
-                plan_id=plan.id,
+            return self._fail_result(
+                error,
+                plan,
+                step,
+                skill,
             )
 
         try:
 
-            warnings = skill.validate_step(step)
+            warnings = skill.validate_step(
+                step,
+            )
 
             if warnings:
 
@@ -77,12 +86,15 @@ class SkillRuntime:
 
             error = str(exc)
 
-            step.mark_failed(error)
+            step.mark_failed(
+                error,
+            )
 
-            return ExecutionResult.fail(
-                error=error,
-                executor=f"skill:{skill.name}",
-                plan_id=plan.id,
+            return self._fail_result(
+                error,
+                plan,
+                step,
+                skill,
             )
 
         retries = step.retries if step.retries is not None else plan.max_retries
@@ -99,13 +111,22 @@ class SkillRuntime:
 
                 step.mark_running()
 
+                logger.info(
+                    "Ejecutando skill=%s step=%s intento=%s",
+                    skill.name,
+                    step.id,
+                    attempts,
+                )
+
                 result = skill.execute(
                     plan=plan,
                     step=step,
                     context=context,
                 )
 
-                normalized = self._normalize_result(result)
+                normalized = self._normalize_result(
+                    result,
+                )
 
                 if not normalized["ok"]:
 
@@ -126,7 +147,9 @@ class SkillRuntime:
                     3,
                 )
 
-                step.mark_completed(output)
+                step.mark_completed(
+                    output,
+                )
 
                 step.metadata.update(
                     {
@@ -166,29 +189,62 @@ class SkillRuntime:
 
                     error = str(exc)
 
-                    step.mark_failed(error)
-
-                    result = ExecutionResult.fail(
-                        error=error,
-                        executor=f"skill:{skill.name}",
-                        plan_id=plan.id,
+                    step.mark_failed(
+                        error,
                     )
 
-                    result.metadata.update(
-                        {
-                            "skill": skill.name,
-                            "attempts": attempts,
-                            "step_id": step.id,
-                        }
+                    return self._fail_result(
+                        error,
+                        plan,
+                        step,
+                        skill,
+                        attempts,
                     )
 
-                    return result
+        return self._fail_result(
+            "Max retries alcanzado",
+            plan,
+            step,
+            skill,
+            attempts,
+        )
 
-        return ExecutionResult.fail(
-            error="Max retries alcanzado",
-            executor=f"skill:{skill.name}",
+    def _fail_result(
+        self,
+        error: str,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        skill=None,
+        attempts: int | None = None,
+    ) -> ExecutionResult:
+
+        executor = self.name
+
+        if skill:
+
+            executor = f"skill:{skill.name}"
+
+        result = ExecutionResult.fail(
+            error=error,
+            executor=executor,
             plan_id=plan.id,
         )
+
+        result.metadata.update(
+            {
+                "step_id": step.id,
+            }
+        )
+
+        if skill:
+
+            result.metadata["skill"] = skill.name
+
+        if attempts is not None:
+
+            result.metadata["attempts"] = attempts
+
+        return result
 
     def _normalize_result(
         self,

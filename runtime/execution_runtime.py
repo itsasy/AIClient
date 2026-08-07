@@ -95,7 +95,9 @@ class ExecutionRuntime:
 
         step = ExecutionStep(
             description=(plan.objective or plan.original_task),
-            unit_type=plan.execution_unit_type,
+            unit_type=ExecutionStep.normalize_unit_type(
+                plan.execution_unit_type,
+            ),
             unit_name=plan.execution_unit,
             params=plan.params,
         )
@@ -116,7 +118,11 @@ class ExecutionRuntime:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        outputs = []
+        children: list[ExecutionResult] = []
+
+        failed_steps: list[str] = []
+
+        completed_steps: list[str] = []
 
         ordered_steps = self._resolve_execution_order(
             plan.steps,
@@ -130,18 +136,71 @@ class ExecutionRuntime:
                 context,
             )
 
-            outputs.append(
-                result.to_dict(),
+            children.append(
+                result,
             )
 
-            if not result.success and plan.stop_on_error:
+            if result.is_success():
 
-                return result
+                completed_steps.append(
+                    step.id,
+                )
 
-        return ExecutionResult.ok(
-            output=outputs,
+            else:
+
+                failed_steps.append(
+                    step.id,
+                )
+
+                if plan.stop_on_error:
+
+                    break
+
+        # ------------------------------------------
+        # Todo correcto
+        # ------------------------------------------
+
+        if not failed_steps:
+
+            return ExecutionResult.ok(
+                output=[child.to_dict() for child in children],
+                executor=self.name,
+                plan_id=plan.id,
+            ).with_metadata(
+                steps=len(children),
+            )
+
+        # ------------------------------------------
+        # Todo falló
+        # ------------------------------------------
+
+        if not completed_steps:
+
+            return ExecutionResult.fail(
+                error="Todos los steps fallaron.",
+                executor=self.name,
+                plan_id=plan.id,
+            ).with_metadata(
+                failed_steps=failed_steps,
+                steps=len(children),
+            )
+
+        # ------------------------------------------
+        # Ejecución parcial
+        # ------------------------------------------
+
+        return ExecutionResult.partial(
+            output={
+                "completed_steps": completed_steps,
+                "failed_steps": failed_steps,
+            },
             executor=self.name,
             plan_id=plan.id,
+            children=children,
+        ).with_metadata(
+            steps=len(children),
+            completed=len(completed_steps),
+            failed=len(failed_steps),
         )
 
     # ==================================================
@@ -153,9 +212,9 @@ class ExecutionRuntime:
         steps: list[ExecutionStep],
     ) -> list[ExecutionStep]:
 
-        completed = set()
+        ordered: list[ExecutionStep] = []
 
-        ordered = []
+        resolved: set[str] = set()
 
         pending = steps.copy()
 
@@ -165,13 +224,15 @@ class ExecutionRuntime:
 
             for step in pending[:]:
 
-                dependencies_ready = all(dependency in completed for dependency in step.depends_on)
+                ready = all(dependency in resolved for dependency in step.depends_on)
 
-                if dependencies_ready:
+                if ready:
 
-                    ordered.append(step)
+                    ordered.append(
+                        step,
+                    )
 
-                    completed.add(
+                    resolved.add(
                         step.id,
                     )
 
@@ -198,7 +259,11 @@ class ExecutionRuntime:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        if step.unit_type == "agent":
+        unit_type = ExecutionStep.normalize_unit_type(
+            step.unit_type,
+        )
+
+        if unit_type == "agent":
 
             return self.agent_runtime.execute(
                 plan=plan,
@@ -206,7 +271,7 @@ class ExecutionRuntime:
                 context=context,
             )
 
-        if step.unit_type == "skill":
+        if unit_type == "skill":
 
             return self.skill_runtime.execute(
                 plan=plan,
@@ -214,8 +279,22 @@ class ExecutionRuntime:
                 context=context,
             )
 
-        return ExecutionResult.fail(
-            error=(f"Tipo de unidad inválido: " f"{step.unit_type}"),
+        error = f"Tipo de unidad inválido: " f"{unit_type}"
+
+        step.mark_failed(
+            error,
+        )
+
+        result = ExecutionResult.fail(
+            error=error,
             executor=self.name,
             plan_id=plan.id,
         )
+
+        result.metadata.update(
+            {
+                "step_id": step.id,
+            }
+        )
+
+        return result

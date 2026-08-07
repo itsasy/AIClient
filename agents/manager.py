@@ -113,6 +113,15 @@ class AgentManager:
             name,
         )
 
+    def resolve(
+        self,
+        name: str,
+    ) -> Agent | None:
+
+        return self.get(
+            name,
+        )
+
     def has(
         self,
         name: str,

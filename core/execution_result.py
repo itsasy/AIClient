@@ -14,6 +14,18 @@ VALID_RESULT_STATUS = {
 
 @dataclass
 class ExecutionResult:
+    """
+    Resultado normalizado de ejecución.
+
+    Representa:
+
+    - Éxito completo.
+    - Fallo.
+    - Ejecución parcial.
+
+    Puede contener resultados hijos
+    cuando existe ejecución multi-step.
+    """
 
     success: bool
 
@@ -38,6 +50,10 @@ class ExecutionResult:
         if self.status not in VALID_RESULT_STATUS:
 
             raise ValueError(f"Estado inválido: {self.status}")
+
+    # ==================================================
+    # Factory methods
+    # ==================================================
 
     @classmethod
     def ok(
@@ -89,30 +105,76 @@ class ExecutionResult:
             children=children or [],
         )
 
-    def is_success(self):
+    # ==================================================
+    # State
+    # ==================================================
+
+    def is_success(
+        self,
+    ) -> bool:
 
         return self.success and self.status in {
             "completed",
             "partial",
         }
 
-    def is_failed(self):
+    def is_failed(
+        self,
+    ) -> bool:
 
         return self.status == "failed"
+
+    # ==================================================
+    # Children
+    # ==================================================
 
     def add_child(
         self,
         result: "ExecutionResult",
     ):
 
-        self.children.append(result)
+        self.children.append(
+            result,
+        )
+
+    # ==================================================
+    # Metadata
+    # ==================================================
 
     def with_metadata(
         self,
-        **values,
+        values: dict[str, Any] | None = None,
+        **kwargs,
     ):
+        """
+        Añade metadata al resultado.
 
-        self.metadata.update(values)
+        Soporta:
+
+        result.with_metadata(
+            {
+                "key": "value"
+            }
+        )
+
+        y:
+
+        result.with_metadata(
+            key="value"
+        )
+        """
+
+        if values:
+
+            self.metadata.update(
+                values,
+            )
+
+        if kwargs:
+
+            self.metadata.update(
+                kwargs,
+            )
 
         return self
 
@@ -121,11 +183,19 @@ class ExecutionResult:
         values: dict[str, Any],
     ):
 
-        self.metadata.update(values)
+        self.metadata.update(
+            values,
+        )
 
         return self
 
-    def to_dict(self):
+    # ==================================================
+    # Serialization
+    # ==================================================
+
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
 
         return {
             "success": self.success,

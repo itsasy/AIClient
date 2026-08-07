@@ -6,9 +6,7 @@ import time
 from typing import Any, Callable
 
 from core.context.manager import ContextManager
-
 from core.execution_plan import ExecutionPlan
-
 from core.execution_result import ExecutionResult
 
 from runtime.execution_runtime import ExecutionRuntime
@@ -20,6 +18,23 @@ class ExecutionEngine:
     """
     Motor principal de ejecución.
 
+    Flujo:
+
+        ExecutionPlan
+              |
+              v
+        Validation
+              |
+              v
+        ContextManager
+              |
+              v
+        ExecutionRuntime
+              |
+              v
+        ExecutionResult
+
+
     Responsabilidades:
 
     - Validar ExecutionPlan.
@@ -28,6 +43,7 @@ class ExecutionEngine:
     - Delegar ejecución.
     - Registrar métricas.
     - Emitir eventos.
+
 
     No:
 
@@ -56,8 +72,11 @@ class ExecutionEngine:
         self.metrics = {
             "executions": 0,
             "success": 0,
+            "partial": 0,
             "failed": 0,
             "duration": 0,
+            "context_duration": 0,
+            "execution_duration": 0,
         }
 
     # ======================================================
@@ -73,21 +92,23 @@ class ExecutionEngine:
 
         self.metrics["executions"] += 1
 
-        self.emit(
-            "execution_started",
-            plan,
-        )
-
         try:
 
             self._validate_plan(
                 plan,
             )
 
+            plan.mark_validated()
+
+            self.emit(
+                "plan_validated",
+                plan,
+            )
+
             plan.mark_running()
 
             self.emit(
-                "plan_running",
+                "execution_started",
                 plan,
             )
 
@@ -109,16 +130,19 @@ class ExecutionEngine:
                 3,
             )
 
+            self.metrics["context_duration"] += context_duration
+
             self.emit(
                 "context_ready",
                 {
+                    "plan_id": plan.id,
                     "plan": plan,
                     "duration": context_duration,
                 },
             )
 
             # ----------------------------------------------
-            # Execution
+            # Runtime execution
             # ----------------------------------------------
 
             execution_start = time.time()
@@ -138,46 +162,24 @@ class ExecutionEngine:
                 3,
             )
 
+            self.metrics["duration"] += duration
+
+            self.metrics["execution_duration"] += execution_duration
+
             result.metadata.update(
                 {
                     "engine": self.name,
+                    "plan_id": plan.id,
                     "duration": duration,
                     "context_duration": context_duration,
                     "execution_duration": execution_duration,
                 }
             )
 
-            self.metrics["duration"] += duration
-
-            # ----------------------------------------------
-            # Final lifecycle
-            # ----------------------------------------------
-
-            if result.success:
-
-                plan.mark_completed(
-                    result.output,
-                )
-
-                self.metrics["success"] += 1
-
-                self.emit(
-                    "execution_completed",
-                    result,
-                )
-
-            else:
-
-                plan.mark_failed(
-                    result.error or "Error desconocido",
-                )
-
-                self.metrics["failed"] += 1
-
-                self.emit(
-                    "execution_failed",
-                    result,
-                )
+            self._update_lifecycle(
+                plan,
+                result,
+            )
 
             return result
 
@@ -199,7 +201,7 @@ class ExecutionEngine:
             except Exception:
 
                 logger.exception(
-                    "No se pudo actualizar estado del plan",
+                    "No se pudo actualizar plan",
                 )
 
             logger.exception(
@@ -231,6 +233,54 @@ class ExecutionEngine:
             return result
 
     # ======================================================
+    # Lifecycle
+    # ======================================================
+
+    def _update_lifecycle(
+        self,
+        plan: ExecutionPlan,
+        result: ExecutionResult,
+    ) -> None:
+
+        if result.status == "completed":
+
+            plan.mark_completed(
+                result.output,
+            )
+
+            self.metrics["success"] += 1
+
+            self.emit(
+                "execution_completed",
+                result,
+            )
+
+        elif result.status == "partial":
+
+            plan.mark_partial(
+                result=result.output,
+                error=result.error,
+            )
+
+            self.metrics["partial"] += 1
+
+            self.emit(
+                "execution_partial",
+                result,
+            )
+
+        else:
+
+            plan.mark_failed(
+                result.error or "Error desconocido",
+            )
+
+            self.emit(
+                "execution_failed",
+                result,
+            )
+
+    # ======================================================
     # Validation
     # ======================================================
 
@@ -238,6 +288,13 @@ class ExecutionEngine:
         self,
         plan: ExecutionPlan,
     ) -> None:
+
+        if not isinstance(
+            plan,
+            ExecutionPlan,
+        ):
+
+            raise TypeError("ExecutionEngine requiere ExecutionPlan")
 
         errors = plan.validate()
 
