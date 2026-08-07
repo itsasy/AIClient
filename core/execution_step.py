@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from typing import Any
 
@@ -19,6 +19,8 @@ VALID_STEP_STATUS = {
 VALID_UNIT_TYPES = {
     "agent",
     "skill",
+    "tool",
+    "workflow",
 }
 
 
@@ -27,20 +29,37 @@ UNIT_ALIASES = {
     "agent_runtime": "agent",
     "skills": "skill",
     "skill_runtime": "skill",
+    "tools": "tool",
+    "workflows": "workflow",
 }
 
 
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Unidad ejecutable dentro de un ExecutionPlan.
+    Unidad mínima ejecutable.
 
-    Representa una acción concreta:
-    - Agent.
+    Representa:
+
     - Skill.
+    - Agent.
+    - Tool.
+    - Workflow.
+
+    No:
+
+    - Ejecuta.
+    - Resuelve dependencias.
+    - Maneja resultados globales.
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
+    )
+
+    trace_id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
+    )
 
     description: str = ""
 
@@ -72,30 +91,20 @@ class ExecutionStep:
         default_factory=dict,
     )
 
-    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
 
     started_at: datetime | None = None
 
     completed_at: datetime | None = None
 
-    # ==================================================
-    # Initialization
-    # ==================================================
+    def __post_init__(self):
 
-    def __post_init__(
-        self,
-    ) -> None:
-
-        self.unit_type = self.normalize_unit_type(
-            self.unit_type,
-        )
+        self.unit_type = self.normalize_unit_type(self.unit_type)
 
         if self.unit_name:
             self.unit_name = self.unit_name.strip()
-
-    # ==================================================
-    # Normalization
-    # ==================================================
 
     @classmethod
     def normalize_unit_type(
@@ -113,51 +122,28 @@ class ExecutionStep:
             value,
         )
 
-    # ==================================================
-    # Validation
-    # ==================================================
-
     def validate(
         self,
     ) -> list[str]:
 
-        errors: list[str] = []
+        errors = []
 
         if not self.description.strip():
-
             errors.append("step sin descripción")
 
         if self.unit_type not in VALID_UNIT_TYPES:
-
             errors.append("tipo de unidad inválido")
 
         if not self.unit_name:
-
             errors.append("unidad sin nombre")
 
-        if self.retries is not None and self.retries < 0:
-
-            errors.append("retries inválido")
-
         if self.timeout <= 0:
-
             errors.append("timeout inválido")
 
-        for dependency in self.depends_on:
-
-            if not dependency.strip():
-
-                errors.append("dependencia inválida")
-
-            if dependency == self.id:
-
-                errors.append("step no puede depender de sí mismo")
+        if self.retries is not None and self.retries < 0:
+            errors.append("retries inválido")
 
         return errors
-
-    # ==================================================
-    # Lifecycle
-    # ==================================================
 
     def set_status(
         self,
@@ -165,45 +151,34 @@ class ExecutionStep:
     ) -> None:
 
         if status not in VALID_STEP_STATUS:
-
             raise ValueError(f"Estado inválido: {status}")
 
         self.status = status
 
-    def mark_running(
-        self,
-    ) -> None:
+    def mark_running(self):
 
-        self.set_status(
-            "running",
-        )
+        self.set_status("running")
 
-        self.started_at = datetime.now().astimezone()
+        self.started_at = datetime.now(timezone.utc)
 
     def mark_completed(
         self,
         result: Any = None,
-    ) -> None:
+    ):
 
-        self.set_status(
-            "completed",
-        )
+        self.set_status("completed")
 
         self.result = result
 
-        self.error = None
-
-        self.completed_at = datetime.now().astimezone()
+        self.completed_at = datetime.now(timezone.utc)
 
     def mark_failed(
         self,
         error: str,
-    ) -> None:
+    ):
 
-        self.set_status(
-            "failed",
-        )
+        self.set_status("failed")
 
         self.error = error
 
-        self.completed_at = datetime.now().astimezone()
+        self.completed_at = datetime.now(timezone.utc)

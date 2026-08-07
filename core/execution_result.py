@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import uuid
+
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 
 from typing import Any
 
@@ -12,22 +14,28 @@ VALID_RESULT_STATUS = {
 }
 
 
-@dataclass
+@dataclass(slots=True)
 class ExecutionResult:
     """
-    Resultado normalizado de ejecución.
+    Contrato único de resultado de ejecución.
 
     Representa:
 
-    - Éxito completo.
-    - Fallo.
-    - Ejecución parcial.
+    - Resultado exitoso.
+    - Resultado fallido.
+    - Resultado parcial.
 
     Puede contener resultados hijos
-    cuando existe ejecución multi-step.
+    para ejecuciones multi-step o paralelas.
+
+    No:
+
+    - Ejecuta lógica.
+    - Modifica planes.
+    - Decide retries.
     """
 
-    success: bool
+    status: str
 
     output: Any = None
 
@@ -37,15 +45,23 @@ class ExecutionResult:
 
     plan_id: str | None = None
 
-    status: str = "completed"
+    trace_id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
+    )
 
-    created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
 
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    children: list["ExecutionResult"] = field(default_factory=list)
+    children: list["ExecutionResult"] = field(
+        default_factory=list,
+    )
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
 
         if self.status not in VALID_RESULT_STATUS:
 
@@ -58,50 +74,47 @@ class ExecutionResult:
     @classmethod
     def ok(
         cls,
-        output=None,
-        executor=None,
-        plan_id=None,
-    ):
+        output: Any = None,
+        executor: str | None = None,
+        plan_id: str | None = None,
+    ) -> "ExecutionResult":
 
         return cls(
-            success=True,
+            status="completed",
             output=output,
             executor=executor,
             plan_id=plan_id,
-            status="completed",
         )
 
     @classmethod
     def fail(
         cls,
-        error,
-        executor=None,
-        plan_id=None,
-    ):
+        error: str,
+        executor: str | None = None,
+        plan_id: str | None = None,
+    ) -> "ExecutionResult":
 
         return cls(
-            success=False,
+            status="failed",
             error=error,
             executor=executor,
             plan_id=plan_id,
-            status="failed",
         )
 
     @classmethod
     def partial(
         cls,
-        output=None,
-        executor=None,
-        plan_id=None,
-        children=None,
-    ):
+        output: Any = None,
+        executor: str | None = None,
+        plan_id: str | None = None,
+        children: list["ExecutionResult"] | None = None,
+    ) -> "ExecutionResult":
 
         return cls(
-            success=True,
+            status="partial",
             output=output,
             executor=executor,
             plan_id=plan_id,
-            status="partial",
             children=children or [],
         )
 
@@ -109,14 +122,21 @@ class ExecutionResult:
     # State
     # ==================================================
 
+    @property
+    def success(
+        self,
+    ) -> bool:
+
+        return self.status in {
+            "completed",
+            "partial",
+        }
+
     def is_success(
         self,
     ) -> bool:
 
-        return self.success and self.status in {
-            "completed",
-            "partial",
-        }
+        return self.success
 
     def is_failed(
         self,
@@ -131,7 +151,7 @@ class ExecutionResult:
     def add_child(
         self,
         result: "ExecutionResult",
-    ):
+    ) -> None:
 
         self.children.append(
             result,
@@ -144,48 +164,14 @@ class ExecutionResult:
     def with_metadata(
         self,
         values: dict[str, Any] | None = None,
-        **kwargs,
-    ):
-        """
-        Añade metadata al resultado.
-
-        Soporta:
-
-        result.with_metadata(
-            {
-                "key": "value"
-            }
-        )
-
-        y:
-
-        result.with_metadata(
-            key="value"
-        )
-        """
+        **kwargs: Any,
+    ) -> "ExecutionResult":
 
         if values:
-
-            self.metadata.update(
-                values,
-            )
+            self.metadata.update(values)
 
         if kwargs:
-
-            self.metadata.update(
-                kwargs,
-            )
-
-        return self
-
-    def merge_metadata(
-        self,
-        values: dict[str, Any],
-    ):
-
-        self.metadata.update(
-            values,
-        )
+            self.metadata.update(kwargs)
 
         return self
 
@@ -198,12 +184,13 @@ class ExecutionResult:
     ) -> dict[str, Any]:
 
         return {
-            "success": self.success,
             "status": self.status,
+            "success": self.success,
             "output": self.output,
             "error": self.error,
             "executor": self.executor,
             "plan_id": self.plan_id,
+            "trace_id": self.trace_id,
             "created_at": self.created_at.isoformat(),
             "metadata": self.metadata,
             "children": [child.to_dict() for child in self.children],
