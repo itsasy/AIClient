@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from core.project_inspector import ProjectInspector
+
 from core.execution_plan import ExecutionPlan
 from core.execution_step import ExecutionStep
 
@@ -36,12 +37,9 @@ class ProjectAnalyzerSkill(Skill):
         context: dict[str, Any],
     ) -> dict[str, Any]:
 
-        params = step.params or {}
-
         try:
-            snapshot = self.inspector.inspect(
-                path=params.get("path"),
-            )
+
+            snapshot = self.inspector.inspect()
 
             return {
                 "ok": True,
