@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import logging
-
 from pathlib import Path
+from datetime import datetime
+
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -10,36 +11,35 @@ logger = logging.getLogger(__name__)
 
 class GentlemanSkills:
     """
-    Gestor de Gentleman Skills.
+    Gestor de conocimiento operativo reutilizable.
 
-    Descubre conocimiento operativo reutilizable.
+    Descubre SKILL.md externos y los expone
+    como conocimiento consultable.
 
-    Fuentes:
-
-    - ~/.engram/skills/
-    - ~/.claude/skills/
-    - ~/.codex/skills/
-    - ~/.gentleman/skills/
-
-    Responsabilidades:
-
-    - Descubrir skills.
-    - Cargar contenido.
-    - Indexar metadata.
-    - Buscar skills relevantes.
-
-    No:
-
-    - Construye prompts.
-    - Ejecuta herramientas.
-    - Decide prioridades.
+    No ejecuta herramientas.
+    No decide planificación.
+    No construye prompts.
     """
 
+    # Orden de prioridad:
+    # más arriba gana
     SEARCH_PATHS = (
-        Path.home() / ".engram" / "skills",
-        Path.home() / ".claude" / "skills",
-        Path.home() / ".codex" / "skills",
-        Path.home() / ".gentleman" / "skills",
+        (
+            "engram",
+            Path.home() / ".engram" / "skills",
+        ),
+        (
+            "claude",
+            Path.home() / ".claude" / "skills",
+        ),
+        (
+            "codex",
+            Path.home() / ".codex" / "skills",
+        ),
+        (
+            "gentleman",
+            Path.home() / ".gentleman" / "skills",
+        ),
     )
 
     def __init__(self):
@@ -52,60 +52,57 @@ class GentlemanSkills:
 
         self.skills_dirs = self._discover_skill_dirs()
 
-        if not self.skills_dirs:
-
-            logger.warning("No se encontraron Gentleman Skills.")
-
-            return
-
-        logger.info(
-            "Directorios Gentleman encontrados: %s",
-            self.skills_dirs,
-        )
-
         self._load_all()
 
-        logger.info(
-            "Gentleman Skills cargadas: %s",
-            list(self.skills.keys()),
-        )
-
-    # ==========================================================
+    # ======================================================
     # Discovery
-    # ==========================================================
+    # ======================================================
 
-    def _discover_skill_dirs(self) -> list[Path]:
+    def _discover_skill_dirs(self) -> list[dict]:
 
-        directories = []
+        result = []
 
-        for path in self.SEARCH_PATHS:
+        for priority, path in self.SEARCH_PATHS:
 
             if path.exists() and path.is_dir():
 
-                directories.append(path)
+                result.append(
+                    {
+                        "name": priority,
+                        "path": path,
+                    }
+                )
 
-        return directories
+        return result
 
-    # ==========================================================
+    # ======================================================
     # Loading
-    # ==========================================================
+    # ======================================================
 
-    def _load_all(self) -> None:
+    def _load_all(self):
 
-        for directory in self.skills_dirs:
+        self.skills.clear()
 
-            for file in directory.rglob("SKILL.md"):
+        self.metadata.clear()
 
-                self._load_skill(file)
+        for source in self.skills_dirs:
+
+            base = source["path"]
+
+            for file in base.rglob("SKILL.md"):
+
+                self._load_skill(
+                    file,
+                    source["name"],
+                )
 
     def _load_skill(
         self,
         file: Path,
-    ) -> None:
+        source: str,
+    ):
 
         try:
-
-            name = self._normalize_name(file.parent.name)
 
             content = file.read_text(
                 encoding="utf-8",
@@ -116,27 +113,37 @@ class GentlemanSkills:
 
                 return
 
-            # Si existe una skill con mismo nombre,
-            # gana la última encontrada.
+            name = self._normalize_name(file.parent.name)
+
+            # Si ya existe una skill con
+            # mayor prioridad no reemplazar
+
+            if name in self.skills:
+
+                return
+
+            stat = file.stat()
+
             self.skills[name] = content
 
             self.metadata[name] = {
                 "name": name,
+                "source": source,
                 "path": str(file),
-                "directory": str(file.parent),
                 "size": len(content),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             }
 
         except Exception:
 
             logger.exception(
-                "Error cargando skill: %s",
+                "Error cargando skill %s",
                 file,
             )
 
-    # ==========================================================
+    # ======================================================
     # Public API
-    # ==========================================================
+    # ======================================================
 
     def list_skills(self) -> list[str]:
 
@@ -152,9 +159,13 @@ class GentlemanSkills:
     def get_metadata(
         self,
         name: str,
-    ) -> dict | None:
+    ) -> Optional[dict]:
 
         return self.metadata.get(self._normalize_name(name))
+
+    def get_all_metadata(self) -> dict:
+
+        return dict(self.metadata)
 
     def find_relevant(
         self,
@@ -172,51 +183,25 @@ class GentlemanSkills:
 
             return self._search_cache[cache_key]
 
-        query_lower = query.lower()
+        tokens = {token for token in query.lower().split() if len(token) > 2}
 
-        query_tokens = {token for token in query_lower.split() if len(token) > 2}
-
-        scored: list[tuple[int, str]] = []
+        scored = []
 
         for name, content in self.skills.items():
 
             score = 0
 
-            normalized_name = name.replace("-", " ").replace("_", " ")
+            normalized_name = name.replace("_", " ").replace("-", " ")
 
-            # -----------------------------
-            # Match nombre
-            # -----------------------------
+            for token in tokens:
 
-            for token in normalized_name.split():
-
-                if token in query_lower:
+                if token in normalized_name:
 
                     score += 5
 
-            # -----------------------------
-            # Match contenido
-            # -----------------------------
-
-            preview = content.lower()
-
-            for token in query_tokens:
-
-                if token in preview:
+                if token in content.lower():
 
                     score += 1
-
-            # -----------------------------
-            # Frontmatter / tags
-            # -----------------------------
-
-            if "tags:" in preview:
-
-                for token in query_tokens:
-
-                    if token in preview:
-
-                        score += 2
 
             if score:
 
@@ -227,10 +212,7 @@ class GentlemanSkills:
                     )
                 )
 
-        scored.sort(
-            key=lambda item: item[0],
-            reverse=True,
-        )
+        scored.sort(reverse=True)
 
         result = [name for _, name in scored[:limit]]
 
@@ -249,25 +231,26 @@ class GentlemanSkills:
             limit,
         )
 
-    # ==========================================================
+    # ======================================================
     # Reload
-    # ==========================================================
+    # ======================================================
 
-    def reload(self) -> None:
-
-        self.skills.clear()
-
-        self.metadata.clear()
+    def reload(
+        self,
+        force: bool = True,
+    ):
 
         self._search_cache.clear()
 
         self.skills_dirs = self._discover_skill_dirs()
 
-        self._load_all()
+        if force:
 
-    # ==========================================================
+            self._load_all()
+
+    # ======================================================
     # Helpers
-    # ==========================================================
+    # ======================================================
 
     @staticmethod
     def _normalize_name(
@@ -278,11 +261,11 @@ class GentlemanSkills:
             name.strip()
             .lower()
             .replace(
-                " ",
+                "_",
                 "-",
             )
             .replace(
-                "_",
+                " ",
                 "-",
             )
         )

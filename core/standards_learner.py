@@ -1,29 +1,40 @@
-from typing import Dict
+from __future__ import annotations
+
+import json
+import tempfile
+from pathlib import Path
 
 from core.config import Config
-import json
 
 
 class StandardsLearner:
+    """
+    Guarda preferencias aprendidas del usuario.
+    """
 
     def __init__(self):
 
         self.file = Config.PROJECT_ROOT / ".standards.json"
 
-        self.standards: Dict[str, str] = self._load()
+        self.standards: dict[str, str] = self._load()
 
-    def _load(self):
+    def _load(self) -> dict[str, str]:
 
         if not self.file.exists():
             return {}
 
         try:
 
-            return json.loads(self.file.read_text(encoding="utf-8"))
+            data = json.loads(self.file.read_text(encoding="utf-8"))
+
+            if isinstance(data, dict):
+                return data
 
         except Exception:
 
-            return {}
+            pass
+
+        return {}
 
     def learn(
         self,
@@ -31,7 +42,24 @@ class StandardsLearner:
         value: str,
     ) -> None:
 
-        self.standards[key] = value
+        key = key.strip().lower()
+
+        if not key:
+            raise ValueError("La clave no puede estar vacía")
+
+        self.standards[key] = value.strip()
+
+        self._save()
+
+    def forget(
+        self,
+        key: str,
+    ) -> None:
+
+        self.standards.pop(
+            key,
+            None,
+        )
 
         self._save()
 
@@ -58,4 +86,4 @@ class StandardsLearner:
 
     def list_standards(self) -> dict[str, str]:
 
-        return self.standards
+        return dict(self.standards)
