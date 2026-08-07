@@ -13,7 +13,7 @@ from core.config import Config
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
-from container import build_container
+from runtime.execution_engine import ExecutionEngine
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -30,6 +30,58 @@ except ImportError:
     RICH_AVAILABLE = False
 
 console = Console() if RICH_AVAILABLE else None
+
+
+def format_output(result_data):
+    """
+    Convierte el resultado de ExecutionEngine en un texto legible.
+    Maneja estructuras comunes devueltas por skills y agentes.
+    """
+    if result_data is None:
+        return "✅ Ejecución completada (sin salida)."
+
+    # Si es string, devolverlo directamente
+    if isinstance(result_data, str):
+        return result_data
+
+    # Si es diccionario, extraer contenido legible
+    if isinstance(result_data, dict):
+        # Prioridad: snapshot (ProjectAnalyzerSkill)
+        if "snapshot" in result_data:
+            return result_data["snapshot"]
+        # Si tiene "result" con snapshot
+        if "result" in result_data and isinstance(result_data["result"], dict):
+            if "snapshot" in result_data["result"]:
+                return result_data["result"]["snapshot"]
+        # Si es un simple mensaje
+        if "message" in result_data:
+            return result_data["message"]
+        # Si tiene "output"
+        if "output" in result_data:
+            return str(result_data["output"])
+        # Si tiene "result" sin snapshot, mostrar el resultado
+        if "result" in result_data:
+            return format_output(result_data["result"])
+        # Si no hay nada mejor, devolver el dict con formato
+        return str(result_data)
+
+    # Si es lista, procesar cada elemento
+    if isinstance(result_data, list):
+        # Si es una lista de un solo elemento, extraer ese elemento
+        if len(result_data) == 1:
+            return format_output(result_data[0])
+        # Si son varios pasos, mostrar cada uno
+        parts = []
+        for i, item in enumerate(result_data, 1):
+            formatted = format_output(item)
+            if formatted:
+                parts.append(f"📌 Paso {i}:\n{formatted}")
+        if parts:
+            return "\n\n".join(parts)
+        return str(result_data)
+
+    # Cualquier otro tipo, convertir a string
+    return str(result_data)
 
 
 def main():
@@ -232,7 +284,7 @@ Ejemplos:
         return
 
     # =============================================================
-    # 2. CONSULTA DIRECTA (usando ExecutionEngine desde el contenedor)
+    # 2. CONSULTA DIRECTA (usando ExecutionEngine)
     # =============================================================
     query = " ".join(args.query).strip()
 
@@ -247,9 +299,7 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
-    # ✅ Obtener el engine desde el contenedor (con registries cargados)
-    container = build_container()
-    engine = container.get_engine()
+    engine = ExecutionEngine()
 
     if args.chat:
         print("🤖 Modo Chat (escribe 'exit' para salir)\n")
@@ -260,7 +310,8 @@ Ejemplos:
                     break
                 result = engine.execute_from_input(q)
                 if result.is_success:
-                    print(f"\nAI: {result.result}\n")
+                    output = format_output(result.result)
+                    print(f"\nAI: {output}\n")
                 else:
                     print(f"\n❌ Error: {result.error}\n")
             except KeyboardInterrupt:
@@ -268,7 +319,7 @@ Ejemplos:
     else:
         result = engine.execute_from_input(query)
         if result.is_success:
-            output = result.result
+            output = format_output(result.result)
             if RICH_AVAILABLE:
                 console.print(f"\n[bold cyan]🤖[/bold cyan] {output}\n")
             else:
