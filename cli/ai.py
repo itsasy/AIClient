@@ -46,23 +46,33 @@ def format_output(result_data):
 
     # Si es diccionario, extraer contenido legible
     if isinstance(result_data, dict):
-        # Prioridad: snapshot (ProjectAnalyzerSkill)
+        # 1. Si es un error (ok=False)
+        if "ok" in result_data and not result_data.get("ok"):
+            error = result_data.get("error", "Error desconocido")
+            return f"❌ {error}"
+
+        # 2. Si tiene "snapshot" (ProjectAnalyzerSkill)
         if "snapshot" in result_data:
             return result_data["snapshot"]
-        # Si tiene "result" con snapshot
+
+        # 3. Si tiene "result" con snapshot dentro
         if "result" in result_data and isinstance(result_data["result"], dict):
             if "snapshot" in result_data["result"]:
                 return result_data["result"]["snapshot"]
-        # Si es un simple mensaje
+
+        # 4. Si tiene un mensaje simple
         if "message" in result_data:
             return result_data["message"]
-        # Si tiene "output"
+
+        # 5. Si tiene "output"
         if "output" in result_data:
             return str(result_data["output"])
-        # Si tiene "result" sin snapshot, mostrar el resultado
+
+        # 6. Si tiene "result" sin más, procesar recursivamente
         if "result" in result_data:
             return format_output(result_data["result"])
-        # Si no hay nada mejor, devolver el dict con formato
+
+        # 7. Fallback: mostrar el dict como string
         return str(result_data)
 
     # Si es lista, procesar cada elemento
@@ -70,7 +80,8 @@ def format_output(result_data):
         # Si es una lista de un solo elemento, extraer ese elemento
         if len(result_data) == 1:
             return format_output(result_data[0])
-        # Si son varios pasos, mostrar cada uno
+
+        # Si son varios pasos, mostrar cada uno con su número
         parts = []
         for i, item in enumerate(result_data, 1):
             formatted = format_output(item)
@@ -78,6 +89,7 @@ def format_output(result_data):
                 parts.append(f"📌 Paso {i}:\n{formatted}")
         if parts:
             return "\n\n".join(parts)
+
         return str(result_data)
 
     # Cualquier otro tipo, convertir a string
@@ -299,6 +311,7 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
+    # ✅ Usar ExecutionEngine
     engine = ExecutionEngine()
 
     if args.chat:
@@ -308,16 +321,23 @@ Ejemplos:
                 q = input("Tú: ")
                 if q.lower() in ["exit", "salir", "quit"]:
                     break
+
                 result = engine.execute_from_input(q)
                 if result.is_success:
                     output = format_output(result.result)
                     print(f"\nAI: {output}\n")
                 else:
-                    print(f"\n❌ Error: {result.error}\n")
+                    # Intentar extraer el error del resultado
+                    if result.result:
+                        error = format_output(result.result)
+                    else:
+                        error = result.error or "Error desconocido."
+                    print(f"\n❌ Error: {error}\n")
             except KeyboardInterrupt:
                 break
     else:
         result = engine.execute_from_input(query)
+
         if result.is_success:
             output = format_output(result.result)
             if RICH_AVAILABLE:
@@ -325,7 +345,12 @@ Ejemplos:
             else:
                 print(f"\n🤖 {output}\n")
         else:
-            error = result.error
+            # Intentar extraer el error del resultado
+            if result.result:
+                error = format_output(result.result)
+            else:
+                error = result.error or "Error desconocido."
+
             if RICH_AVAILABLE:
                 console.print(f"\n[bold red]❌[/bold red] {error}\n")
             else:
