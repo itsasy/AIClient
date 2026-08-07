@@ -39,10 +39,11 @@ class ExecutionStep:
         }
     )
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     description: str
     unit_type: str
     unit_name: str
+
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     params: dict[str, Any] = field(default_factory=dict)
     depends_on: list[str] = field(default_factory=list)
     expected_output: str | None = None
