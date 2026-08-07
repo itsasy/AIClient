@@ -116,20 +116,24 @@ class ExecutionPlan:
     - Intención transformada en objetivo ejecutable.
     - Contexto requerido.
     - Unidad de ejecución.
-    - Steps de ejecución.
-    - Estado y resultado.
+    - Steps.
+    - Estado.
+    - Resultado.
 
     No:
 
     - Ejecuta agentes.
     - Ejecuta skills.
     - Gestiona herramientas.
-    - Decide proveedores LLM.
     """
 
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
+    )
 
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
 
     status: str = "pending"
 
@@ -149,23 +153,41 @@ class ExecutionPlan:
 
     execution_unit: str | None = None
 
-    steps: list[ExecutionStep] = field(default_factory=list)
+    steps: list[ExecutionStep] = field(
+        default_factory=list,
+    )
 
-    context_requirements: list[str] = field(default_factory=list)
+    context_requirements: list[str] = field(
+        default_factory=list,
+    )
 
-    loaded_context: dict[str, Any] = field(default_factory=dict)
+    loaded_context: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    execution_context: dict[str, Any] = field(default_factory=dict)
+    execution_context: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    constraints: list[str] = field(default_factory=list)
+    constraints: list[str] = field(
+        default_factory=list,
+    )
 
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    planning_metadata: dict[str, Any] = field(default_factory=dict)
+    planning_metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    metrics: dict[str, Any] = field(default_factory=dict)
+    metrics: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
     result: Any = None
 
@@ -179,11 +201,17 @@ class ExecutionPlan:
     # Initialization
     # ==================================================
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+    ) -> None:
 
-        self.execution_unit_type = self.normalize_unit_type(self.execution_unit_type)
+        self.execution_unit_type = self.normalize_unit_type(
+            self.execution_unit_type,
+        )
 
-        self.execution_mode = self.normalize_execution_mode(self.execution_mode)
+        self.execution_mode = self.normalize_execution_mode(
+            self.execution_mode,
+        )
 
     # ==================================================
     # Normalization
@@ -196,9 +224,21 @@ class ExecutionPlan:
     ) -> str:
 
         if not provider:
+
             return ""
 
-        value = provider.lower().strip().replace("-", "_").replace(" ", "_")
+        value = (
+            provider.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
 
         return PROVIDER_ALIASES.get(
             value,
@@ -212,9 +252,21 @@ class ExecutionPlan:
     ) -> str | None:
 
         if not unit_type:
+
             return None
 
-        value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
+        value = (
+            unit_type.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
 
         return UNIT_ALIASES.get(
             value,
@@ -228,9 +280,21 @@ class ExecutionPlan:
     ) -> str:
 
         if not mode:
+
             return "single"
 
-        return mode.lower().strip().replace("-", "_").replace(" ", "_")
+        return (
+            mode.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
 
     # ==================================================
     # Lifecycle
@@ -242,6 +306,7 @@ class ExecutionPlan:
     ) -> None:
 
         if status not in VALID_STATUS:
+
             raise ValueError(f"Estado inválido: {status}")
 
         allowed = VALID_TRANSITIONS.get(
@@ -250,18 +315,34 @@ class ExecutionPlan:
         )
 
         if self.status != status and status not in allowed:
+
             raise ValueError(f"Transición inválida " f"{self.status} -> {status}")
 
         self.status = status
 
-    def mark_planned(self) -> None:
-        self.set_status("planned")
+    def mark_planned(
+        self,
+    ) -> None:
 
-    def mark_validated(self) -> None:
-        self.set_status("validated")
+        self.set_status(
+            "planned",
+        )
 
-    def mark_running(self) -> None:
-        self.set_status("running")
+    def mark_validated(
+        self,
+    ) -> None:
+
+        self.set_status(
+            "validated",
+        )
+
+    def mark_running(
+        self,
+    ) -> None:
+
+        self.set_status(
+            "running",
+        )
 
     def mark_partial(
         self,
@@ -269,7 +350,9 @@ class ExecutionPlan:
         error: str | None = None,
     ) -> None:
 
-        self.set_status("partial")
+        self.set_status(
+            "partial",
+        )
 
         self.result = result
         self.error = error
@@ -279,7 +362,9 @@ class ExecutionPlan:
         result: Any = None,
     ) -> None:
 
-        self.set_status("completed")
+        self.set_status(
+            "completed",
+        )
 
         self.result = result
         self.error = None
@@ -289,7 +374,9 @@ class ExecutionPlan:
         error: str,
     ) -> None:
 
-        self.set_status("failed")
+        self.set_status(
+            "failed",
+        )
 
         self.error = error
 
@@ -297,7 +384,9 @@ class ExecutionPlan:
     # Validation
     # ==================================================
 
-    def validate(self) -> list[str]:
+    def validate(
+        self,
+    ) -> list[str]:
 
         errors: list[str] = []
 
@@ -347,13 +436,17 @@ class ExecutionPlan:
 
         for provider in self.context_requirements:
 
-            normalized = self.normalize_provider(provider)
+            normalized = self.normalize_provider(
+                provider,
+            )
 
             if normalized not in AVAILABLE_CONTEXT_PROVIDERS:
 
                 errors.append(f"provider inválido: {provider}")
 
-            normalized_providers.append(normalized)
+            normalized_providers.append(
+                normalized,
+            )
 
         if len(normalized_providers) != len(set(normalized_providers)):
 
@@ -377,6 +470,10 @@ class ExecutionPlan:
     # Utilities
     # ==================================================
 
-    def clone(self) -> "ExecutionPlan":
+    def clone(
+        self,
+    ) -> "ExecutionPlan":
 
-        return copy.deepcopy(self)
+        return copy.deepcopy(
+            self,
+        )

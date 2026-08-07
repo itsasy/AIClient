@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from typing import Any
 
+from core.execution_result import ExecutionResult
+
 VALID_STEP_STATUS = {
     "pending",
     "running",
@@ -25,49 +27,55 @@ VALID_STEP_TRANSITIONS = {
         "completed",
         "failed",
     },
-    "completed": set(),
     "failed": {
         "running",
     },
+    "completed": set(),
     "skipped": set(),
 }
 
 
-UNIT_TYPES = {
+VALID_UNIT_TYPES = {
     "agent",
     "skill",
-}
-
-
-UNIT_ALIASES = {
-    "agents": "agent",
-    "agent_runtime": "agent",
-    "skills": "skill",
-    "skill_runtime": "skill",
 }
 
 
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Unidad atómica de ejecución.
+    Unidad individual dentro de un ExecutionPlan.
 
-    Representa una acción dentro de un ExecutionPlan.
+    Representa una acción concreta.
 
-    Responsabilidades:
+    Puede ser:
 
-    - Identificar unidad ejecutora.
-    - Mantener parámetros.
-    - Mantener estado.
-    - Mantener dependencias.
-    - Registrar metadata.
+    - Agent.
+    - Skill.
 
     No:
 
-    - Ejecuta Agents.
-    - Ejecuta Skills.
-    - Decide workflows.
+    - Ejecuta la acción.
+    - Selecciona executor.
+    - Construye contexto.
+    - Gestiona pipeline.
     """
+
+    # ==================================================
+    # Identity
+    # ==================================================
+
+    id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
+    )
+
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    # ==================================================
+    # Definition
+    # ==================================================
 
     description: str = ""
 
@@ -79,66 +87,27 @@ class ExecutionStep:
         default_factory=dict,
     )
 
+    # ==================================================
+    # Dependencies
+    # ==================================================
+
     depends_on: list[str] = field(
         default_factory=list,
     )
 
-    id: str = field(
-        default_factory=lambda: str(uuid.uuid4()),
-    )
+    # ==================================================
+    # Runtime state
+    # ==================================================
 
     status: str = "pending"
 
-    result: Any = None
+    result: ExecutionResult | None = None
 
     error: str | None = None
-
-    retries: int | None = None
-
-    timeout: int = 60
 
     metadata: dict[str, Any] = field(
         default_factory=dict,
     )
-
-    created_at: datetime = field(
-        default_factory=lambda: datetime.now(
-            timezone.utc,
-        ),
-    )
-
-    # ==================================================
-    # Initialization
-    # ==================================================
-
-    def __post_init__(
-        self,
-    ) -> None:
-
-        self.unit_type = self.normalize_unit_type(
-            self.unit_type,
-        )
-
-    # ==================================================
-    # Normalization
-    # ==================================================
-
-    @classmethod
-    def normalize_unit_type(
-        cls,
-        unit_type: str | None,
-    ) -> str:
-
-        if not unit_type:
-
-            return ""
-
-        value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
-
-        return UNIT_ALIASES.get(
-            value,
-            value,
-        )
 
     # ==================================================
     # Lifecycle
@@ -151,9 +120,7 @@ class ExecutionStep:
 
         if status not in VALID_STEP_STATUS:
 
-            raise ValueError(
-                f"Estado inválido: {status}",
-            )
+            raise ValueError(f"Estado de step inválido: {status}")
 
         allowed = VALID_STEP_TRANSITIONS.get(
             self.status,
@@ -162,9 +129,7 @@ class ExecutionStep:
 
         if self.status != status and status not in allowed:
 
-            raise ValueError(
-                f"Transición inválida {self.status} -> {status}",
-            )
+            raise ValueError(f"Transición inválida {self.status} -> {status}")
 
         self.status = status
 
@@ -178,7 +143,7 @@ class ExecutionStep:
 
     def mark_completed(
         self,
-        result: Any = None,
+        result: ExecutionResult | None = None,
     ) -> None:
 
         self.set_status(
@@ -192,6 +157,7 @@ class ExecutionStep:
     def mark_failed(
         self,
         error: str,
+        result: ExecutionResult | None = None,
     ) -> None:
 
         self.set_status(
@@ -200,16 +166,15 @@ class ExecutionStep:
 
         self.error = error
 
-    def mark_skipped(
+        self.result = result
+
+    def skip(
         self,
-        reason: str | None = None,
     ) -> None:
 
         self.set_status(
             "skipped",
         )
-
-        self.metadata["skip_reason"] = reason
 
     # ==================================================
     # Validation
@@ -227,34 +192,24 @@ class ExecutionStep:
                 "step sin descripción",
             )
 
-        if not self.unit_type:
+        if self.unit_type not in VALID_UNIT_TYPES:
 
-            errors.append(
-                "step sin tipo de unidad",
-            )
-
-        elif self.unit_type not in UNIT_TYPES:
-
-            errors.append(
-                "tipo de unidad inválido",
-            )
+            errors.append(f"unit_type inválido: {self.unit_type}")
 
         if not self.unit_name.strip():
 
             errors.append(
-                "step sin unidad asignada",
+                "step sin unit_name",
             )
 
-        if self.timeout <= 0:
+        if self.status not in VALID_STEP_STATUS:
+
+            errors.append(f"status inválido: {self.status}")
+
+        if self.id in self.depends_on:
 
             errors.append(
-                "timeout inválido",
-            )
-
-        if self.retries is not None and self.retries < 0:
-
-            errors.append(
-                "retries inválido",
+                "step no puede depender de sí mismo",
             )
 
         if len(self.depends_on) != len(set(self.depends_on)):
@@ -263,18 +218,59 @@ class ExecutionStep:
                 "dependencias duplicadas",
             )
 
+        if self.status == "completed" and not self.result:
+
+            errors.append(
+                "step completado requiere resultado",
+            )
+
+        if self.status == "failed" and not self.error:
+
+            errors.append(
+                "step fallido requiere error",
+            )
+
         return errors
 
     # ==================================================
-    # Utilities
+    # Helpers
     # ==================================================
 
-    def clone(
+    def is_ready(
         self,
-    ) -> "ExecutionStep":
+        completed_steps: set[str],
+    ) -> bool:
 
-        import copy
+        return all(dependency in completed_steps for dependency in self.depends_on)
 
-        return copy.deepcopy(
-            self,
-        )
+    def reset(
+        self,
+    ) -> None:
+
+        self.status = "pending"
+
+        self.result = None
+
+        self.error = None
+
+    # ==================================================
+    # Serialization
+    # ==================================================
+
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "id": self.id,
+            "description": self.description,
+            "unit_type": self.unit_type,
+            "unit_name": self.unit_name,
+            "params": dict(self.params),
+            "depends_on": list(self.depends_on),
+            "status": self.status,
+            "result": (self.result.to_dict() if self.result else None),
+            "error": self.error,
+            "metadata": dict(self.metadata),
+            "created_at": self.created_at.isoformat(),
+        }

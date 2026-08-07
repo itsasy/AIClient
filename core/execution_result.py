@@ -5,62 +5,86 @@ from datetime import datetime, timezone
 
 from typing import Any
 
-VALID_RESULT_STATUS = {
-    "completed",
-    "partial",
-    "failed",
-}
-
 
 @dataclass(slots=True)
 class ExecutionResult:
     """
-    Resultado estándar del sistema de ejecución.
+    Resultado estándar producido por una ejecución.
 
     Representa la salida de:
 
     - AgentRuntime.
     - SkillRuntime.
-    - ExecutionRuntime.
+    - ExecutionStep.
     - ExecutionEngine.
-    - Pipeline.
-
-    Responsabilidades:
-
-    - Transportar resultado.
-    - Transportar errores.
-    - Mantener metadata.
-    - Mantener resultados hijos.
 
     No:
 
-    - Ejecuta lógica.
-    - Decide estados.
-    - Gestiona retries.
+    - Ejecuta acciones.
+    - Cambia estados del ExecutionPlan.
+    - Gestiona contexto.
+    - Decide reintentos.
+    - Maneja lifecycle.
     """
 
-    status: str
+    # ==================================================
+    # Identity
+    # ==================================================
+
+    success: bool = False
+
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    # ==================================================
+    # Output
+    # ==================================================
 
     output: Any = None
 
     error: str | None = None
 
+    error_type: str | None = None
+
+    # ==================================================
+    # Execution metadata
+    # ==================================================
+
+    execution_type: str | None = None
+
     executor: str | None = None
+
+    unit_name: str | None = None
+
+    step_id: str | None = None
 
     plan_id: str | None = None
 
-    children: list["ExecutionResult"] = field(
-        default_factory=list,
-    )
+    # ==================================================
+    # Metrics
+    # ==================================================
+
+    duration_ms: float | None = None
+
+    tokens_used: int | None = None
+
+    retries: int = 0
+
+    # ==================================================
+    # Additional data
+    # ==================================================
 
     metadata: dict[str, Any] = field(
         default_factory=dict,
     )
 
-    created_at: datetime = field(
-        default_factory=lambda: datetime.now(
-            timezone.utc,
-        ),
+    artifacts: list[Any] = field(
+        default_factory=list,
+    )
+
+    warnings: list[str] = field(
+        default_factory=list,
     )
 
     # ==================================================
@@ -68,100 +92,63 @@ class ExecutionResult:
     # ==================================================
 
     @classmethod
-    def ok(
+    def success_result(
         cls,
         output: Any = None,
-        executor: str | None = None,
-        plan_id: str | None = None,
-        children: list["ExecutionResult"] | None = None,
+        **kwargs: Any,
     ) -> "ExecutionResult":
 
         return cls(
-            status="completed",
+            success=True,
             output=output,
-            executor=executor,
-            plan_id=plan_id,
-            children=children or [],
+            **kwargs,
         )
 
     @classmethod
-    def partial(
-        cls,
-        output: Any = None,
-        executor: str | None = None,
-        plan_id: str | None = None,
-        children: list["ExecutionResult"] | None = None,
-    ) -> "ExecutionResult":
-
-        return cls(
-            status="partial",
-            output=output,
-            executor=executor,
-            plan_id=plan_id,
-            children=children or [],
-        )
-
-    @classmethod
-    def fail(
+    def failure_result(
         cls,
         error: str,
-        executor: str | None = None,
-        plan_id: str | None = None,
+        error_type: str | None = None,
+        **kwargs: Any,
     ) -> "ExecutionResult":
 
         return cls(
-            status="failed",
+            success=False,
             error=error,
-            executor=executor,
-            plan_id=plan_id,
+            error_type=error_type,
+            **kwargs,
         )
 
     # ==================================================
-    # Lifecycle
+    # State helpers
     # ==================================================
 
-    def __post_init__(
+    def add_warning(
         self,
+        warning: str,
     ) -> None:
 
-        if self.status not in VALID_RESULT_STATUS:
-
-            raise ValueError(
-                f"Estado inválido: {self.status}",
+        if warning:
+            self.warnings.append(
+                warning,
             )
 
-    # ==================================================
-    # Helpers
-    # ==================================================
+    def add_artifact(
+        self,
+        artifact: Any,
+    ) -> None:
 
-    def is_success(
+        if artifact is not None:
+
+            self.artifacts.append(
+                artifact,
+            )
+
+    def is_successful(
         self,
     ) -> bool:
 
-        return self.status == "completed"
-
-    def is_partial(
-        self,
-    ) -> bool:
-
-        return self.status == "partial"
-
-    def is_failed(
-        self,
-    ) -> bool:
-
-        return self.status == "failed"
-
-    def with_metadata(
-        self,
-        **metadata: Any,
-    ) -> "ExecutionResult":
-
-        self.metadata.update(
-            metadata,
-        )
-
-        return self
+        return self.success and self.error is None
 
     # ==================================================
     # Serialization
@@ -172,12 +159,20 @@ class ExecutionResult:
     ) -> dict[str, Any]:
 
         return {
-            "status": self.status,
+            "success": self.success,
             "output": self.output,
             "error": self.error,
+            "error_type": self.error_type,
+            "execution_type": self.execution_type,
             "executor": self.executor,
+            "unit_name": self.unit_name,
+            "step_id": self.step_id,
             "plan_id": self.plan_id,
-            "children": [child.to_dict() for child in self.children],
-            "metadata": self.metadata.copy(),
+            "duration_ms": self.duration_ms,
+            "tokens_used": self.tokens_used,
+            "retries": self.retries,
+            "metadata": dict(self.metadata),
+            "artifacts": list(self.artifacts),
+            "warnings": list(self.warnings),
             "created_at": self.created_at.isoformat(),
         }

@@ -2,39 +2,73 @@ from __future__ import annotations
 
 import logging
 
-from typing import Any
-
-from core.execution_plan import ExecutionPlan
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
 
+class ContextProvider(Protocol):
+    """
+    Contrato mínimo para proveedores de contexto.
+    """
+
+    def load(
+        self,
+        request: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+
 class ContextManager:
     """
-    Constructor central de contexto de ejecución.
+    Gestiona carga y composición de contexto.
 
     Responsabilidades:
 
-    - Resolver proveedores de contexto.
-    - Construir contexto para ExecutionPlan.
-    - Registrar contexto cargado.
+    - Resolver providers.
+    - Cargar contexto requerido.
+    - Unificar resultados.
+    - Preparar execution_context.
 
     No:
 
-    - Ejecuta Agents.
-    - Ejecuta Skills.
-    - Gestiona memoria persistente.
-    - Decide qué contexto necesita un plan.
+    - Ejecuta tareas.
+    - Modifica planes.
+    - Gestiona memoria interna.
+    - Decide estrategia LLM.
     """
 
-    name = "context_manager"
+    # ==================================================
+    # Initialization
+    # ==================================================
 
     def __init__(
         self,
-        providers: dict[str, Any] | None = None,
+        providers: dict[str, ContextProvider] | None = None,
+    ):
+        self.providers = providers or {}
+
+    # ==================================================
+    # Provider registry
+    # ==================================================
+
+    def register(
+        self,
+        name: str,
+        provider: ContextProvider,
     ) -> None:
 
-        self.providers: dict[str, Any] = providers or {}
+        key = self.normalize_name(
+            name,
+        )
+
+        self.providers[key] = provider
+
+    def has_provider(
+        self,
+        name: str,
+    ) -> bool:
+
+        return self.normalize_name(name) in self.providers
 
     # ==================================================
     # Public API
@@ -42,123 +76,104 @@ class ContextManager:
 
     def build(
         self,
-        plan: ExecutionPlan,
+        requirements: list[str],
+        request: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
 
-        if not isinstance(
-            plan,
-            ExecutionPlan,
-        ):
-
-            raise TypeError(
-                "ContextManager requiere ExecutionPlan",
-            )
+        request = request or {}
 
         context: dict[str, Any] = {}
 
-        for provider_name in plan.context_requirements:
+        for requirement in requirements:
+
+            provider_name = self.normalize_name(
+                requirement,
+            )
+
+            provider = self.providers.get(
+                provider_name,
+            )
+
+            if not provider:
+
+                logger.warning(
+                    "Context provider no encontrado: %s",
+                    provider_name,
+                )
+
+                continue
 
             try:
 
-                value = self._resolve_provider(
-                    provider_name,
-                    plan,
+                data = provider.load(
+                    request,
                 )
 
-                if value is not None:
+                context[provider_name] = data or {}
 
-                    context[provider_name] = value
-
-            except Exception:
+            except Exception as exc:
 
                 logger.exception(
                     "Error cargando contexto provider=%s",
                     provider_name,
                 )
 
-        plan.loaded_context = context.copy()
+                context[provider_name] = {
+                    "error": str(exc),
+                }
 
         return context
 
     # ==================================================
-    # Provider management
+    # Execution integration
     # ==================================================
 
-    def register(
+    def attach_to_plan(
         self,
-        name: str,
-        provider: Any,
-    ) -> None:
+        plan: Any,
+        request: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
 
-        if not name:
-
-            raise ValueError(
-                "Provider requiere nombre",
-            )
-
-        self.providers[self._normalize(name)] = provider
-
-    def unregister(
-        self,
-        name: str,
-    ) -> None:
-
-        self.providers.pop(
-            self._normalize(name),
-            None,
+        context = self.build(
+            requirements=plan.context_requirements,
+            request=request,
         )
 
-    # ==================================================
-    # Resolution
-    # ==================================================
+        plan.loaded_context = context
 
-    def _resolve_provider(
-        self,
-        name: str,
-        plan: ExecutionPlan,
-    ) -> Any:
-
-        key = self._normalize(
-            name,
+        plan.execution_context.update(
+            context,
         )
 
-        provider = self.providers.get(
-            key,
-        )
-
-        if provider is None:
-
-            logger.debug(
-                "Provider no disponible=%s",
-                key,
-            )
-
-            return None
-
-        if callable(provider):
-
-            return provider(
-                plan,
-            )
-
-        return provider
+        return context
 
     # ==================================================
     # Helpers
     # ==================================================
 
-    def _normalize(
-        self,
-        value: str,
+    @staticmethod
+    def normalize_name(
+        name: str,
     ) -> str:
 
-        return value.lower().strip().replace("-", "_").replace(" ", "_")
+        if not name:
 
-    # ==================================================
-    # Information
-    # ==================================================
+            return ""
 
-    def available(
+        return (
+            name.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
+
+    def available_providers(
         self,
     ) -> list[str]:
 
@@ -166,9 +181,14 @@ class ContextManager:
             self.providers.keys(),
         )
 
-    def contains(
-        self,
-        name: str,
-    ) -> bool:
+    # ==================================================
+    # Serialization
+    # ==================================================
 
-        return self._normalize(name) in self.providers
+    def describe(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "providers": self.available_providers(),
+        }
