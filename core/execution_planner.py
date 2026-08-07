@@ -18,13 +18,13 @@ class ExecutionPlanner:
     - Transformar intención en plan.
     - Definir unidades ejecutables.
     - Definir steps.
-    - Declarar contexto requerido.
     - Validar estructura inicial.
 
     No:
 
     - Ejecuta.
-    - Selecciona LLM.
+    - Construye contexto.
+    - Gestiona memoria.
     - Ejecuta agentes.
     - Ejecuta skills.
     """
@@ -36,11 +36,10 @@ class ExecutionPlanner:
     @staticmethod
     def create(
         task: str,
-        intent: dict[str, Any],
-        context: dict[str, Any] | None = None,
+        intent: dict[str, Any] | None,
     ) -> ExecutionPlan:
 
-        context = context or {}
+        intent = intent or {}
 
         plan = ExecutionPlan(
             original_task=task,
@@ -76,13 +75,15 @@ class ExecutionPlanner:
             "high",
             "complex",
         ):
+
             plan.execution_mode = "multi_step"
 
         else:
+
             plan.execution_mode = "single"
 
         logger.info(
-            "Creando plan intent=%s domain=%s complexity=%s",
+            "Creando ExecutionPlan intent=%s domain=%s complexity=%s",
             intent_name,
             domain,
             complexity,
@@ -97,12 +98,6 @@ class ExecutionPlanner:
         planner(
             plan,
             task,
-            context,
-        )
-
-        ExecutionPlanner._apply_context_requirements(
-            plan,
-            context,
         )
 
         errors = plan.validate()
@@ -127,7 +122,7 @@ class ExecutionPlanner:
         unit_type: str,
         unit_name: str,
         params: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.execution_unit_type = ExecutionPlan.normalize_unit_type(
             unit_type,
@@ -145,14 +140,13 @@ class ExecutionPlanner:
     def _plan_project_creation(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Crear un nuevo proyecto de software"
 
         plan.execution_mode = "multi_step"
 
-        plan.add_step(
+        first = plan.add_step(
             description="Analizar requisitos del proyecto",
             unit_type="agent",
             unit_name="architect",
@@ -161,7 +155,7 @@ class ExecutionPlanner:
             },
         )
 
-        plan.add_step(
+        second = plan.add_step(
             description="Generar estructura inicial",
             unit_type="agent",
             unit_name="coder",
@@ -170,8 +164,8 @@ class ExecutionPlanner:
             },
         )
 
-        plan.steps[1].depends_on.append(
-            plan.steps[0].id,
+        second.depends_on.append(
+            first.id,
         )
 
     # ======================================================
@@ -182,8 +176,7 @@ class ExecutionPlanner:
     def _plan_code_generation(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Generar código"
 
@@ -204,14 +197,13 @@ class ExecutionPlanner:
     def _plan_debug(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Analizar y resolver problema técnico"
 
         plan.execution_mode = "multi_step"
 
-        plan.add_step(
+        analyze = plan.add_step(
             description="Analizar problema",
             unit_type="agent",
             unit_name="coder",
@@ -220,7 +212,7 @@ class ExecutionPlanner:
             },
         )
 
-        plan.add_step(
+        validate = plan.add_step(
             description="Ejecutar validaciones",
             unit_type="skill",
             unit_name="sandbox",
@@ -229,8 +221,8 @@ class ExecutionPlanner:
             },
         )
 
-        plan.steps[1].depends_on.append(
-            plan.steps[0].id,
+        validate.depends_on.append(
+            analyze.id,
         )
 
     # ======================================================
@@ -241,14 +233,13 @@ class ExecutionPlanner:
     def _plan_refactor(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Refactorizar código existente"
 
         plan.execution_mode = "multi_step"
 
-        plan.add_step(
+        analyze = plan.add_step(
             description="Analizar arquitectura actual",
             unit_type="agent",
             unit_name="architect",
@@ -257,7 +248,7 @@ class ExecutionPlanner:
             },
         )
 
-        plan.add_step(
+        modify = plan.add_step(
             description="Aplicar cambios",
             unit_type="agent",
             unit_name="coder",
@@ -266,8 +257,8 @@ class ExecutionPlanner:
             },
         )
 
-        plan.steps[1].depends_on.append(
-            plan.steps[0].id,
+        modify.depends_on.append(
+            analyze.id,
         )
 
     # ======================================================
@@ -278,8 +269,7 @@ class ExecutionPlanner:
     def _plan_documentation(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Crear documentación"
 
@@ -300,8 +290,7 @@ class ExecutionPlanner:
     def _plan_file_creation(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Crear archivo"
 
@@ -322,8 +311,7 @@ class ExecutionPlanner:
     def _plan_command_execution(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Ejecutar comando"
 
@@ -344,8 +332,7 @@ class ExecutionPlanner:
     def _plan_docker(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.objective = "Operación Docker"
 
@@ -366,8 +353,7 @@ class ExecutionPlanner:
     def _plan_default(
         plan: ExecutionPlan,
         task: str,
-        context: dict[str, Any],
-    ):
+    ) -> None:
 
         plan.intent = "conversation"
 
@@ -376,36 +362,8 @@ class ExecutionPlanner:
         ExecutionPlanner._set_execution_unit(
             plan,
             "agent",
-            "task",
+            "task_agent",
             {
                 "task": task,
             },
         )
-
-    # ======================================================
-    # CONTEXT
-    # ======================================================
-
-    @staticmethod
-    def _apply_context_requirements(
-        plan: ExecutionPlan,
-        context: dict[str, Any],
-    ):
-
-        available = set(context.keys())
-
-        for provider in (
-            "project",
-            "memory",
-            "engram",
-            "documents",
-            "standards",
-            "knowledge",
-            "gentleman",
-        ):
-
-            if provider in available:
-
-                plan.add_context_requirement(
-                    provider,
-                )

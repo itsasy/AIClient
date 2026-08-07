@@ -6,7 +6,9 @@ import time
 from typing import Any, Callable
 
 from core.context.manager import ContextManager
+
 from core.execution_plan import ExecutionPlan
+
 from core.execution_result import ExecutionResult
 
 from runtime.execution_runtime import ExecutionRuntime
@@ -16,23 +18,25 @@ logger = logging.getLogger(__name__)
 
 class ExecutionEngine:
     """
-    Motor principal del sistema.
+    Motor principal de ejecución.
 
     Responsabilidades:
 
     - Validar ExecutionPlan.
-    - Gestionar lifecycle global.
     - Construir contexto.
+    - Gestionar lifecycle del plan.
     - Delegar ejecución.
-    - Emitir eventos.
     - Registrar métricas.
+    - Emitir eventos.
 
     No:
 
     - Analiza intención.
     - Crea planes.
-    - Ejecuta agentes.
-    - Ejecuta skills.
+    - Ejecuta Agents.
+    - Ejecuta Skills.
+    - Gestiona memoria.
+    - Gestiona aprendizaje.
     """
 
     name = "execution_engine"
@@ -53,7 +57,6 @@ class ExecutionEngine:
             "executions": 0,
             "success": 0,
             "failed": 0,
-            "critical_errors": 0,
             "duration": 0,
         }
 
@@ -72,15 +75,14 @@ class ExecutionEngine:
 
         self.emit(
             "execution_started",
-            {
-                "plan": plan,
-                "plan_id": plan.id,
-            },
+            plan,
         )
 
         try:
 
-            self._validate_plan(plan)
+            self._validate_plan(
+                plan,
+            )
 
             plan.mark_running()
 
@@ -89,15 +91,18 @@ class ExecutionEngine:
                 plan,
             )
 
+            # ----------------------------------------------
+            # Context
+            # ----------------------------------------------
+
             context_start = time.time()
 
-            context = self.context_manager.build(
-                plan,
+            context = (
+                self.context_manager.build(
+                    plan,
+                )
+                or {}
             )
-
-            if context is None:
-
-                context = {}
 
             context_duration = round(
                 time.time() - context_start,
@@ -107,10 +112,14 @@ class ExecutionEngine:
             self.emit(
                 "context_ready",
                 {
-                    "plan_id": plan.id,
+                    "plan": plan,
                     "duration": context_duration,
                 },
             )
+
+            # ----------------------------------------------
+            # Execution
+            # ----------------------------------------------
 
             execution_start = time.time()
 
@@ -139,6 +148,10 @@ class ExecutionEngine:
             )
 
             self.metrics["duration"] += duration
+
+            # ----------------------------------------------
+            # Final lifecycle
+            # ----------------------------------------------
 
             if result.success:
 
@@ -176,7 +189,6 @@ class ExecutionEngine:
             )
 
             self.metrics["failed"] += 1
-            self.metrics["critical_errors"] += 1
 
             try:
 
@@ -187,11 +199,11 @@ class ExecutionEngine:
             except Exception:
 
                 logger.exception(
-                    "No se pudo actualizar lifecycle del plan",
+                    "No se pudo actualizar estado del plan",
                 )
 
             logger.exception(
-                "Error crítico ExecutionEngine",
+                "ExecutionEngine error",
             )
 
             result = ExecutionResult.fail(
@@ -263,7 +275,9 @@ class ExecutionEngine:
 
             try:
 
-                callback(payload)
+                callback(
+                    payload,
+                )
 
             except Exception:
 

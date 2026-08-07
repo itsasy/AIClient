@@ -35,9 +35,15 @@ class AgentRuntime:
     - Construye contexto.
     - Ejecuta Skills.
     - Decide workflows.
+    - Gestiona memoria.
+    - Gestiona aprendizaje.
     """
 
     name = "agent_runtime"
+
+    # ==================================================
+    # Execution
+    # ==================================================
 
     def execute(
         self,
@@ -59,9 +65,9 @@ class AgentRuntime:
                 plan_id=plan.id,
             )
 
-        # ==================================================
+        # ----------------------------------------------
         # Step validation
-        # ==================================================
+        # ----------------------------------------------
 
         errors = step.validate()
 
@@ -77,9 +83,9 @@ class AgentRuntime:
                 plan_id=plan.id,
             )
 
-        # ==================================================
+        # ----------------------------------------------
         # Agent validation
-        # ==================================================
+        # ----------------------------------------------
 
         try:
 
@@ -103,9 +109,9 @@ class AgentRuntime:
                 plan_id=plan.id,
             )
 
-        # ==================================================
+        # ----------------------------------------------
         # Execution
-        # ==================================================
+        # ----------------------------------------------
 
         start = time.time()
 
@@ -125,11 +131,6 @@ class AgentRuntime:
                 context=context,
             )
 
-            duration = round(
-                time.time() - start,
-                3,
-            )
-
             normalized = self._normalize_result(
                 result,
             )
@@ -142,6 +143,11 @@ class AgentRuntime:
                         "Agent falló",
                     )
                 )
+
+            duration = round(
+                time.time() - start,
+                3,
+            )
 
             step.mark_completed(
                 result,
@@ -196,7 +202,10 @@ class AgentRuntime:
         result: Any,
     ) -> dict[str, Any]:
 
-        if isinstance(result, dict):
+        if isinstance(
+            result,
+            dict,
+        ):
 
             if "ok" in result:
 

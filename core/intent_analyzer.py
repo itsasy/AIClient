@@ -3,34 +3,54 @@ from __future__ import annotations
 import logging
 import re
 
-from core.execution_plan import ExecutionPlan
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class IntentAnalyzer:
     """
-    Convierte lenguaje natural en un ExecutionPlan.
+    Analiza lenguaje natural y devuelve intención.
 
-    Este módulo solamente interpreta intención.
-    No ejecuta tareas.
+    Responsabilidades:
+
+    - Detectar intención.
+    - Detectar dominio.
+    - Detectar complejidad.
+    - Extraer entidades relevantes.
+
+    No:
+
+    - Construye ExecutionPlan.
+    - Selecciona Agents.
+    - Selecciona Skills.
+    - Ejecuta tareas.
+    - Gestiona contexto.
     """
+
+    # ======================================================
+    # Public API
+    # ======================================================
 
     @staticmethod
     def analyze(
         query: str,
-    ) -> ExecutionPlan:
+    ) -> dict[str, Any]:
 
         if not query:
-            return ExecutionPlan(original_task="")
+
+            return {
+                "intent": "conversation",
+                "domain": "conversation",
+                "complexity": "normal",
+                "entities": {},
+            }
 
         q = query.lower().strip()
 
-        plan = ExecutionPlan(original_task=query)
-
-        # ======================================================
-        # CREACIÓN DE PROYECTOS
-        # ======================================================
+        # ==================================================
+        # PROJECT CREATION
+        # ==================================================
 
         if (
             re.search(
@@ -47,94 +67,55 @@ class IntentAnalyzer:
             )
         ):
 
-            framework = IntentAnalyzer._detect_framework(q)
-
-            plan.intent = "project_creation"
-            plan.intent_category = "project"
-
-            plan.objective = f"Crear proyecto {framework}"
-
-            plan.agent = "planner"
-
-            plan.add_skill("plan")
-
-            plan.execution_mode = "multi_step"
-
-            for provider in [
-                "project",
-                "engram",
-                "documents",
-                "obsidian",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            plan.params = {
-                "framework": framework,
-                "name": IntentAnalyzer._extract_name(query),
+            return {
+                "intent": "project_creation",
+                "domain": "project",
+                "complexity": "high",
+                "entities": {
+                    "framework": IntentAnalyzer._detect_framework(q),
+                    "name": IntentAnalyzer._extract_name(query),
+                },
             }
 
-            return plan
-
-        # ======================================================
+        # ==================================================
         # REFACTOR
-        # ======================================================
+        # ==================================================
 
         if re.search(
             r"\b(refactor|optimiza|mejora|limpia|reestructura)\b",
             q,
         ):
 
-            plan.intent = "refactor"
+            return {
+                "intent": "refactor",
+                "domain": "code",
+                "complexity": "high",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "code"
-
-            plan.objective = "Refactorizar código existente"
-
-            plan.agent = "coder"
-
-            plan.add_skill("refactor_code")
-            plan.add_skill("code")
-
-            plan.add_context_requirement("project")
-            plan.add_context_requirement("engram")
-            plan.add_context_requirement("gentleman")
-
-            return plan
-
-        # ======================================================
+        # ==================================================
         # DEBUG
-        # ======================================================
+        # ==================================================
 
         if re.search(
             r"\b(debug|error|bug|falla|fallo|problema)\b",
             q,
         ):
 
-            plan.intent = "debug"
+            return {
+                "intent": "debug",
+                "domain": "code",
+                "complexity": "normal",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "code"
-
-            plan.objective = "Analizar y resolver problema técnico"
-
-            plan.agent = "coder"
-
-            plan.add_skill("debug")
-            plan.add_skill("code")
-
-            for provider in [
-                "project",
-                "engram",
-                "documents",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            return plan
-
-        # ======================================================
-        # GENERACIÓN DE CÓDIGO
-        # ======================================================
+        # ==================================================
+        # CODE GENERATION
+        # ==================================================
 
         if re.search(
             r"\b(crea|genera|funcion|función|clase|componente|script)\b",
@@ -144,64 +125,37 @@ class IntentAnalyzer:
             q,
         ):
 
-            language = IntentAnalyzer._detect_language(q)
-
-            plan.intent = "code_generation"
-
-            plan.intent_category = "code"
-
-            plan.objective = "Generar código"
-
-            plan.agent = "coder"
-
-            plan.add_skill("code")
-
-            if language:
-                plan.add_skill(language)
-
-            for provider in [
-                "project",
-                "engram",
-                "documents",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            plan.params = {
-                "task": query,
-                "language": language,
+            return {
+                "intent": "code_generation",
+                "domain": "code",
+                "complexity": "normal",
+                "entities": {
+                    "language": IntentAnalyzer._detect_language(q),
+                    "task": query,
+                },
             }
 
-            return plan
-
-        # ======================================================
+        # ==================================================
         # TESTING
-        # ======================================================
+        # ==================================================
 
         if re.search(
             r"\b(test|testing|prueba|tests|unitario|unitaria)\b",
             q,
         ):
 
-            plan.intent = "testing"
+            return {
+                "intent": "testing",
+                "domain": "code",
+                "complexity": "normal",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "code"
-
-            plan.objective = "Crear o analizar tests"
-
-            plan.agent = "coder"
-
-            plan.add_skill("testing")
-            plan.add_skill("code")
-
-            plan.add_context_requirement("project")
-            plan.add_context_requirement("gentleman")
-
-            return plan
-
-        # ======================================================
-        # SHELL
-        # ======================================================
+        # ==================================================
+        # COMMAND EXECUTION
+        # ==================================================
 
         if re.search(
             r"\b(ejecuta|run|corre)\b",
@@ -215,51 +169,33 @@ class IntentAnalyzer:
                 flags=re.IGNORECASE,
             )
 
-            plan.intent = "command_execution"
-
-            plan.intent_category = "execution"
-
-            plan.objective = "Ejecutar comando"
-
-            plan.agent = "executor"
-
-            plan.add_skill("shell")
-
-            plan.add_context_requirement("project")
-
-            plan.params = {
-                "command": command,
+            return {
+                "intent": "command_execution",
+                "domain": "execution",
+                "complexity": "normal",
+                "entities": {
+                    "command": command,
+                },
             }
 
-            return plan
-
-        # ======================================================
+        # ==================================================
         # DOCKER
-        # ======================================================
+        # ==================================================
 
         if "docker" in q:
 
-            plan.intent = "docker"
-
-            plan.intent_category = "execution"
-
-            plan.objective = "Operación Docker"
-
-            plan.agent = "executor"
-
-            plan.add_skill("docker")
-
-            plan.add_context_requirement("project")
-
-            plan.params = {
-                "command": query,
+            return {
+                "intent": "docker",
+                "domain": "execution",
+                "complexity": "normal",
+                "entities": {
+                    "command": query,
+                },
             }
 
-            return plan
-
-        # ======================================================
-        # ANÁLISIS PROYECTO
-        # ======================================================
+        # ==================================================
+        # PROJECT ANALYSIS
+        # ==================================================
 
         if re.search(
             r"\b(analiza|revisa|inspecciona|evalua|evalúa)\b",
@@ -269,30 +205,18 @@ class IntentAnalyzer:
             q,
         ):
 
-            plan.intent = "project_analysis"
+            return {
+                "intent": "project_analysis",
+                "domain": "analysis",
+                "complexity": "high",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "analysis"
-
-            plan.objective = "Analizar proyecto"
-
-            plan.agent = "architect"
-
-            plan.add_skill("analyze_project")
-
-            for provider in [
-                "project",
-                "engram",
-                "documents",
-                "obsidian",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            return plan
-
-        # ======================================================
-        # ARCHIVOS
-        # ======================================================
+        # ==================================================
+        # FILE CREATION
+        # ==================================================
 
         if re.search(
             r"\b(crea|genera|escribe|guarda|archivo)\b",
@@ -303,159 +227,83 @@ class IntentAnalyzer:
 
             content = IntentAnalyzer._extract_content(query)
 
-            if content:
-
-                plan.intent = "file_creation"
-
-                plan.intent_category = "file"
-
-                plan.objective = f"Crear {filepath}"
-
-                plan.agent = "executor"
-
-                plan.add_skill("write_file")
-
-                plan.add_context_requirement("project")
-
-                plan.params = {
+            return {
+                "intent": ("file_creation" if content else "file_generation"),
+                "domain": "file",
+                "complexity": ("normal" if content else "high"),
+                "entities": {
                     "path": filepath,
                     "content": content,
-                }
-
-                return plan
-
-            plan.intent = "file_generation"
-
-            plan.intent_category = "planning"
-
-            plan.objective = f"Generar {filepath}"
-
-            plan.agent = "planner"
-
-            plan.add_skill("plan")
-
-            plan.execution_mode = "multi_step"
-
-            for provider in [
-                "project",
-                "engram",
-                "documents",
-                "obsidian",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            plan.params = {
-                "filepath": filepath,
-                "task": query,
+                    "task": query,
+                },
             }
 
-            return plan
-
-        # ======================================================
+        # ==================================================
         # SPEC
-        # ======================================================
+        # ==================================================
 
         if re.search(
             r"\b(spec|sdd|especificación|especificacion)\b",
             q,
         ):
 
-            plan.intent = "spec"
+            return {
+                "intent": "spec",
+                "domain": "planning",
+                "complexity": "high",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "planning"
-
-            plan.objective = "Gestionar especificación"
-
-            plan.agent = "planner"
-
-            plan.add_skill("plan")
-
-            plan.execution_mode = "multi_step"
-
-            for provider in [
-                "engram",
-                "documents",
-                "obsidian",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            return plan
-
-        # ======================================================
-        # PLANIFICACIÓN
-        # ======================================================
+        # ==================================================
+        # PLANNING
+        # ==================================================
 
         if re.search(
             r"\b(planifica|plan|estrategia|roadmap|multi)\b",
             q,
         ):
 
-            plan.intent = "planning"
+            return {
+                "intent": "planning",
+                "domain": "planning",
+                "complexity": "high",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "planning"
-
-            plan.objective = query
-
-            plan.agent = "planner"
-
-            plan.add_skill("plan")
-
-            plan.execution_mode = "multi_step"
-
-            for provider in [
-                "engram",
-                "documents",
-                "obsidian",
-                "gentleman",
-            ]:
-                plan.add_context_requirement(provider)
-
-            return plan
-
-        # ======================================================
-        # DOCUMENTACIÓN
-        # ======================================================
+        # ==================================================
+        # DOCUMENTATION
+        # ==================================================
 
         if re.search(
             r"\b(documenta|documentación|readme|manual)\b",
             q,
         ):
 
-            plan.intent = "documentation"
+            return {
+                "intent": "documentation",
+                "domain": "documentation",
+                "complexity": "normal",
+                "entities": {
+                    "task": query,
+                },
+            }
 
-            plan.intent_category = "documentation"
+        # ==================================================
+        # DEFAULT
+        # ==================================================
 
-            plan.objective = "Crear documentación"
-
-            plan.agent = "writer"
-
-            plan.add_skill("readme")
-
-            plan.add_context_requirement("project")
-
-            plan.add_context_requirement("documents")
-
-            return plan
-
-        # ======================================================
-        # CONVERSACIÓN
-        # ======================================================
-
-        plan.intent = "conversation"
-
-        plan.intent_category = "conversation"
-
-        plan.objective = query
-
-        plan.agent = "task"
-
-        plan.add_skill("conversation")
-
-        plan.add_context_requirement("engram")
-
-        return plan
+        return {
+            "intent": "conversation",
+            "domain": "conversation",
+            "complexity": "normal",
+            "entities": {
+                "task": query,
+            },
+        }
 
     # ======================================================
     # Helpers
@@ -476,6 +324,7 @@ class IntentAnalyzer:
         ]:
 
             if item in q:
+
                 return item
 
         return "fullstack"
@@ -499,6 +348,7 @@ class IntentAnalyzer:
         for key, value in mapping.items():
 
             if key in q:
+
                 return value
 
         return "python"
@@ -515,6 +365,7 @@ class IntentAnalyzer:
         )
 
         if match:
+
             return match.group(1)
 
         return "mi_proyecto"
@@ -555,6 +406,7 @@ class IntentAnalyzer:
             )
 
             if match:
+
                 return match.group(1)
 
         return None

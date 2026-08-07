@@ -44,17 +44,19 @@ class SkillManager:
         self.loaded_defaults = False
 
         if auto_load:
+
             self.load_defaults()
 
-    # ======================================================
+    # ==================================================
     # Loading
-    # ======================================================
+    # ==================================================
 
     def load_defaults(
         self,
     ) -> None:
 
         if self.loaded_defaults:
+
             return
 
         try:
@@ -97,9 +99,9 @@ class SkillManager:
 
         self.load_defaults()
 
-    # ======================================================
+    # ==================================================
     # Resolution
-    # ======================================================
+    # ==================================================
 
     def get(
         self,
@@ -107,24 +109,40 @@ class SkillManager:
     ) -> Skill | None:
 
         if not name:
+
             return None
 
-        return self.registry.get(
-            name,
-        )
+        try:
+
+            return self.registry.get(
+                name.strip(),
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error resolviendo skill=%s",
+                name,
+            )
+
+            return None
 
     def has(
         self,
         name: str,
     ) -> bool:
 
+        if not name:
+
+            return False
+
         return self.registry.has(
-            name,
+            name.strip(),
         )
 
-    # ======================================================
+    # ==================================================
     # Information
-    # ======================================================
+    # ==================================================
 
     def list(
         self,
@@ -154,7 +172,7 @@ class SkillManager:
         self,
     ) -> dict[str, tuple[str, ...]]:
 
-        result = {}
+        result: dict[str, tuple[str, ...]] = {}
 
         for name in self.list():
 
@@ -168,9 +186,9 @@ class SkillManager:
 
         return result
 
-    # ======================================================
+    # ==================================================
     # Management
-    # ======================================================
+    # ==================================================
 
     def unregister(
         self,

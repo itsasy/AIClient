@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
 
 from core.execution_plan import ExecutionPlan
 
@@ -22,19 +21,20 @@ logger = logging.getLogger(__name__)
 
 class ContextManager:
     """
-    Orquestador de contexto.
+    Constructor de contexto.
 
     Responsabilidades:
 
-    - Resolver providers.
-    - Construir contexto.
-    - Gestionar cache.
+    - Resolver context providers.
+    - Construir contexto de ejecución.
+    - Gestionar cache de contexto.
 
     No:
 
-    - Ejecuta Skills.
     - Ejecuta Agents.
+    - Ejecuta Skills.
     - Decide planes.
+    - Gestiona memoria directamente.
     """
 
     def __init__(
@@ -43,8 +43,6 @@ class ContextManager:
     ):
 
         self.registry = registry or ContextRegistry()
-
-        self._register_defaults()
 
         self.providers: dict[
             str,
@@ -62,13 +60,15 @@ class ContextManager:
             dict,
         ] = {}
 
-    # ======================================================
+        self._register_defaults()
+
+    # ==================================================
     # Defaults
-    # ======================================================
+    # ==================================================
 
     def _register_defaults(
         self,
-    ):
+    ) -> None:
 
         providers = [
             ProjectProvider,
@@ -87,9 +87,9 @@ class ContextManager:
                 provider,
             )
 
-    # ======================================================
+    # ==================================================
     # Provider resolution
-    # ======================================================
+    # ==================================================
 
     def _get_provider(
         self,
@@ -107,7 +107,7 @@ class ContextManager:
         if provider is None:
 
             logger.warning(
-                "Provider no encontrado=%s",
+                "Context provider no encontrado=%s",
                 name,
             )
 
@@ -121,9 +121,9 @@ class ContextManager:
 
         return provider
 
-    # ======================================================
+    # ==================================================
     # Context generation
-    # ======================================================
+    # ==================================================
 
     def build(
         self,
@@ -132,11 +132,15 @@ class ContextManager:
 
         cache_key = plan.id
 
-        if cache_key in self._context_cache:
+        cached = self._context_cache.get(
+            cache_key,
+        )
 
-            return self._context_cache[cache_key]
+        if cached is not None:
 
-        context: dict = {
+            return cached
+
+        context = {
             "query": plan.original_task,
             "execution_plan": plan.to_dict(),
         }
@@ -154,6 +158,7 @@ class ContextManager:
             )
 
             if provider is None:
+
                 continue
 
             try:
@@ -168,7 +173,7 @@ class ContextManager:
                 self.metrics["providers_failed"] += 1
 
                 logger.exception(
-                    "Error provider=%s",
+                    "Error cargando context provider=%s",
                     requirement,
                 )
 
@@ -178,14 +183,14 @@ class ContextManager:
 
         return context
 
-    # ======================================================
+    # ==================================================
     # Management
-    # ======================================================
+    # ==================================================
 
     def register_provider(
         self,
         provider: type[BaseContextProvider],
-    ):
+    ) -> None:
 
         self.registry.register(
             provider,
@@ -193,7 +198,7 @@ class ContextManager:
 
     def clear_cache(
         self,
-    ):
+    ) -> None:
 
         self._context_cache.clear()
 

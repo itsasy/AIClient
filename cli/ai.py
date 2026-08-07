@@ -10,7 +10,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from core.config import Config
-from core.orchestrator import Orchestrator
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
@@ -245,7 +244,7 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
-    orchestrator = Orchestrator()
+    pipeline = Pipeline()
 
     if args.chat:
         print("🤖 Modo Chat (escribe 'exit' para salir)\n")
@@ -258,7 +257,7 @@ Ejemplos:
             except KeyboardInterrupt:
                 break
     else:
-        response = orchestrator.process(query)
+        response = pipeline.run(query)
         if RICH_AVAILABLE:
             console.print(f"\n[bold cyan]🤖[/bold cyan] {response}\n")
         else:

@@ -17,6 +17,7 @@ class ExecutionResult:
     - SkillRuntime.
     - ExecutionRuntime.
     - ExecutionEngine.
+    - Pipeline.
 
     Representa el resultado final
     de una unidad ejecutable.
@@ -76,6 +77,7 @@ class ExecutionResult:
 
         return cls(
             success=False,
+            output=None,
             error=error,
             executor=executor,
             plan_id=plan_id,
@@ -92,7 +94,7 @@ class ExecutionResult:
     ) -> "ExecutionResult":
 
         return cls(
-            success=False,
+            success=True,
             output=output,
             executor=executor,
             plan_id=plan_id,
@@ -108,7 +110,10 @@ class ExecutionResult:
         self,
     ) -> bool:
 
-        return self.status == "completed" and self.success
+        return self.success and self.status in (
+            "completed",
+            "partial",
+        )
 
     def is_failed(
         self,

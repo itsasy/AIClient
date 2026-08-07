@@ -5,6 +5,7 @@ import uuid
 
 from dataclasses import dataclass, field
 from datetime import datetime
+
 from typing import Any
 
 VALID_STATUS = {
@@ -55,9 +56,9 @@ class ExecutionStep:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    # ======================================================
+    # ==================================================
     # Validation
-    # ======================================================
+    # ==================================================
 
     def validate(
         self,
@@ -90,9 +91,9 @@ class ExecutionStep:
 
         return errors
 
-    # ======================================================
+    # ==================================================
     # Lifecycle
-    # ======================================================
+    # ==================================================
 
     def set_status(
         self,
@@ -120,6 +121,8 @@ class ExecutionStep:
 
         self.result = result
 
+        self.error = None
+
     def mark_failed(
         self,
         error: str,
@@ -132,6 +135,17 @@ class ExecutionStep:
 
 @dataclass(slots=True)
 class ExecutionPlan:
+    """
+    Contrato central del orchestrator.
+
+    Contiene:
+    - intención.
+    - unidad ejecutable.
+    - steps.
+    - contexto requerido.
+    - metadata.
+    - lifecycle.
+    """
 
     AVAILABLE_CONTEXT_PROVIDERS = {
         "project",
@@ -200,10 +214,6 @@ class ExecutionPlan:
 
     loaded_context: dict[str, Any] = field(default_factory=dict)
 
-    memory_queries: list[str] = field(default_factory=list)
-
-    document_queries: list[str] = field(default_factory=list)
-
     execution_context: dict[str, Any] = field(default_factory=dict)
 
     params: dict[str, Any] = field(default_factory=dict)
@@ -224,9 +234,9 @@ class ExecutionPlan:
 
     stop_on_error: bool = True
 
-    # ======================================================
+    # ==================================================
     # Normalization
-    # ======================================================
+    # ==================================================
 
     @classmethod
     def normalize_provider(
@@ -264,27 +274,23 @@ class ExecutionPlan:
 
         return unit_type.lower().strip()
 
-    # ======================================================
+    # ==================================================
     # Context
-    # ======================================================
+    # ==================================================
 
     def add_context_requirement(
         self,
         provider: str,
     ):
 
-        provider = self.normalize_provider(
-            provider,
-        )
+        provider = self.normalize_provider(provider)
 
         if (
             provider in self.AVAILABLE_CONTEXT_PROVIDERS
             and provider not in self.context_requirements
         ):
 
-            self.context_requirements.append(
-                provider,
-            )
+            self.context_requirements.append(provider)
 
     def validate_context_requirements(
         self,
@@ -296,33 +302,23 @@ class ExecutionPlan:
 
         for provider in self.context_requirements:
 
-            canonical = self.normalize_provider(
-                provider,
-            )
+            canonical = self.normalize_provider(provider)
 
             if canonical not in self.AVAILABLE_CONTEXT_PROVIDERS:
 
-                invalid.append(
-                    provider,
-                )
+                invalid.append(provider)
 
             else:
 
-                normalized.append(
-                    canonical,
-                )
+                normalized.append(canonical)
 
-        self.context_requirements = list(
-            dict.fromkeys(
-                normalized,
-            )
-        )
+        self.context_requirements = list(dict.fromkeys(normalized))
 
         return invalid
 
-    # ======================================================
+    # ==================================================
     # Steps
-    # ======================================================
+    # ==================================================
 
     def add_step(
         self,
@@ -334,16 +330,12 @@ class ExecutionPlan:
 
         step = ExecutionStep(
             description=description,
-            unit_type=self.normalize_unit_type(
-                unit_type,
-            ),
-            unit_name=unit_name,
+            unit_type=self.normalize_unit_type(unit_type),
+            unit_name=unit_name.strip(),
             params=params or {},
         )
 
-        self.steps.append(
-            step,
-        )
+        self.steps.append(step)
 
         return step
 
@@ -359,15 +351,21 @@ class ExecutionPlan:
 
         return None
 
-    # ======================================================
+    # ==================================================
     # Lifecycle
-    # ======================================================
+    # ==================================================
 
     def mark_planned(
         self,
     ):
 
         self.status = "planned"
+
+    def mark_validated(
+        self,
+    ):
+
+        self.status = "validated"
 
     def mark_running(
         self,
@@ -384,6 +382,8 @@ class ExecutionPlan:
 
         self.result = result
 
+        self.error = None
+
     def mark_failed(
         self,
         error: str,
@@ -393,9 +393,9 @@ class ExecutionPlan:
 
         self.error = error
 
-    # ======================================================
+    # ==================================================
     # Validation
-    # ======================================================
+    # ==================================================
 
     def validate(
         self,
@@ -414,6 +414,10 @@ class ExecutionPlan:
         if self.execution_mode not in self.AVAILABLE_EXECUTION_MODES:
 
             errors.append("execution_mode inválido")
+
+        if self.execution_unit and not self.execution_unit_type:
+
+            errors.append("execution_unit sin tipo")
 
         if self.execution_unit_type:
 
@@ -441,10 +445,6 @@ class ExecutionPlan:
 
             errors.append("single no puede contener steps")
 
-        # ----------------------------------------------
-        # Step validation
-        # ----------------------------------------------
-
         step_ids = {step.id for step in self.steps}
 
         for index, step in enumerate(self.steps):
@@ -461,21 +461,19 @@ class ExecutionPlan:
 
         return errors
 
-    # ======================================================
+    # ==================================================
     # Utilities
-    # ======================================================
+    # ==================================================
 
     def clone(
         self,
     ) -> "ExecutionPlan":
 
-        return copy.deepcopy(
-            self,
-        )
+        return copy.deepcopy(self)
 
-    # ======================================================
+    # ==================================================
     # Serialization
-    # ======================================================
+    # ==================================================
 
     def to_dict(
         self,
@@ -487,8 +485,14 @@ class ExecutionPlan:
             "task": self.original_task,
             "objective": self.objective,
             "intent": self.intent,
+            "intent_category": self.intent_category,
+            "execution_mode": self.execution_mode,
             "execution_unit_type": self.execution_unit_type,
             "execution_unit": self.execution_unit,
+            "context_requirements": self.context_requirements,
+            "loaded_context": self.loaded_context,
+            "metadata": self.metadata,
+            "planning_metadata": self.planning_metadata,
             "steps": [
                 {
                     "id": step.id,
