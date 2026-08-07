@@ -9,14 +9,14 @@ from flask import Flask, abort, jsonify, request
 from core.config import Config
 from core.document_ingestor import DocumentIngestor
 from core.engram_memory import EngramMemory
-from core.orchestrator import Orchestrator
+from runtime.execution_engine import ExecutionEngine
 from core.spec_manager import SpecManager
 from core.standards_learner import StandardsLearner
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-orchestrator = Orchestrator()
+engine = ExecutionEngine()
 learner = StandardsLearner()
 engram_memory = EngramMemory()
 spec_manager = SpecManager()
@@ -68,8 +68,11 @@ def ask():
         return jsonify({"error": "El campo 'query' es obligatorio."}), 400
 
     try:
-        response = orchestrator.process(query)
-        return jsonify({"response": response})
+        result = engine.execute_from_input(query)
+        if result.is_success:
+            return jsonify({"response": result.result})
+        else:
+            return jsonify({"error": result.error}), 500
 
     except Exception:
         logger.exception(

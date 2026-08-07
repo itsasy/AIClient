@@ -13,9 +13,12 @@ from core.config import Config
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
+from runtime.execution_engine import ExecutionEngine
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 
 
 try:
@@ -229,7 +232,7 @@ Ejemplos:
         return
 
     # =============================================================
-    # 2. CONSULTA DIRECTA (solo si NO se usó ninguna opción)
+    # 2. CONSULTA DIRECTA (usando ExecutionEngine)
     # =============================================================
     query = " ".join(args.query).strip()
 
@@ -244,7 +247,8 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
-    pipeline = Pipeline()
+    # ✅ Usar ExecutionEngine en lugar de Pipeline/Orchestrator
+    engine = ExecutionEngine()
 
     if args.chat:
         print("🤖 Modo Chat (escribe 'exit' para salir)\n")
@@ -253,15 +257,27 @@ Ejemplos:
                 q = input("Tú: ")
                 if q.lower() in ["exit", "salir", "quit"]:
                     break
-                print(f"\nAI: {orchestrator.process(q)}\n")
+                result = engine.execute_from_input(q)
+                if result.is_success:
+                    print(f"\nAI: {result.result}\n")
+                else:
+                    print(f"\n❌ Error: {result.error}\n")
             except KeyboardInterrupt:
                 break
     else:
-        response = pipeline.run(query)
-        if RICH_AVAILABLE:
-            console.print(f"\n[bold cyan]🤖[/bold cyan] {response}\n")
+        result = engine.execute_from_input(query)
+        if result.is_success:
+            output = result.result
+            if RICH_AVAILABLE:
+                console.print(f"\n[bold cyan]🤖[/bold cyan] {output}\n")
+            else:
+                print(f"\n🤖 {output}\n")
         else:
-            print(f"\n🤖 {response}\n")
+            error = result.error
+            if RICH_AVAILABLE:
+                console.print(f"\n[bold red]❌[/bold red] {error}\n")
+            else:
+                print(f"\n❌ {error}\n")
 
 
 if __name__ == "__main__":

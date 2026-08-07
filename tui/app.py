@@ -35,7 +35,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.config import Config
-from core.orchestrator import Orchestrator
+from runtime.execution_engine import ExecutionEngine
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
@@ -105,7 +105,7 @@ class TUIApp(App):
 
     def __init__(self):
         super().__init__()
-        self.orchestrator = Orchestrator()
+        self.engine = ExecutionEngine()
         self.engram = EngramMemory()
         self.spec_manager = SpecManager()
         self.context_cache = ""
@@ -163,8 +163,11 @@ class TUIApp(App):
     async def process_query(self, message: str) -> None:
         """Procesa la consulta y muestra la respuesta."""
         try:
-            response = self.orchestrator.process(message)
-            self.log_ai(response)
+            result = self.engine.execute_from_input(message)
+            if result.is_success:
+                self.log_ai(result.result)
+            else:
+                self.log_error(f"Error: {result.error}")
         except Exception as e:
             self.log_error(f"Error: {str(e)}")
         finally:
