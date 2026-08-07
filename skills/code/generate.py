@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 
@@ -55,7 +53,7 @@ class GenerateCodeSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": "No se proporcionó " "una tarea de generación.",
+                "error": "No se proporcionó una tarea de generación.",
             }
 
         return {

@@ -5,11 +5,8 @@ import time
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
-
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 from core.execution_result import ExecutionResult
 
 from skills.manager import SkillManager
@@ -27,6 +24,10 @@ class SkillRuntime:
     ):
 
         self.skill_manager = skill_manager or SkillManager()
+
+    # ==================================================
+    # Public API
+    # ==================================================
 
     def execute(
         self,
@@ -128,13 +129,16 @@ class SkillRuntime:
                     result,
                 )
 
-                if not normalized["ok"]:
+                if not normalized.get(
+                    "ok",
+                    False,
+                ):
 
                     raise RuntimeError(
                         normalized.get(
                             "error",
-                            "Skill falló",
                         )
+                        or "Skill falló"
                     )
 
                 output = normalized.get(
@@ -193,13 +197,24 @@ class SkillRuntime:
                         error,
                     )
 
-                    return self._fail_result(
+                    result = self._fail_result(
                         error,
                         plan,
                         step,
                         skill,
                         attempts,
                     )
+
+                    result.metadata.update(
+                        {
+                            "duration": round(
+                                time.time() - start,
+                                3,
+                            ),
+                        }
+                    )
+
+                    return result
 
         return self._fail_result(
             "Max retries alcanzado",
@@ -208,6 +223,10 @@ class SkillRuntime:
             skill,
             attempts,
         )
+
+    # ==================================================
+    # Error handling
+    # ==================================================
 
     def _fail_result(
         self,
@@ -245,6 +264,10 @@ class SkillRuntime:
             result.metadata["attempts"] = attempts
 
         return result
+
+    # ==================================================
+    # Result normalization
+    # ==================================================
 
     def _normalize_result(
         self,

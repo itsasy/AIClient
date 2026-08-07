@@ -4,11 +4,8 @@ import logging
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
-
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 from core.execution_result import ExecutionResult
 
 from runtime.agent_runtime import AgentRuntime
@@ -156,10 +153,6 @@ class ExecutionRuntime:
 
                     break
 
-        # ------------------------------------------
-        # Todo correcto
-        # ------------------------------------------
-
         if not failed_steps:
 
             return ExecutionResult.ok(
@@ -169,10 +162,6 @@ class ExecutionRuntime:
             ).with_metadata(
                 steps=len(children),
             )
-
-        # ------------------------------------------
-        # Todo falló
-        # ------------------------------------------
 
         if not completed_steps:
 
@@ -184,10 +173,6 @@ class ExecutionRuntime:
                 failed_steps=failed_steps,
                 steps=len(children),
             )
-
-        # ------------------------------------------
-        # Ejecución parcial
-        # ------------------------------------------
 
         return ExecutionResult.partial(
             output={

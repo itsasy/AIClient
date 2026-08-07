@@ -6,10 +6,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 
@@ -76,15 +74,17 @@ class CodeExecutorSkill(Skill):
                     cwd=tmpdir,
                 )
 
+                success = process.returncode == 0
+
                 return {
-                    "ok": process.returncode == 0,
+                    "ok": success,
                     "result": {
                         "type": "execution_result",
                         "stdout": process.stdout.strip(),
                         "stderr": process.stderr.strip(),
                         "returncode": process.returncode,
                     },
-                    "error": (None if process.returncode == 0 else process.stderr.strip()),
+                    "error": (None if success else process.stderr.strip()),
                 }
 
         except subprocess.TimeoutExpired:

@@ -7,11 +7,8 @@ from typing import Any
 
 from agents.manager import AgentManager
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
-
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 from core.execution_result import ExecutionResult
 
 logger = logging.getLogger(__name__)

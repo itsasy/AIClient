@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 
@@ -34,7 +32,10 @@ class AnalyzeCodeSkill(Skill):
 
         code_snippet = params.get(
             "code_snippet",
-            params.get("code", ""),
+            params.get(
+                "code",
+                "",
+            ),
         )
 
         language = params.get(
@@ -47,7 +48,7 @@ class AnalyzeCodeSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": ("No se proporcionó código " "para analizar."),
+                "error": "No se proporcionó código para analizar.",
             }
 
         return {

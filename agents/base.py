@@ -1,34 +1,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
 from typing import Any
 
 from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 
 class Agent(ABC):
     """
-    Contrato base para todos los agentes del sistema.
+    Contrato base para agentes.
 
-    Un Agent recibe un ExecutionPlan ya construido.
-
-    Responsabilidades:
-
-    - Ejecutar la intención representada en el plan.
-    - Consumir contexto generado por ContextManager.
-    - Coordinar herramientas, skills o LLM.
-
-    No:
-
-    - Analiza intención.
-    - Construye ExecutionPlans.
-    - Resuelve contexto.
-    - Selecciona modelos directamente.
+    Un Agent ejecuta una intención
+    representada en un ExecutionPlan.
     """
-
-    # ======================================================
-    # Identity
-    # ======================================================
 
     name: str = "base"
 
@@ -50,9 +36,7 @@ class Agent(ABC):
             "name": self.name,
             "description": self.description,
             "version": self.version,
-            "capabilities": list(
-                self.capabilities,
-            ),
+            "capabilities": list(self.capabilities),
         }
 
     # ======================================================
@@ -63,23 +47,11 @@ class Agent(ABC):
         self,
         plan: ExecutionPlan,
     ) -> list[str]:
-        """
-        Hook de validación específico.
-
-        Puede comprobar:
-
-        - parámetros requeridos.
-        - contexto necesario.
-        - capacidades disponibles.
-        - compatibilidad del plan.
-
-        No bloquea por defecto.
-        """
 
         return []
 
     # ======================================================
-    # Capability helpers
+    # Capabilities
     # ======================================================
 
     def supports(
@@ -97,10 +69,8 @@ class Agent(ABC):
     def process(
         self,
         plan: ExecutionPlan,
+        step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> Any:
-        """
-        Ejecuta un ExecutionPlan.
-        """
 
         raise NotImplementedError("Los agentes deben implementar process()")
