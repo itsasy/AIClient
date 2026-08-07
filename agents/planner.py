@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from agents.base import Agent
@@ -46,6 +47,9 @@ class PlannerAgent(Agent):
             plan=plan,
             context=planning_context,
         )
+
+        # Log para depuración (opcional, pero útil)
+        logger.info("Respuesta del planner: %s", response[:500])
 
         self._load_steps(
             plan,
@@ -93,6 +97,17 @@ class PlannerAgent(Agent):
 
                 planning[key] = value
 
+        # ✅ Instrucciones claras para el LLM
+        planning["instructions"] = (
+            "Genera un plan de ejecución en formato JSON, con una lista de pasos. "
+            "Cada paso debe tener los campos: 'description' (string), "
+            "'unit_type' (string, puede ser 'agent' o 'skill'), "
+            "'unit_name' (string, nombre del agente o skill), "
+            "y opcionalmente 'params' (objeto con parámetros). "
+            "Devuelve SOLO el JSON, sin texto adicional, sin markdown, sin comillas triples. "
+            'Ejemplo: [{"description": "Analizar requisitos", "unit_type": "agent", "unit_name": "architect"}]'
+        )
+
         return planning
 
     # ==========================================================
@@ -119,7 +134,8 @@ class PlannerAgent(Agent):
             ):
 
                 logger.warning(
-                    "Planner no devolvió una lista de pasos.",
+                    "Planner no devolvió una lista de pasos. Datos: %s",
+                    data,
                 )
 
                 return
@@ -165,18 +181,41 @@ class PlannerAgent(Agent):
         self,
         response: str,
     ) -> list | dict | None:
+        """
+        Extrae JSON de la respuesta del LLM, manejando código markdown y texto adicional.
+        """
 
+        # 1. Limpiar posibles bloques de código markdown
+        response = re.sub(r"```json\s*", "", response)
+        response = re.sub(r"```\s*", "", response)
+        response = response.strip()
+
+        # 2. Buscar primero un array [...]
         start = response.find("[")
-
         end = response.rfind("]")
 
-        if start == -1 or end == -1:
+        if start != -1 and end != -1 and start < end:
+            try:
+                return json.loads(response[start : end + 1])
+            except json.JSONDecodeError:
+                pass
 
+        # 3. Si no hay array, buscar un objeto {...}
+        start = response.find("{")
+        end = response.rfind("}")
+
+        if start != -1 and end != -1 and start < end:
+            try:
+                return json.loads(response[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # 4. Si nada funciona, intentar parsear la respuesta completa
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            logger.warning("No se pudo extraer JSON de la respuesta.")
             return None
-
-        return json.loads(
-            response[start : end + 1],
-        )
 
     # ==========================================================
     # Validation
