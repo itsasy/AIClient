@@ -20,16 +20,15 @@ class AgentRegistry:
 
     - Registrar factories.
     - Resolver instancias lazy.
-    - Mantener catálogo.
     - Gestionar aliases.
-    - Exponer metadata.
+    - Exponer catálogo.
+    - Mantener metadata.
 
     No:
 
     - Ejecuta agentes.
-    - Decide workflows.
-    - Gestiona contexto.
-    - Modifica planes.
+    - Gestiona workflows.
+    - Construye contexto.
     """
 
     def __init__(self):
@@ -60,9 +59,7 @@ class AgentRegistry:
         name: str,
     ) -> str:
 
-        key = self._normalize(
-            name,
-        )
+        key = self._normalize(name)
 
         return self._aliases.get(
             key,
@@ -81,30 +78,19 @@ class AgentRegistry:
         overwrite: bool = False,
     ) -> None:
 
-        key = self._normalize(
-            name,
-        )
+        key = self._normalize(name)
 
         if not key:
 
-            raise ValueError("Agent requiere un nombre válido.")
+            raise ValueError("Agent requiere nombre válido.")
 
         if key in self._factories and not overwrite:
 
             raise ValueError(f"Agent ya registrado: {key}")
 
-        if isinstance(factory, type):
-
-            if not issubclass(
-                factory,
-                Agent,
-            ):
-
-                raise TypeError("Solo pueden registrarse clases Agent.")
-
-        elif not callable(factory):
-
-            raise TypeError("AgentFactory debe ser callable.")
+        self._validate_factory(
+            factory,
+        )
 
         self._factories[key] = factory
 
@@ -112,9 +98,7 @@ class AgentRegistry:
 
             for alias in aliases:
 
-                alias_key = self._normalize(
-                    alias,
-                )
+                alias_key = self._normalize(alias)
 
                 if alias_key:
 
@@ -125,6 +109,24 @@ class AgentRegistry:
             key,
         )
 
+    def _validate_factory(
+        self,
+        factory: AgentFactory,
+    ):
+
+        if isinstance(factory, type):
+
+            if not issubclass(
+                factory,
+                Agent,
+            ):
+
+                raise TypeError("Factory debe producir Agent.")
+
+        elif not callable(factory):
+
+            raise TypeError("Factory inválido.")
+
     # ======================================================
     # Resolution
     # ======================================================
@@ -134,9 +136,7 @@ class AgentRegistry:
         name: str,
     ) -> Agent | None:
 
-        key = self._resolve_name(
-            name,
-        )
+        key = self._resolve_name(name)
 
         if not key:
 
@@ -146,16 +146,9 @@ class AgentRegistry:
 
             return self._instances[key]
 
-        factory = self._factories.get(
-            key,
-        )
+        factory = self._factories.get(key)
 
         if factory is None:
-
-            logger.warning(
-                "Agent no encontrado=%s",
-                key,
-            )
 
             return None
 
@@ -168,7 +161,7 @@ class AgentRegistry:
                 Agent,
             ):
 
-                raise TypeError("Factory no produjo un Agent válido.")
+                raise TypeError("Factory no produjo Agent.")
 
             self._instances[key] = instance
 
@@ -184,7 +177,7 @@ class AgentRegistry:
             return None
 
     # ======================================================
-    # Information
+    # Query
     # ======================================================
 
     def has(
@@ -192,29 +185,35 @@ class AgentRegistry:
         name: str,
     ) -> bool:
 
-        return self._resolve_name(name) in self._factories
+        return bool(self._resolve_name(name) in self._factories)
 
     def list(
         self,
     ) -> list[str]:
 
-        return sorted(
-            self._factories.keys(),
-        )
+        return sorted(self._factories.keys())
 
     def loaded(
         self,
     ) -> list[str]:
 
-        return sorted(
-            self._instances.keys(),
-        )
+        return sorted(self._instances.keys())
 
     def aliases(
         self,
     ) -> dict[str, str]:
 
         return self._aliases.copy()
+
+    def count(
+        self,
+    ) -> int:
+
+        return len(self._factories)
+
+    # ======================================================
+    # Metadata
+    # ======================================================
 
     def metadata(
         self,
@@ -224,9 +223,7 @@ class AgentRegistry:
 
         for name in self.list():
 
-            agent = self.get(
-                name,
-            )
+            agent = self.get(name)
 
             if agent is None:
 
@@ -237,9 +234,7 @@ class AgentRegistry:
                 "get_metadata",
             ):
 
-                result.append(
-                    agent.get_metadata(),
-                )
+                result.append(agent.get_metadata())
 
             else:
 
@@ -277,9 +272,7 @@ class AgentRegistry:
         name: str,
     ) -> None:
 
-        key = self._resolve_name(
-            name,
-        )
+        key = self._resolve_name(name)
 
         self._factories.pop(
             key,
@@ -291,9 +284,9 @@ class AgentRegistry:
             None,
         )
 
-        aliases_to_remove = [alias for alias, target in self._aliases.items() if target == key]
+        aliases = [alias for alias, target in self._aliases.items() if target == key]
 
-        for alias in aliases_to_remove:
+        for alias in aliases:
 
             self._aliases.pop(
                 alias,

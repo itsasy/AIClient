@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from typing import Any, Callable
 
@@ -35,20 +36,21 @@ class Pipeline:
 
     Responsabilidades:
 
-    - Coordinar componentes superiores.
-    - Gestionar entrada del usuario.
-    - Crear ExecutionPlan mediante Planner.
+    - Recibir input externo.
+    - Resolver intención.
+    - Crear ExecutionPlan.
     - Delegar ejecución.
     - Gestionar aprendizaje externo.
     - Emitir eventos.
+    - Registrar métricas globales.
 
 
     No:
 
     - Ejecuta agentes.
     - Ejecuta skills.
-    - Valida planes.
     - Construye contexto.
+    - Valida planes.
     """
 
     name = "pipeline"
@@ -75,6 +77,8 @@ class Pipeline:
             "executions": 0,
             "success": 0,
             "failed": 0,
+            "critical_errors": 0,
+            "duration": 0,
         }
 
     # ======================================================
@@ -86,6 +90,8 @@ class Pipeline:
         user_input: str,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionResult:
+
+        start = time.time()
 
         metadata = metadata or {}
 
@@ -102,7 +108,7 @@ class Pipeline:
         try:
 
             logger.info(
-                "Pipeline iniciado: %s",
+                "Pipeline iniciado input=%s",
                 user_input[:100],
             )
 
@@ -131,6 +137,20 @@ class Pipeline:
                 plan,
             )
 
+            duration = round(
+                time.time() - start,
+                3,
+            )
+
+            result.metadata.update(
+                {
+                    "pipeline": self.name,
+                    "pipeline_duration": duration,
+                }
+            )
+
+            self.metrics["duration"] += duration
+
             self._learn(
                 user_input,
                 result,
@@ -158,7 +178,14 @@ class Pipeline:
 
         except Exception as exc:
 
+            duration = round(
+                time.time() - start,
+                3,
+            )
+
             self.metrics["failed"] += 1
+            self.metrics["critical_errors"] += 1
+            self.metrics["duration"] += duration
 
             logger.exception(
                 "Pipeline error",
@@ -167,6 +194,14 @@ class Pipeline:
             result = ExecutionResult.fail(
                 error=str(exc),
                 executor=self.name,
+            )
+
+            result.metadata.update(
+                {
+                    "pipeline": self.name,
+                    "pipeline_duration": duration,
+                    "pipeline_error": True,
+                }
             )
 
             self.emit(
@@ -256,12 +291,10 @@ class Pipeline:
         payload: Any,
     ) -> None:
 
-        callbacks = self.listeners.get(
+        for callback in self.listeners.get(
             event,
             [],
-        )
-
-        for callback in callbacks:
+        ):
 
             try:
 

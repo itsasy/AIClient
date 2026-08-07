@@ -16,9 +16,10 @@ class ExecutionPlanner:
     Responsabilidades:
 
     - Transformar intención en plan.
-    - Definir unidad ejecutable.
-    - Definir pasos.
-    - Definir contexto requerido.
+    - Definir unidades ejecutables.
+    - Definir steps.
+    - Declarar contexto requerido.
+    - Validar estructura inicial.
 
     No:
 
@@ -27,6 +28,10 @@ class ExecutionPlanner:
     - Ejecuta agentes.
     - Ejecuta skills.
     """
+
+    # ======================================================
+    # Public API
+    # ======================================================
 
     @staticmethod
     def create(
@@ -59,6 +64,13 @@ class ExecutionPlanner:
         plan.intent = intent_name
 
         plan.intent_category = domain
+
+        plan.planning_metadata = {
+            "planner": "execution_planner",
+            "intent": intent_name,
+            "domain": domain,
+            "complexity": complexity,
+        }
 
         if complexity in (
             "high",
@@ -93,9 +105,37 @@ class ExecutionPlanner:
             context,
         )
 
+        errors = plan.validate()
+
+        if errors:
+
+            raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
+
         plan.mark_planned()
 
+        plan.status = "validated"
+
         return plan
+
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    @staticmethod
+    def _set_execution_unit(
+        plan: ExecutionPlan,
+        unit_type: str,
+        unit_name: str,
+        params: dict[str, Any],
+    ):
+
+        plan.execution_unit_type = ExecutionPlan.normalize_unit_type(
+            unit_type,
+        )
+
+        plan.execution_unit = unit_name
+
+        plan.params = params
 
     # ======================================================
     # PROJECT CREATION
@@ -130,6 +170,10 @@ class ExecutionPlanner:
             },
         )
 
+        plan.steps[1].depends_on.append(
+            plan.steps[0].id,
+        )
+
     # ======================================================
     # CODE GENERATION
     # ======================================================
@@ -143,13 +187,14 @@ class ExecutionPlanner:
 
         plan.objective = "Generar código"
 
-        plan.execution_unit_type = "agent"
-
-        plan.execution_unit = "coder"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "coder",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # DEBUG
@@ -182,6 +227,10 @@ class ExecutionPlanner:
             params={
                 "task": task,
             },
+        )
+
+        plan.steps[1].depends_on.append(
+            plan.steps[0].id,
         )
 
     # ======================================================
@@ -217,6 +266,10 @@ class ExecutionPlanner:
             },
         )
 
+        plan.steps[1].depends_on.append(
+            plan.steps[0].id,
+        )
+
     # ======================================================
     # DOCUMENTATION
     # ======================================================
@@ -230,13 +283,14 @@ class ExecutionPlanner:
 
         plan.objective = "Crear documentación"
 
-        plan.execution_unit_type = "agent"
-
-        plan.execution_unit = "writer"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "writer",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # FILE CREATION
@@ -251,13 +305,14 @@ class ExecutionPlanner:
 
         plan.objective = "Crear archivo"
 
-        plan.execution_unit_type = "skill"
-
-        plan.execution_unit = "write_file"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "write_file",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # COMMAND EXECUTION
@@ -272,13 +327,14 @@ class ExecutionPlanner:
 
         plan.objective = "Ejecutar comando"
 
-        plan.execution_unit_type = "skill"
-
-        plan.execution_unit = "shell"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "shell",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # DOCKER
@@ -293,13 +349,14 @@ class ExecutionPlanner:
 
         plan.objective = "Operación Docker"
 
-        plan.execution_unit_type = "skill"
-
-        plan.execution_unit = "sandbox"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "sandbox",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # DEFAULT
@@ -316,13 +373,14 @@ class ExecutionPlanner:
 
         plan.objective = task
 
-        plan.execution_unit_type = "agent"
-
-        plan.execution_unit = "task"
-
-        plan.params = {
-            "task": task,
-        }
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "task",
+            {
+                "task": task,
+            },
+        )
 
     # ======================================================
     # CONTEXT
@@ -348,4 +406,6 @@ class ExecutionPlanner:
 
             if provider in available:
 
-                plan.add_context_requirement(provider)
+                plan.add_context_requirement(
+                    provider,
+                )

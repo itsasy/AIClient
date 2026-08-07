@@ -4,14 +4,15 @@ import logging
 
 from typing import Any
 
+from agents.manager import AgentManager
+from skills.manager import SkillManager
+
 from core.execution_plan import (
     ExecutionPlan,
     ExecutionStep,
 )
 
 from core.execution_result import ExecutionResult
-
-from agents.manager import AgentManager
 
 from runtime.agent_runtime import AgentRuntime
 from runtime.skill_runtime import SkillRuntime
@@ -25,8 +26,9 @@ class ExecutionRuntime:
 
     Responsabilidades:
 
-    - Resolver tipo de unidad.
-    - Delegar ejecución al runtime correspondiente.
+    - Resolver tipo de ejecución.
+    - Delegar Agent/Skill runtime.
+    - Ordenar steps.
     - Consolidar resultados.
 
     No:
@@ -34,7 +36,7 @@ class ExecutionRuntime:
     - Ejecuta Agents.
     - Ejecuta Skills.
     - Construye contexto.
-    - Modifica planificación.
+    - Modifica planes.
     """
 
     name = "execution_runtime"
@@ -42,25 +44,24 @@ class ExecutionRuntime:
     def __init__(
         self,
         agent_manager: AgentManager | None = None,
+        skill_manager: SkillManager | None = None,
         agent_runtime: AgentRuntime | None = None,
         skill_runtime: SkillRuntime | None = None,
     ):
 
         self.agent_manager = agent_manager or AgentManager()
 
+        self.skill_manager = skill_manager or SkillManager()
+
         self.agent_runtime = agent_runtime or AgentRuntime()
 
-        self.skill_runtime = skill_runtime or SkillRuntime()
+        self.skill_runtime = skill_runtime or SkillRuntime(
+            self.skill_manager,
+        )
 
-        self.metrics = {
-            "executions": 0,
-            "success": 0,
-            "failed": 0,
-        }
-
-    # ======================================================
+    # ==================================================
     # Public API
-    # ======================================================
+    # ==================================================
 
     def execute(
         self,
@@ -68,37 +69,23 @@ class ExecutionRuntime:
         context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
 
-        self.metrics["executions"] += 1
-
         context = context or {}
 
         if plan.steps:
 
-            result = self._execute_steps(
+            return self._execute_steps(
                 plan,
                 context,
             )
 
-        else:
+        return self._execute_single(
+            plan,
+            context,
+        )
 
-            result = self._execute_single(
-                plan,
-                context,
-            )
-
-        if result.success:
-
-            self.metrics["success"] += 1
-
-        else:
-
-            self.metrics["failed"] += 1
-
-        return result
-
-    # ======================================================
-    # Single execution
-    # ======================================================
+    # ==================================================
+    # Single
+    # ==================================================
 
     def _execute_single(
         self,
@@ -127,9 +114,9 @@ class ExecutionRuntime:
             context,
         )
 
-    # ======================================================
+    # ==================================================
     # Multi step
-    # ======================================================
+    # ==================================================
 
     def _execute_steps(
         self,
@@ -139,7 +126,9 @@ class ExecutionRuntime:
 
         outputs = []
 
-        for step in plan.steps:
+        for step in self._resolve_execution_order(
+            plan.steps,
+        ):
 
             result = self._dispatch(
                 plan,
@@ -151,11 +140,9 @@ class ExecutionRuntime:
                 result.to_dict(),
             )
 
-            if not result.success:
+            if not result.success and plan.stop_on_error:
 
-                if plan.stop_on_error:
-
-                    return result
+                return result
 
         return ExecutionResult.ok(
             output=outputs,
@@ -163,9 +150,48 @@ class ExecutionRuntime:
             plan_id=plan.id,
         )
 
-    # ======================================================
-    # Dispatch
-    # ======================================================
+    # ==================================================
+    # Dependencies
+    # ==================================================
+
+    def _resolve_execution_order(
+        self,
+        steps: list[ExecutionStep],
+    ) -> list[ExecutionStep]:
+
+        completed = set()
+        ordered = []
+        pending = steps.copy()
+
+        while pending:
+
+            progress = False
+
+            for step in pending[:]:
+
+                if all(dependency in completed for dependency in step.depends_on):
+
+                    ordered.append(step)
+
+                    completed.add(
+                        step.id,
+                    )
+
+                    pending.remove(
+                        step,
+                    )
+
+                    progress = True
+
+            if not progress:
+
+                raise RuntimeError("Dependencias circulares en ExecutionPlan.")
+
+        return ordered
+
+    # ==================================================
+    # Router
+    # ==================================================
 
     def _dispatch(
         self,
@@ -173,16 +199,6 @@ class ExecutionRuntime:
         step: ExecutionStep,
         context: dict[str, Any],
     ) -> ExecutionResult:
-
-        validation_errors = step.validate()
-
-        if validation_errors:
-
-            return ExecutionResult.fail(
-                error=str(validation_errors),
-                executor=self.name,
-                plan_id=plan.id,
-            )
 
         if step.unit_type == "agent":
 
@@ -201,14 +217,14 @@ class ExecutionRuntime:
             )
 
         return ExecutionResult.fail(
-            error=("Tipo de unidad inválido: " f"{step.unit_type}"),
+            error=f"Tipo de unidad inválido: {step.unit_type}",
             executor=self.name,
             plan_id=plan.id,
         )
 
-    # ======================================================
-    # Agent dispatch
-    # ======================================================
+    # ==================================================
+    # Agent
+    # ==================================================
 
     def _execute_agent(
         self,
@@ -223,15 +239,17 @@ class ExecutionRuntime:
 
         if agent is None:
 
+            step.mark_failed(f"Agent no encontrado: {step.unit_name}")
+
             return ExecutionResult.fail(
-                error=("Agent no encontrado: " f"{step.unit_name}"),
+                error=f"Agent no encontrado: {step.unit_name}",
                 executor=self.name,
                 plan_id=plan.id,
             )
 
         return self.agent_runtime.execute(
-            plan,
-            step,
-            context,
-            agent,
+            plan=plan,
+            step=step,
+            context=context,
+            agent=agent,
         )

@@ -23,19 +23,18 @@ class SkillRuntime:
 
     Responsabilidades:
 
-    - Resolver Skills.
-    - Validar compatibilidad Skill/Step.
+    - Resolver Skill.
+    - Validar step.
     - Ejecutar Skill.execute().
     - Gestionar retries.
-    - Normalizar resultados.
     - Actualizar lifecycle del step.
+    - Normalizar resultados.
 
     No:
 
     - Planifica.
     - Decide Skills.
     - Construye contexto.
-    - Modifica ExecutionPlan.
     """
 
     name = "skill_runtime"
@@ -46,13 +45,6 @@ class SkillRuntime:
     ):
 
         self.skill_manager = skill_manager or SkillManager()
-
-        self.metrics = {
-            "executions": 0,
-            "success": 0,
-            "failed": 0,
-            "duration": 0,
-        }
 
     # ======================================================
     # Execution
@@ -65,29 +57,7 @@ class SkillRuntime:
         context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
 
-        start = time.time()
-
-        self.metrics["executions"] += 1
-
         context = context or {}
-
-        if step.unit_type != "skill":
-
-            return ExecutionResult.fail(
-                error=("SkillRuntime recibió " f"unit_type inválido: {step.unit_type}"),
-                executor=self.name,
-                plan_id=plan.id,
-            )
-
-        validation_errors = step.validate()
-
-        if validation_errors:
-
-            return ExecutionResult.fail(
-                error=str(validation_errors),
-                executor=self.name,
-                plan_id=plan.id,
-            )
 
         skill = self.skill_manager.get(
             step.unit_name,
@@ -95,14 +65,16 @@ class SkillRuntime:
 
         if skill is None:
 
+            step.mark_failed(f"Skill no encontrada: {step.unit_name}")
+
             return ExecutionResult.fail(
-                error=f"Skill no encontrada: {step.unit_name}",
+                error=(f"Skill no encontrada: " f"{step.unit_name}"),
                 executor=self.name,
                 plan_id=plan.id,
             )
 
         # ----------------------------------------------
-        # Skill validation
+        # Validation
         # ----------------------------------------------
 
         try:
@@ -113,17 +85,17 @@ class SkillRuntime:
 
             if warnings:
 
+                step.metadata["warnings"] = warnings
+
                 logger.warning(
-                    "Validación Skill warning=%s skill=%s",
+                    "Skill validation warnings=%s",
                     warnings,
-                    skill.name,
                 )
 
         except Exception as exc:
 
-            logger.exception(
-                "Error validando skill=%s",
-                skill.name,
+            step.mark_failed(
+                str(exc),
             )
 
             return ExecutionResult.fail(
@@ -136,9 +108,13 @@ class SkillRuntime:
 
         max_retries = step.retries if step.retries is not None else plan.max_retries
 
+        start = time.time()
+
         while retries <= max_retries:
 
             try:
+
+                step.mark_running()
 
                 logger.info(
                     "Ejecutando skill=%s intento=%s",
@@ -146,17 +122,13 @@ class SkillRuntime:
                     retries + 1,
                 )
 
-                step.mark_running()
-
                 result = skill.execute(
                     plan=plan,
                     step=step,
                     context=context,
                 )
 
-                normalized = self._normalize_result(
-                    result,
-                )
+                normalized = self._normalize_result(result)
 
                 if not normalized["ok"]:
 
@@ -167,17 +139,21 @@ class SkillRuntime:
                         )
                     )
 
-                step.mark_completed(
-                    result,
-                )
-
                 duration = round(
                     time.time() - start,
                     3,
                 )
 
-                self.metrics["duration"] += duration
-                self.metrics["success"] += 1
+                step.mark_completed(
+                    result,
+                )
+
+                step.metadata.update(
+                    {
+                        "duration": duration,
+                        "skill": skill.name,
+                    }
+                )
 
                 return ExecutionResult.ok(
                     output=result,
@@ -200,14 +176,6 @@ class SkillRuntime:
                     step.mark_failed(
                         str(exc),
                     )
-
-                    duration = round(
-                        time.time() - start,
-                        3,
-                    )
-
-                    self.metrics["duration"] += duration
-                    self.metrics["failed"] += 1
 
                     return ExecutionResult.fail(
                         error=str(exc),
@@ -237,16 +205,7 @@ class SkillRuntime:
 
             if "ok" in result:
 
-                return {
-                    "ok": bool(result["ok"]),
-                    "result": result.get(
-                        "result",
-                        result,
-                    ),
-                    "error": result.get(
-                        "error",
-                    ),
-                }
+                return result
 
             return {
                 "ok": True,
@@ -259,13 +218,3 @@ class SkillRuntime:
             "result": result,
             "error": None,
         }
-
-    # ======================================================
-    # Metrics
-    # ======================================================
-
-    def get_metrics(
-        self,
-    ) -> dict[str, Any]:
-
-        return self.metrics.copy()

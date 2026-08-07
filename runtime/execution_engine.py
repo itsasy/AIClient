@@ -6,9 +6,7 @@ import time
 from typing import Any, Callable
 
 from core.context.manager import ContextManager
-
 from core.execution_plan import ExecutionPlan
-
 from core.execution_result import ExecutionResult
 
 from runtime.execution_runtime import ExecutionRuntime
@@ -55,9 +53,8 @@ class ExecutionEngine:
             "executions": 0,
             "success": 0,
             "failed": 0,
+            "critical_errors": 0,
             "duration": 0,
-            "context_duration": 0,
-            "execution_duration": 0,
         }
 
     # ======================================================
@@ -75,19 +72,15 @@ class ExecutionEngine:
 
         self.emit(
             "execution_started",
-            plan,
-        )
-
-        logger.info(
-            "Inicio ejecución plan=%s",
-            plan.id,
+            {
+                "plan": plan,
+                "plan_id": plan.id,
+            },
         )
 
         try:
 
-            self._validate_plan(
-                plan,
-            )
+            self._validate_plan(plan)
 
             plan.mark_running()
 
@@ -96,45 +89,28 @@ class ExecutionEngine:
                 plan,
             )
 
-            # ----------------------------------------------
-            # Context
-            # ----------------------------------------------
-
             context_start = time.time()
 
-            try:
+            context = self.context_manager.build(
+                plan,
+            )
 
-                context = self.context_manager.build(
-                    plan,
-                )
+            if context is None:
 
-            except Exception as exc:
-
-                logger.exception(
-                    "Error construyendo contexto plan=%s",
-                    plan.id,
-                )
-
-                raise RuntimeError(f"Error contexto: {exc}")
+                context = {}
 
             context_duration = round(
                 time.time() - context_start,
                 3,
             )
 
-            self.metrics["context_duration"] += context_duration
-
             self.emit(
                 "context_ready",
                 {
-                    "plan": plan,
+                    "plan_id": plan.id,
                     "duration": context_duration,
                 },
             )
-
-            # ----------------------------------------------
-            # Execution
-            # ----------------------------------------------
 
             execution_start = time.time()
 
@@ -148,14 +124,10 @@ class ExecutionEngine:
                 3,
             )
 
-            self.metrics["execution_duration"] += execution_duration
-
             duration = round(
                 time.time() - start,
                 3,
             )
-
-            self.metrics["duration"] += duration
 
             result.metadata.update(
                 {
@@ -166,9 +138,7 @@ class ExecutionEngine:
                 }
             )
 
-            # ----------------------------------------------
-            # Final lifecycle
-            # ----------------------------------------------
+            self.metrics["duration"] += duration
 
             if result.success:
 
@@ -206,6 +176,7 @@ class ExecutionEngine:
             )
 
             self.metrics["failed"] += 1
+            self.metrics["critical_errors"] += 1
 
             try:
 
@@ -216,18 +187,21 @@ class ExecutionEngine:
             except Exception:
 
                 logger.exception(
-                    "No se pudo marcar plan como failed",
+                    "No se pudo actualizar lifecycle del plan",
                 )
 
             logger.exception(
-                "Error crítico ExecutionEngine plan=%s",
-                plan.id,
+                "Error crítico ExecutionEngine",
             )
 
             result = ExecutionResult.fail(
                 error=str(exc),
                 executor=self.name,
-                plan_id=plan.id,
+                plan_id=getattr(
+                    plan,
+                    "id",
+                    None,
+                ),
             )
 
             result.metadata.update(
@@ -259,11 +233,6 @@ class ExecutionEngine:
 
             raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
 
-        self.emit(
-            "plan_validated",
-            plan,
-        )
-
     # ======================================================
     # Events
     # ======================================================
@@ -287,23 +256,19 @@ class ExecutionEngine:
         payload: Any,
     ) -> None:
 
-        callbacks = self.listeners.get(
+        for callback in self.listeners.get(
             event,
             [],
-        )
-
-        for callback in callbacks:
+        ):
 
             try:
 
-                callback(
-                    payload,
-                )
+                callback(payload)
 
             except Exception:
 
                 logger.exception(
-                    "Error listener evento=%s",
+                    "Error listener=%s",
                     event,
                 )
 

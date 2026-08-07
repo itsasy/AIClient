@@ -18,16 +18,17 @@ class SkillRegistry:
 
     Responsabilidades:
 
-    - Registrar skills.
-    - Resolver lazy.
+    - Registrar factories.
+    - Resolver instancias lazy.
     - Gestionar aliases.
     - Buscar capacidades.
-    - Exponer catálogo.
+    - Exponer metadata.
 
     No:
 
-    - Ejecuta skills.
-    - Gestiona ejecución.
+    - Ejecuta Skills.
+    - Gestiona retries.
+    - Maneja resultados.
     """
 
     def __init__(self):
@@ -39,13 +40,17 @@ class SkillRegistry:
         self._aliases: dict[str, str] = {}
 
     # ======================================================
-    # Helpers
+    # Normalization
     # ======================================================
 
     def _normalize(
         self,
         name: str,
     ) -> str:
+
+        if not name:
+
+            return ""
 
         return name.lower().strip().replace("-", "_").replace(" ", "_")
 
@@ -75,15 +80,17 @@ class SkillRegistry:
 
         key = self._normalize(name)
 
+        if not key:
+
+            raise ValueError("Skill requiere nombre válido.")
+
         if key in self._factories and not overwrite:
 
             raise ValueError(f"Skill ya registrada: {key}")
 
-        if isinstance(factory, type):
-
-            if not issubclass(factory, Skill):
-
-                raise TypeError("Solo se aceptan clases Skill")
+        self._validate_factory(
+            factory,
+        )
 
         self._factories[key] = factory
 
@@ -91,7 +98,29 @@ class SkillRegistry:
 
             for alias in aliases:
 
-                self._aliases[self._normalize(alias)] = key
+                alias_key = self._normalize(alias)
+
+                if alias_key:
+
+                    self._aliases[alias_key] = key
+
+    def _validate_factory(
+        self,
+        factory: SkillFactory,
+    ):
+
+        if isinstance(factory, type):
+
+            if not issubclass(
+                factory,
+                Skill,
+            ):
+
+                raise TypeError("Factory debe producir Skill.")
+
+        elif not callable(factory):
+
+            raise TypeError("Factory inválido.")
 
     # ======================================================
     # Resolution
@@ -103,6 +132,10 @@ class SkillRegistry:
     ) -> Skill | None:
 
         key = self._resolve_name(name)
+
+        if not key:
+
+            return None
 
         if key in self._instances:
 
@@ -118,9 +151,12 @@ class SkillRegistry:
 
             instance = factory()
 
-            if not isinstance(instance, Skill):
+            if not isinstance(
+                instance,
+                Skill,
+            ):
 
-                raise TypeError("Factory inválido")
+                raise TypeError("Factory no produjo Skill.")
 
             self._instances[key] = instance
 
@@ -144,7 +180,7 @@ class SkillRegistry:
         name: str,
     ) -> bool:
 
-        return self._resolve_name(name) in self._factories
+        return bool(self._resolve_name(name) in self._factories)
 
     def list(
         self,
@@ -157,6 +193,18 @@ class SkillRegistry:
     ) -> list[str]:
 
         return sorted(self._instances.keys())
+
+    def aliases(
+        self,
+    ) -> dict[str, str]:
+
+        return self._aliases.copy()
+
+    def count(
+        self,
+    ) -> int:
+
+        return len(self._factories)
 
     def find_by_capability(
         self,
@@ -199,13 +247,17 @@ class SkillRegistry:
         self,
     ) -> list[dict]:
 
-        return [self.get(name).get_metadata() for name in self.list() if self.get(name)]
+        result = []
 
-    def count(
-        self,
-    ) -> int:
+        for name in self.list():
 
-        return len(self._factories)
+            skill = self.get(name)
+
+            if skill:
+
+                result.append(skill.get_metadata())
+
+        return result
 
     # ======================================================
     # Management
@@ -214,7 +266,7 @@ class SkillRegistry:
     def unregister(
         self,
         name: str,
-    ):
+    ) -> None:
 
         key = self._resolve_name(name)
 
@@ -228,9 +280,18 @@ class SkillRegistry:
             None,
         )
 
+        aliases = [alias for alias, target in self._aliases.items() if target == key]
+
+        for alias in aliases:
+
+            self._aliases.pop(
+                alias,
+                None,
+            )
+
     def clear(
         self,
-    ):
+    ) -> None:
 
         self._factories.clear()
 

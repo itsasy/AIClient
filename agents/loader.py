@@ -12,21 +12,19 @@ logger = logging.getLogger(__name__)
 
 class AgentLoader:
     """
-    Descubrimiento y registro dinámico de Agents.
+    Cargador dinámico de Agents.
 
     Responsabilidades:
 
     - Importar módulos.
-    - Detectar clases Agent.
+    - Descubrir Agents.
     - Registrar factories.
-    - Mantener control de módulos cargados.
 
     No:
 
-    - Instancia agentes.
-    - Ejecuta agentes.
-    - Selecciona agentes.
-    - Gestiona workflows.
+    - Ejecuta Agents.
+    - Instancia Agents.
+    - Decide resolución.
     """
 
     def __init__(
@@ -38,9 +36,39 @@ class AgentLoader:
 
         self.loaded_modules: set[str] = set()
 
+        self.loaded_agents: set[str] = set()
+
     # ======================================================
-    # Module loading
+    # Loading
     # ======================================================
+
+    def load_defaults(
+        self,
+    ) -> None:
+
+        modules = [
+            "agents.architect",
+            "agents.coder",
+            "agents.executor",
+            "agents.multi_turn",
+            "agents.planner",
+            "agents.task_agent",
+        ]
+
+        self.load_modules(
+            modules,
+        )
+
+    def load_modules(
+        self,
+        modules: list[str],
+    ) -> None:
+
+        for module in modules:
+
+            self.load_module(
+                module,
+            )
 
     def load_module(
         self,
@@ -48,11 +76,6 @@ class AgentLoader:
     ) -> None:
 
         if module_path in self.loaded_modules:
-
-            logger.debug(
-                "Módulo Agent ya cargado=%s",
-                module_path,
-            )
 
             return
 
@@ -62,9 +85,15 @@ class AgentLoader:
                 module_path,
             )
 
-            self._register_from_module(
+            agents = self.discover(
                 module,
             )
+
+            for agent in agents:
+
+                self.register(
+                    agent,
+                )
 
             self.loaded_modules.add(
                 module_path,
@@ -73,7 +102,7 @@ class AgentLoader:
         except Exception:
 
             logger.exception(
-                "Error cargando módulo Agent=%s",
+                "Error cargando Agent module=%s",
                 module_path,
             )
 
@@ -81,56 +110,50 @@ class AgentLoader:
     # Discovery
     # ======================================================
 
-    def _register_from_module(
+    def discover(
         self,
         module,
-    ) -> None:
+    ) -> list[type[Agent]]:
+
+        result = []
 
         for obj_name in dir(module):
 
-            try:
-
-                obj = getattr(
-                    module,
-                    obj_name,
-                )
-
-            except Exception:
-
-                continue
+            obj = getattr(
+                module,
+                obj_name,
+                None,
+            )
 
             if not inspect.isclass(obj):
-
                 continue
 
             if obj is Agent:
-
                 continue
 
             if not issubclass(
                 obj,
                 Agent,
             ):
-
                 continue
 
             if inspect.isabstract(obj):
-
                 continue
 
             if obj.__module__ != module.__name__:
-
                 continue
 
-            self._register_agent(
+            result.append(
                 obj,
             )
+
+        return result
 
     # ======================================================
     # Registration
     # ======================================================
 
-    def _register_agent(
+    def register(
         self,
         agent_class: type[Agent],
     ) -> None:
@@ -144,7 +167,7 @@ class AgentLoader:
         if not name:
 
             logger.warning(
-                "Agent sin nombre ignorado=%s",
+                "Agent sin name=%s",
                 agent_class,
             )
 
@@ -164,45 +187,30 @@ class AgentLoader:
                 aliases=aliases,
             )
 
-            logger.info(
-                "Agent cargado=%s aliases=%s",
+            self.loaded_agents.add(
                 name,
-                aliases,
             )
 
         except ValueError:
 
             logger.debug(
-                "Agent ya registrado=%s",
-                name,
-            )
-
-        except Exception:
-
-            logger.exception(
-                "Error registrando Agent=%s",
+                "Agent existente=%s",
                 name,
             )
 
     # ======================================================
-    # Defaults
+    # Information
     # ======================================================
 
-    def load_defaults(
+    def stats(
         self,
-    ) -> None:
+    ) -> dict:
 
-        modules = [
-            "agents.architect",
-            "agents.coder",
-            "agents.executor",
-            "agents.multi_turn",
-            "agents.planner",
-            "agents.task_agent",
-        ]
-
-        for module in modules:
-
-            self.load_module(
-                module,
-            )
+        return {
+            "modules": len(
+                self.loaded_modules,
+            ),
+            "agents": len(
+                self.loaded_agents,
+            ),
+        }

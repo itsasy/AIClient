@@ -15,17 +15,15 @@ class AgentManager:
 
     Responsabilidades:
 
-    - Inicializar catálogo.
+    - Mantener catálogo.
     - Resolver agentes.
-    - Exponer información del catálogo.
-    - Administrar ciclo de carga.
+    - Gestionar carga.
 
     No:
 
     - Ejecuta agentes.
+    - Ejecuta lifecycle.
     - Valida planes.
-    - Construye contexto.
-    - Gestiona resultados.
 
     La ejecución pertenece a AgentRuntime.
     """
@@ -43,8 +41,9 @@ class AgentManager:
             self.registry,
         )
 
-        if auto_load:
+        self.loaded_defaults = False
 
+        if auto_load:
             self.load_defaults()
 
     # ======================================================
@@ -55,16 +54,48 @@ class AgentManager:
         self,
     ) -> None:
 
-        self.loader.load_defaults()
+        if self.loaded_defaults:
+            return
+
+        try:
+
+            self.loader.load_defaults()
+
+            self.loaded_defaults = True
+
+        except Exception:
+
+            logger.exception(
+                "Error cargando agentes por defecto",
+            )
 
     def load_module(
         self,
         module_path: str,
     ) -> None:
 
-        self.loader.load_module(
-            module_path,
-        )
+        try:
+
+            self.loader.load_module(
+                module_path,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error cargando módulo agent=%s",
+                module_path,
+            )
+
+    def reload(
+        self,
+    ) -> None:
+
+        self.clear()
+
+        self.loaded_defaults = False
+
+        self.load_defaults()
 
     # ======================================================
     # Resolution
@@ -76,7 +107,6 @@ class AgentManager:
     ) -> Agent | None:
 
         if not name:
-
             return None
 
         return self.registry.get(
