@@ -13,18 +13,21 @@ class IntegrationScraperSkill(Skill):
 
     name = "scrape_integration"
 
-    description = "Extrae información básica de integraciones externas."
+    description = "Extrae información básica " "de integraciones externas."
 
-    version = "2.0"
+    version = "2.1"
 
     capabilities = (
         "web_scraping",
         "integration_analysis",
     )
 
-    def __init__(self):
+    def __init__(
+        self,
+        scraper: PageScraper | None = None,
+    ):
 
-        self.scraper = PageScraper()
+        self.scraper = scraper or PageScraper()
 
     def execute(
         self,
@@ -63,10 +66,10 @@ class IntegrationScraperSkill(Skill):
                 "ok": True,
                 "result": {
                     "type": "integration_analysis",
-                    "platform": platform,
+                    "platform": platform.lower(),
                     "title": page["title"],
                     "description": page["text"][:1500],
-                    "url": url,
+                    "url": page["url"],
                 },
                 "error": None,
             }

@@ -16,6 +16,12 @@ VALID_STEP_STATUS = {
 }
 
 
+VALID_UNIT_TYPES = {
+    "agent",
+    "skill",
+}
+
+
 UNIT_ALIASES = {
     "agents": "agent",
     "agent_runtime": "agent",
@@ -42,7 +48,9 @@ class ExecutionStep:
 
     unit_name: str | None = None
 
-    params: dict[str, Any] = field(default_factory=dict)
+    params: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
     expected_output: str | None = None
 
@@ -50,7 +58,9 @@ class ExecutionStep:
 
     timeout: int = 120
 
-    depends_on: list[str] = field(default_factory=list)
+    depends_on: list[str] = field(
+        default_factory=list,
+    )
 
     status: str = "pending"
 
@@ -58,13 +68,30 @@ class ExecutionStep:
 
     error: str | None = None
 
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
     created_at: datetime = field(default_factory=lambda: datetime.now().astimezone())
 
     started_at: datetime | None = None
 
     completed_at: datetime | None = None
+
+    # ==================================================
+    # Initialization
+    # ==================================================
+
+    def __post_init__(
+        self,
+    ) -> None:
+
+        self.unit_type = self.normalize_unit_type(
+            self.unit_type,
+        )
+
+        if self.unit_name:
+            self.unit_name = self.unit_name.strip()
 
     # ==================================================
     # Normalization
@@ -96,27 +123,35 @@ class ExecutionStep:
 
         errors: list[str] = []
 
-        if not self.description:
+        if not self.description.strip():
+
             errors.append("step sin descripción")
 
-        normalized_type = self.normalize_unit_type(
-            self.unit_type,
-        )
+        if self.unit_type not in VALID_UNIT_TYPES:
 
-        if normalized_type not in {
-            "agent",
-            "skill",
-        }:
             errors.append("tipo de unidad inválido")
 
         if not self.unit_name:
+
             errors.append("unidad sin nombre")
 
         if self.retries is not None and self.retries < 0:
+
             errors.append("retries inválido")
 
         if self.timeout <= 0:
+
             errors.append("timeout inválido")
+
+        for dependency in self.depends_on:
+
+            if not dependency.strip():
+
+                errors.append("dependencia inválida")
+
+            if dependency == self.id:
+
+                errors.append("step no puede depender de sí mismo")
 
         return errors
 
@@ -130,6 +165,7 @@ class ExecutionStep:
     ) -> None:
 
         if status not in VALID_STEP_STATUS:
+
             raise ValueError(f"Estado inválido: {status}")
 
         self.status = status
