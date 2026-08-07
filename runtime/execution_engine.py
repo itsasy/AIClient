@@ -16,6 +16,7 @@ from runtime.registry.agent_registry import AgentRegistry
 from runtime.registry.skill_registry import SkillRegistry
 
 from skills.loader import SkillLoader
+from agents.loader import AgentLoader
 
 logger = logging.getLogger(__name__)
 
@@ -66,11 +67,43 @@ class ExecutionEngine:
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
     ):
+        # ==========================================================
+        # Core dependencies
+        # ==========================================================
+
+        self.context_manager = context_manager or ContextManager()
+
+        self.intent_analyzer = intent_analyzer or IntentAnalyzer()
+
+        self.plan_builder = plan_builder or PlanBuilder()
+
+        # ==========================================================
+        # Registries
+        # ==========================================================
+
         self.agent_registry = agent_registry or AgentRegistry()
 
         self.skill_registry = skill_registry or SkillRegistry()
 
-        # Cargar skills disponibles.
+        # ==========================================================
+        # Agent loading
+        # ==========================================================
+
+        self.agent_loader = AgentLoader(
+            self.agent_registry,
+        )
+
+        self.agent_loader.load_defaults()
+
+        logger.info(
+            "Agents cargados=%s",
+            self.agent_registry.list(),
+        )
+
+        # ==========================================================
+        # Skill loading
+        # ==========================================================
+
         self.skill_loader = SkillLoader(
             self.skill_registry,
         )
@@ -82,16 +115,18 @@ class ExecutionEngine:
             self.skill_registry.list(),
         )
 
-        self.context_manager = context_manager or ContextManager()
-
-        self.intent_analyzer = intent_analyzer or IntentAnalyzer()
-
-        self.plan_builder = plan_builder or PlanBuilder()
+        # ==========================================================
+        # Dispatcher
+        # ==========================================================
 
         self.dispatcher = UnitDispatcher(
             agent_registry=self.agent_registry,
             skill_registry=self.skill_registry,
         )
+
+        # ==========================================================
+        # Metrics
+        # ==========================================================
 
         self.metrics = {
             "executions": 0,
@@ -102,6 +137,10 @@ class ExecutionEngine:
             "retries": 0,
         }
 
+        # ==========================================================
+        # Self-Critic
+        # ==========================================================
+
         try:
             from core.self_critic import SelfCritic
 
@@ -111,7 +150,12 @@ class ExecutionEngine:
             logger.warning(
                 "SelfCritic no disponible",
             )
+
             self.critic = None
+
+        # ==========================================================
+        # Continuous Learning
+        # ==========================================================
 
         try:
             from core.learner import ContinuousLearner
@@ -122,6 +166,7 @@ class ExecutionEngine:
             logger.warning(
                 "ContinuousLearner no disponible",
             )
+
             self.learner = None
 
     # ==========================================================
