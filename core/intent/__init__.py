@@ -1,5 +1,7 @@
-from core.intent.models import IntentResult
+from .analyzer import IntentAnalyzer
+from .models import IntentResult
 
 __all__ = [
+    "IntentAnalyzer",
     "IntentResult",
 ]
