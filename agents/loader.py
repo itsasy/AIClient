@@ -30,9 +30,7 @@ class AgentLoader:
         modules = [
             "agents.architect",
             "agents.coder",
-            "agents.executor",
             "agents.multi_turn",
-            "agents.parallel",
             "agents.planner",
             "agents.task_agent",
         ]
