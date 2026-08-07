@@ -3,12 +3,9 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from runtime.registry.skill_registry import SkillRegistry
 
 from skills.base import Skill
+from runtime.registry.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
