@@ -32,7 +32,6 @@ class SkillLoader:
         self,
         registry: SkillRegistry,
     ):
-
         self.registry = registry
 
         self.loaded_modules: set[str] = set()
@@ -45,6 +44,9 @@ class SkillLoader:
         self,
         module_path: str,
     ) -> None:
+
+        if not module_path:
+            return
 
         if module_path in self.loaded_modules:
 
@@ -99,26 +101,22 @@ class SkillLoader:
                 continue
 
             if not inspect.isclass(obj):
-
                 continue
 
             if obj is Skill:
-
                 continue
 
             if not issubclass(
                 obj,
                 Skill,
             ):
-
                 continue
 
             if inspect.isabstract(obj):
-
                 continue
 
+            # Evita registrar Skills importadas
             if obj.__module__ != module.__name__:
-
                 continue
 
             self._register_skill(
@@ -225,3 +223,18 @@ class SkillLoader:
             self.load_module(
                 module,
             )
+
+    # ======================================================
+    # Management
+    # ======================================================
+
+    def clear_loaded_modules(
+        self,
+    ) -> None:
+        """
+        Limpia únicamente el estado interno del loader.
+
+        No elimina Skills registradas del SkillRegistry.
+        """
+
+        self.loaded_modules.clear()

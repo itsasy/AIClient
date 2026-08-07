@@ -8,10 +8,8 @@ from typing import Any
 
 from core.config import Config
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from core.tools.shell import ShellTool
 

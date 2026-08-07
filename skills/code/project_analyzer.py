@@ -4,10 +4,8 @@ from typing import Any
 
 from core.project_inspector import ProjectInspector
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 

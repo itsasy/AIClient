@@ -28,6 +28,8 @@ class SkillManager:
     La ejecución pertenece a SkillRuntime.
     """
 
+    name = "skill_manager"
+
     def __init__(
         self,
         registry: SkillRegistry | None = None,
@@ -44,7 +46,6 @@ class SkillManager:
         self.loaded_defaults = False
 
         if auto_load:
-
             self.load_defaults()
 
     # ==================================================
@@ -56,7 +57,6 @@ class SkillManager:
     ) -> None:
 
         if self.loaded_defaults:
-
             return
 
         try:
@@ -64,6 +64,10 @@ class SkillManager:
             self.loader.load_defaults()
 
             self.loaded_defaults = True
+
+            logger.info(
+                "Skills por defecto cargadas",
+            )
 
         except Exception:
 
@@ -76,9 +80,17 @@ class SkillManager:
         module_path: str,
     ) -> None:
 
+        if not module_path:
+            return
+
         try:
 
             self.loader.load_module(
+                module_path,
+            )
+
+            logger.info(
+                "Skill module cargado=%s",
                 module_path,
             )
 
@@ -105,11 +117,10 @@ class SkillManager:
 
     def get(
         self,
-        name: str,
+        name: str | None,
     ) -> Skill | None:
 
         if not name:
-
             return None
 
         try:
@@ -129,16 +140,26 @@ class SkillManager:
 
     def has(
         self,
-        name: str,
+        name: str | None,
     ) -> bool:
 
         if not name:
-
             return False
 
-        return self.registry.has(
-            name.strip(),
-        )
+        try:
+
+            return self.registry.has(
+                name.strip(),
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error comprobando skill=%s",
+                name,
+            )
+
+            return False
 
     # ==================================================
     # Information
@@ -195,9 +216,21 @@ class SkillManager:
         name: str,
     ) -> None:
 
-        self.registry.unregister(
-            name,
-        )
+        if not name:
+            return
+
+        try:
+
+            self.registry.unregister(
+                name.strip(),
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Error eliminando skill=%s",
+                name,
+            )
 
     def clear(
         self,

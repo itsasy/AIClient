@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 
 class Skill(ABC):
@@ -14,17 +13,17 @@ class Skill(ABC):
     Contrato base para Skills ejecutables.
 
     Una Skill representa una capacidad concreta
-    que puede ser ejecutada dentro de un ExecutionPlan.
+    ejecutada dentro de un ExecutionPlan.
 
     Responsabilidades:
 
     - Ejecutar una operación específica.
     - Consumir parámetros del step.
-    - Utilizar contexto proporcionado.
+    - Utilizar contexto recibido.
 
     No:
 
-    - Decide cuándo ejecutarse.
+    - Decide ejecución.
     - Construye planes.
     - Gestiona retries.
     - Selecciona otras skills.
@@ -40,7 +39,23 @@ class Skill(ABC):
 
     version: str = "1.0"
 
+    aliases: tuple[str, ...] = ()
+
     capabilities: tuple[str, ...] = ()
+
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    @staticmethod
+    def normalize(
+        value: str,
+    ) -> str:
+
+        if not value:
+            return ""
+
+        return value.lower().strip().replace("-", "_").replace(" ", "_")
 
     # ======================================================
     # Metadata
@@ -54,9 +69,8 @@ class Skill(ABC):
             "name": self.name,
             "description": self.description,
             "version": self.version,
-            "capabilities": list(
-                self.capabilities,
-            ),
+            "aliases": list(self.aliases),
+            "capabilities": list(self.capabilities),
         }
 
     # ======================================================
@@ -68,7 +82,14 @@ class Skill(ABC):
         capability: str,
     ) -> bool:
 
-        return capability in self.capabilities
+        normalized = self.normalize(
+            capability,
+        )
+
+        if not normalized:
+            return False
+
+        return normalized in {self.normalize(item) for item in self.capabilities}
 
     # ======================================================
     # Validation
@@ -79,9 +100,19 @@ class Skill(ABC):
         step: ExecutionStep,
     ) -> list[str]:
 
-        warnings = []
+        warnings: list[str] = []
 
-        if step.unit_name != self.name:
+        step_name = self.normalize(
+            step.unit_name,
+        )
+
+        skill_name = self.normalize(
+            self.name,
+        )
+
+        aliases = {self.normalize(alias) for alias in self.aliases}
+
+        if step_name and step_name != skill_name and step_name not in aliases:
 
             warnings.append(
                 (f"Step apunta a '{step.unit_name}', " f"pero la skill activa es '{self.name}'.")
@@ -99,7 +130,7 @@ class Skill(ABC):
         plan: ExecutionPlan,
         step: ExecutionStep,
         context: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> Any:
         """
         Ejecuta la capacidad.
 

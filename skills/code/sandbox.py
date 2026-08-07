@@ -8,10 +8,8 @@ from typing import Any
 
 from core.config import Config
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 
@@ -90,7 +88,7 @@ class CodeSandboxSkill(Skill):
                     "nobody",
                     "--read-only",
                     "--mount",
-                    (f"type=bind," f"source={script}," f"target=/script.py," "ro"),
+                    (f"type=bind," f"source={script}," "target=/script.py," "ro"),
                     Config.SANDBOX_IMAGE,
                     "python",
                     "/script.py",
@@ -120,7 +118,7 @@ class CodeSandboxSkill(Skill):
             return {
                 "ok": False,
                 "result": None,
-                "error": (f"Sandbox excedió timeout {timeout}s"),
+                "error": f"Sandbox excedió timeout {timeout}s",
             }
 
         except Exception as exc:
@@ -131,7 +129,9 @@ class CodeSandboxSkill(Skill):
                 "error": str(exc),
             }
 
-    def _docker_available(self) -> bool:
+    def _docker_available(
+        self,
+    ) -> bool:
 
         try:
 

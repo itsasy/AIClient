@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 from skills.scraping.page_scraper import PageScraper

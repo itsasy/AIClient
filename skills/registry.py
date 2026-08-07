@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 
 from collections.abc import Callable
+from typing import Any
 
 from skills.base import Skill
 
@@ -49,7 +50,6 @@ class SkillRegistry:
     ) -> str:
 
         if not name:
-
             return ""
 
         return name.lower().strip().replace("-", "_").replace(" ", "_")
@@ -74,25 +74,24 @@ class SkillRegistry:
         self,
         name: str,
         factory: SkillFactory,
-        aliases: list[str] | None = None,
+        aliases: list[str] | tuple[str, ...] | None = None,
         overwrite: bool = False,
     ) -> None:
 
         key = self._normalize(name)
 
         if not key:
-
             raise ValueError("Skill requiere nombre válido.")
-
-        if key in self._factories and not overwrite:
-
-            raise ValueError(f"Skill ya registrada: {key}")
 
         self._validate_factory(
             factory,
         )
 
-        self._factories[key] = factory
+        if key in self._factories and not overwrite:
+
+            raise ValueError(f"Skill ya registrada: {key}")
+
+        normalized_aliases: list[str] = []
 
         if aliases:
 
@@ -100,16 +99,37 @@ class SkillRegistry:
 
                 alias_key = self._normalize(alias)
 
-                if alias_key:
+                if not alias_key:
+                    continue
 
-                    self._aliases[alias_key] = key
+                existing = self._aliases.get(
+                    alias_key,
+                )
+
+                if existing and existing != key and not overwrite:
+
+                    raise ValueError(f"Alias ya registrado: {alias_key}")
+
+                normalized_aliases.append(
+                    alias_key,
+                )
+
+        # Commit atómico
+        self._factories[key] = factory
+
+        for alias_key in normalized_aliases:
+
+            self._aliases[alias_key] = key
 
     def _validate_factory(
         self,
         factory: SkillFactory,
-    ):
+    ) -> None:
 
-        if isinstance(factory, type):
+        if isinstance(
+            factory,
+            type,
+        ):
 
             if not issubclass(
                 factory,
@@ -118,7 +138,9 @@ class SkillRegistry:
 
                 raise TypeError("Factory debe producir Skill.")
 
-        elif not callable(factory):
+            return
+
+        if not callable(factory):
 
             raise TypeError("Factory inválido.")
 
@@ -131,21 +153,50 @@ class SkillRegistry:
         name: str,
     ) -> Skill | None:
 
-        key = self._resolve_name(name)
-
-        if not key:
-
+        if not name:
             return None
 
-        if key in self._instances:
+        key = self._resolve_name(
+            name,
+        )
 
-            return self._instances[key]
+        if not key:
+            return None
 
-        factory = self._factories.get(key)
+        cached = self._instances.get(
+            key,
+        )
+
+        if cached:
+
+            return cached
+
+        factory = self._factories.get(
+            key,
+        )
 
         if factory is None:
 
             return None
+
+        instance = self._create_instance(
+            key,
+            factory,
+        )
+
+        if instance is None:
+
+            return None
+
+        self._instances[key] = instance
+
+        return instance
+
+    def _create_instance(
+        self,
+        name: str,
+        factory: SkillFactory,
+    ) -> Skill | None:
 
         try:
 
@@ -158,15 +209,13 @@ class SkillRegistry:
 
                 raise TypeError("Factory no produjo Skill.")
 
-            self._instances[key] = instance
-
             return instance
 
         except Exception:
 
             logger.exception(
                 "Error creando Skill=%s",
-                key,
+                name,
             )
 
             return None
@@ -180,19 +229,32 @@ class SkillRegistry:
         name: str,
     ) -> bool:
 
-        return bool(self._resolve_name(name) in self._factories)
+        if not name:
+
+            return False
+
+        return (
+            self._resolve_name(
+                name,
+            )
+            in self._factories
+        )
 
     def list(
         self,
     ) -> list[str]:
 
-        return sorted(self._factories.keys())
+        return sorted(
+            self._factories.keys(),
+        )
 
     def loaded(
         self,
     ) -> list[str]:
 
-        return sorted(self._instances.keys())
+        return sorted(
+            self._instances.keys(),
+        )
 
     def aliases(
         self,
@@ -204,22 +266,30 @@ class SkillRegistry:
         self,
     ) -> int:
 
-        return len(self._factories)
+        return len(
+            self._factories,
+        )
 
     def find_by_capability(
         self,
         capability: str,
     ) -> list[Skill]:
 
-        result = []
+        result: list[Skill] = []
 
         for name in self.list():
 
-            skill = self.get(name)
+            skill = self.get(
+                name,
+            )
 
-            if skill and skill.supports(capability):
+            if skill and skill.supports(
+                capability,
+            ):
 
-                result.append(skill)
+                result.append(
+                    skill,
+                )
 
         return result
 
@@ -227,11 +297,13 @@ class SkillRegistry:
         self,
     ) -> dict[str, tuple[str, ...]]:
 
-        result = {}
+        result: dict[str, tuple[str, ...]] = {}
 
         for name in self.list():
 
-            skill = self.get(name)
+            skill = self.get(
+                name,
+            )
 
             if skill:
 
@@ -245,17 +317,21 @@ class SkillRegistry:
 
     def metadata(
         self,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
 
-        result = []
+        result: list[dict[str, Any]] = []
 
         for name in self.list():
 
-            skill = self.get(name)
+            skill = self.get(
+                name,
+            )
 
             if skill:
 
-                result.append(skill.get_metadata())
+                result.append(
+                    skill.get_metadata(),
+                )
 
         return result
 
@@ -268,7 +344,12 @@ class SkillRegistry:
         name: str,
     ) -> None:
 
-        key = self._resolve_name(name)
+        if not name:
+            return
+
+        key = self._resolve_name(
+            name,
+        )
 
         self._factories.pop(
             key,

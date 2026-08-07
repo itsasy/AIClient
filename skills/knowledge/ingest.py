@@ -5,10 +5,8 @@ from typing import Any
 
 from core.document_ingestor import DocumentIngestor
 
-from core.execution_plan import (
-    ExecutionPlan,
-    ExecutionStep,
-)
+from core.execution_plan import ExecutionPlan
+from core.execution_step import ExecutionStep
 
 from skills.base import Skill
 
@@ -66,7 +64,11 @@ class IngestDocumentSkill(Skill):
                 "error": f"Archivo no encontrado: {filepath}",
             }
 
-        tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()] if tags else []
+        tag_list = []
+
+        if tags:
+
+            tag_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
         try:
 
@@ -85,7 +87,7 @@ class IngestDocumentSkill(Skill):
                     "filename": path.name,
                     "tags": tag_list,
                 },
-                "error": None if success else "Error ingiriendo documento.",
+                "error": (None if success else "Error ingiriendo documento."),
             }
 
         except Exception as exc:
