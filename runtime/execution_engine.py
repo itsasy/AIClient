@@ -3,63 +3,51 @@ from __future__ import annotations
 import logging
 import time
 
-from typing import Any, Callable
+from typing import Any
 
-from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
+from core.execution_step import ExecutionStep
 
-from runtime.execution_runtime import ExecutionRuntime
+from core.context.manager import ContextManager
+
+from runtime.agent_runtime import AgentRuntime
+from runtime.skill_runtime import SkillRuntime
 
 logger = logging.getLogger(__name__)
 
 
 class ExecutionEngine:
     """
-    Motor principal del sistema de ejecución.
+    Motor central de ejecución.
 
     Responsabilidades:
 
-    - Validar ExecutionPlan.
-    - Construir contexto.
-    - Gestionar lifecycle del plan.
-    - Delegar ejecución.
-    - Registrar métricas.
-    - Emitir eventos.
+    - Ejecutar ExecutionPlans.
+    - Resolver tipo de unidad.
+    - Coordinar runtimes.
+    - Controlar lifecycle básico.
 
     No:
 
-    - Crea planes.
-    - Analiza intención.
-    - Ejecuta Agents.
-    - Ejecuta Skills.
+    - Planifica.
+    - Detecta intención.
     - Gestiona memoria.
-    - Gestiona aprendizaje.
+    - Decide estrategia LLM.
     """
 
     name = "execution_engine"
 
     def __init__(
         self,
+        agent_runtime: AgentRuntime | None = None,
+        skill_runtime: SkillRuntime | None = None,
         context_manager: ContextManager | None = None,
-        execution_runtime: ExecutionRuntime | None = None,
     ) -> None:
 
-        self.context_manager = context_manager or ContextManager()
-
-        self.execution_runtime = execution_runtime or ExecutionRuntime()
-
-        self.listeners: dict[str, list[Callable]] = {}
-
-        self.metrics = {
-            "executions": 0,
-            "success": 0,
-            "partial": 0,
-            "failed": 0,
-            "duration": 0,
-            "context_duration": 0,
-            "execution_duration": 0,
-        }
+        self.agent_runtime = agent_runtime
+        self.skill_runtime = skill_runtime
+        self.context_manager = context_manager
 
     # ==================================================
     # Public API
@@ -72,85 +60,52 @@ class ExecutionEngine:
 
         started = time.monotonic()
 
-        self.metrics["executions"] += 1
-
         try:
 
-            self._validate_plan(
-                plan,
-            )
+            errors = plan.validate()
 
-            plan.mark_validated()
+            if errors:
 
-            self.emit(
-                "plan_validated",
-                plan,
-            )
+                return ExecutionResult.fail(
+                    error=", ".join(errors),
+                    executor=self.name,
+                )
+
+            if self.context_manager:
+
+                self.context_manager.attach_to_plan(
+                    plan,
+                    request=plan.params,
+                )
 
             plan.mark_running()
 
-            self.emit(
-                "execution_started",
-                plan,
-            )
+            if plan.execution_mode == "multi_step":
 
-            context_started = time.monotonic()
-
-            context = (
-                self.context_manager.build(
+                result = self._execute_steps(
                     plan,
                 )
-                or {}
-            )
 
-            context_duration = round(
-                time.monotonic() - context_started,
-                3,
-            )
+            else:
 
-            self.metrics["context_duration"] += context_duration
-
-            self.emit(
-                "context_ready",
-                {
-                    "plan_id": plan.id,
-                    "plan": plan,
-                    "duration": context_duration,
-                },
-            )
-
-            execution_started = time.monotonic()
-
-            result = self.execution_runtime.execute(
-                plan,
-                context,
-            )
-
-            execution_duration = round(
-                time.monotonic() - execution_started,
-                3,
-            )
+                result = self._execute_single(
+                    plan,
+                )
 
             duration = round(
                 time.monotonic() - started,
                 3,
             )
 
-            self.metrics["duration"] += duration
-
-            self.metrics["execution_duration"] += execution_duration
-
             result.metadata.update(
                 {
                     "engine": self.name,
-                    "plan_id": plan.id,
                     "duration": duration,
-                    "context_duration": context_duration,
-                    "execution_duration": execution_duration,
+                    "plan_id": plan.id,
                 }
             )
 
-            self._apply_result_lifecycle(
+            self._apply_result_state(
                 plan,
                 result,
             )
@@ -159,16 +114,9 @@ class ExecutionEngine:
 
         except Exception as exc:
 
-            duration = round(
-                time.monotonic() - started,
-                3,
-            )
-
             logger.exception(
-                "Error en ExecutionEngine",
+                "ExecutionEngine error",
             )
-
-            self.metrics["failed"] += 1
 
             try:
 
@@ -178,39 +126,18 @@ class ExecutionEngine:
 
             except Exception:
 
-                logger.exception(
-                    "No se pudo actualizar estado del plan",
-                )
+                pass
 
-            result = ExecutionResult.fail(
+            return ExecutionResult.fail(
                 error=str(exc),
                 executor=self.name,
-                plan_id=getattr(
-                    plan,
-                    "id",
-                    None,
-                ),
             )
-
-            result.metadata.update(
-                {
-                    "engine": self.name,
-                    "duration": duration,
-                }
-            )
-
-            self.emit(
-                "engine_error",
-                result,
-            )
-
-            return result
 
     # ==================================================
-    # Lifecycle
+    # Result lifecycle
     # ==================================================
 
-    def _apply_result_lifecycle(
+    def _apply_result_state(
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
@@ -219,14 +146,7 @@ class ExecutionEngine:
         if result.status == "completed":
 
             plan.mark_completed(
-                result.output,
-            )
-
-            self.metrics["success"] += 1
-
-            self.emit(
-                "execution_completed",
-                result,
+                result.result,
             )
 
             return
@@ -234,101 +154,166 @@ class ExecutionEngine:
         if result.status == "partial":
 
             plan.mark_partial(
-                result=result.output,
+                result=result.result,
                 error=result.error,
-            )
-
-            self.metrics["partial"] += 1
-
-            self.emit(
-                "execution_partial",
-                result,
             )
 
             return
 
         plan.mark_failed(
-            result.error or "Error desconocido",
-        )
-
-        self.metrics["failed"] += 1
-
-        self.emit(
-            "execution_failed",
-            result,
+            result.error or "execution_failed",
         )
 
     # ==================================================
-    # Validation
+    # Single execution
     # ==================================================
 
-    def _validate_plan(
+    def _execute_single(
         self,
         plan: ExecutionPlan,
-    ) -> None:
+    ) -> ExecutionResult:
 
-        if not isinstance(
-            plan,
-            ExecutionPlan,
-        ):
+        if not plan.execution_unit_type:
 
-            raise TypeError(
-                "ExecutionEngine requiere ExecutionPlan",
+            return ExecutionResult.fail(
+                error="Plan sin execution_unit_type",
+                executor=self.name,
             )
 
-        errors = plan.validate()
-
-        if errors:
-
-            raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
-
-    # ==================================================
-    # Events
-    # ==================================================
-
-    def on(
-        self,
-        event: str,
-        callback: Callable,
-    ) -> None:
-
-        self.listeners.setdefault(
-            event,
-            [],
-        ).append(
-            callback,
+        params = self._build_runtime_params(
+            plan.params,
+            plan.execution_context,
         )
 
-    def emit(
-        self,
-        event: str,
-        payload: Any,
-    ) -> None:
+        if plan.execution_unit_type == "agent":
 
-        for callback in self.listeners.get(
-            event,
-            [],
-        ):
+            if not self.agent_runtime:
 
-            try:
-
-                callback(
-                    payload,
+                return ExecutionResult.fail(
+                    error="AgentRuntime no configurado",
+                    executor=self.name,
                 )
 
-            except Exception:
+            return self.agent_runtime.execute(
+                agent_name=plan.execution_unit,
+                params=params,
+            )
 
-                logger.exception(
-                    "Error en listener=%s",
-                    event,
+        if plan.execution_unit_type == "skill":
+
+            if not self.skill_runtime:
+
+                return ExecutionResult.fail(
+                    error="SkillRuntime no configurado",
+                    executor=self.name,
                 )
 
+            return self.skill_runtime.execute(
+                skill_name=plan.execution_unit,
+                params=params,
+            )
+
+        return ExecutionResult.fail(
+            error=f"Tipo de ejecución desconocido: {plan.execution_unit_type}",
+            executor=self.name,
+        )
+
     # ==================================================
-    # Metrics
+    # Multi step
     # ==================================================
 
-    def get_metrics(
+    def _execute_steps(
         self,
+        plan: ExecutionPlan,
+    ) -> ExecutionResult:
+
+        outputs: list[Any] = []
+
+        for step in plan.steps:
+
+            result = self._execute_step(
+                step,
+                plan.execution_context,
+            )
+
+            outputs.append(
+                result,
+            )
+
+            if result.status != "completed":
+
+                if plan.stop_on_error:
+
+                    return ExecutionResult.partial(
+                        result=outputs,
+                        error=result.error,
+                        executor=self.name,
+                    )
+
+        return ExecutionResult.success(
+            result=outputs,
+            executor=self.name,
+        )
+
+    # ==================================================
+    # Step execution
+    # ==================================================
+
+    def _execute_step(
+        self,
+        step: ExecutionStep,
+        context: dict[str, Any],
+    ) -> ExecutionResult:
+
+        params = self._build_runtime_params(
+            step.params,
+            context,
+        )
+
+        if step.unit_type == "agent":
+
+            if not self.agent_runtime:
+
+                return ExecutionResult.fail(
+                    error="AgentRuntime no configurado",
+                    executor=self.name,
+                )
+
+            return self.agent_runtime.execute(
+                agent_name=step.unit_name,
+                params=params,
+            )
+
+        if step.unit_type == "skill":
+
+            if not self.skill_runtime:
+
+                return ExecutionResult.fail(
+                    error="SkillRuntime no configurado",
+                    executor=self.name,
+                )
+
+            return self.skill_runtime.execute(
+                skill_name=step.unit_name,
+                params=params,
+            )
+
+        return ExecutionResult.fail(
+            error=f"Unidad inválida: {step.unit_type}",
+            executor=self.name,
+        )
+
+    # ==================================================
+    # Helpers
+    # ==================================================
+
+    @staticmethod
+    def _build_runtime_params(
+        params: dict[str, Any],
+        context: dict[str, Any],
     ) -> dict[str, Any]:
 
-        return self.metrics.copy()
+        return {
+            **params,
+            "context": context,
+        }

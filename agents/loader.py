@@ -5,7 +5,8 @@ import inspect
 import logging
 
 from agents.base import Agent
-from agents.registry import AgentRegistry
+
+from runtime.registry.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class AgentLoader:
 
     - Importar módulos.
     - Descubrir Agents.
-    - Registrar factories.
+    - Registrar clases.
 
     No:
 
@@ -30,7 +31,7 @@ class AgentLoader:
     def __init__(
         self,
         registry: AgentRegistry,
-    ):
+    ) -> None:
 
         self.registry = registry
 
@@ -38,9 +39,9 @@ class AgentLoader:
 
         self.loaded_agents: set[str] = set()
 
-    # ======================================================
+    # ==================================================
     # Loading
-    # ======================================================
+    # ==================================================
 
     def load_defaults(
         self,
@@ -51,6 +52,7 @@ class AgentLoader:
             "agents.coder",
             "agents.executor",
             "agents.multi_turn",
+            "agents.parallel",
             "agents.planner",
             "agents.task_agent",
         ]
@@ -89,10 +91,10 @@ class AgentLoader:
                 module,
             )
 
-            for agent in agents:
+            for agent_class in agents:
 
                 self.register(
-                    agent,
+                    agent_class,
                 )
 
             self.loaded_modules.add(
@@ -106,16 +108,16 @@ class AgentLoader:
                 module_path,
             )
 
-    # ======================================================
+    # ==================================================
     # Discovery
-    # ======================================================
+    # ==================================================
 
     def discover(
         self,
         module,
     ) -> list[type[Agent]]:
 
-        result = []
+        result: list[type[Agent]] = []
 
         for obj_name in dir(module):
 
@@ -126,21 +128,28 @@ class AgentLoader:
             )
 
             if not inspect.isclass(obj):
+
                 continue
 
             if obj is Agent:
+
                 continue
 
             if not issubclass(
                 obj,
                 Agent,
             ):
+
                 continue
 
-            if inspect.isabstract(obj):
+            if inspect.isabstract(
+                obj,
+            ):
+
                 continue
 
             if obj.__module__ != module.__name__:
+
                 continue
 
             result.append(
@@ -149,9 +158,9 @@ class AgentLoader:
 
         return result
 
-    # ======================================================
+    # ==================================================
     # Registration
-    # ======================================================
+    # ==================================================
 
     def register(
         self,
@@ -173,34 +182,31 @@ class AgentLoader:
 
             return
 
-        aliases = getattr(
-            agent_class,
-            "aliases",
-            None,
-        )
-
         try:
 
             self.registry.register(
-                name=name,
-                factory=agent_class,
-                aliases=aliases,
+                agent_class,
             )
 
             self.loaded_agents.add(
                 name,
             )
 
-        except ValueError:
-
-            logger.debug(
-                "Agent existente=%s",
+            logger.info(
+                "Agent cargado=%s",
                 name,
             )
 
-    # ======================================================
+        except ValueError:
+
+            logger.debug(
+                "Agent ya registrado=%s",
+                name,
+            )
+
+    # ==================================================
     # Information
-    # ======================================================
+    # ==================================================
 
     def stats(
         self,

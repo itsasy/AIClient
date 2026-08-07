@@ -1,6 +1,6 @@
-from core.context.base import BaseContextProvider
-from core.context.registry import ContextRegistry
-from core.context.manager import ContextManager
+from .base import BaseContextProvider
+from .registry import ContextRegistry
+from .manager import ContextManager
 
 __all__ = [
     "BaseContextProvider",

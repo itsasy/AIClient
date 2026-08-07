@@ -5,7 +5,8 @@ import inspect
 import logging
 
 from skills.base import Skill
-from skills.registry import SkillRegistry
+
+from runtime.registry.skill_registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,7 @@ class SkillLoader:
 
     - Importar módulos.
     - Detectar clases Skill.
-    - Registrar factories.
+    - Registrar clases.
 
     No:
 
@@ -55,6 +56,8 @@ class SkillLoader:
 
         self.failed_modules: set[str] = set()
 
+        self.loaded_skills: set[str] = set()
+
     # ==================================================
     # Loading
     # ==================================================
@@ -78,7 +81,7 @@ class SkillLoader:
                 module_path,
             )
 
-            self._register_from_module(
+            self._discover_module(
                 module,
             )
 
@@ -120,7 +123,7 @@ class SkillLoader:
     # Discovery
     # ==================================================
 
-    def _register_from_module(
+    def _discover_module(
         self,
         module,
     ) -> None:
@@ -179,9 +182,11 @@ class SkillLoader:
         try:
 
             self.registry.register(
-                name=skill_class.name,
-                factory=skill_class,
-                aliases=skill_class.aliases,
+                skill_class,
+            )
+
+            self.loaded_skills.add(
+                skill_class.name,
             )
 
             logger.info(
@@ -228,6 +233,22 @@ class SkillLoader:
             self.loaded_modules,
         )
 
+    def stats(
+        self,
+    ) -> dict:
+
+        return {
+            "modules": len(
+                self.loaded_modules,
+            ),
+            "failed_modules": len(
+                self.failed_modules,
+            ),
+            "skills": len(
+                self.loaded_skills,
+            ),
+        }
+
     # ==================================================
     # Management
     # ==================================================
@@ -239,3 +260,5 @@ class SkillLoader:
         self.loaded_modules.clear()
 
         self.failed_modules.clear()
+
+        self.loaded_skills.clear()

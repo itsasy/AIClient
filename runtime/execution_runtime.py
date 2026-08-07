@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import logging
+import time
 
-from copy import deepcopy
 from typing import Any
 
 from core.execution_plan import ExecutionPlan
-from core.execution_step import ExecutionStep
 from core.execution_result import ExecutionResult
+from core.execution_step import ExecutionStep
+
+from core.context.manager import ContextManager
 
 from runtime.agent_runtime import AgentRuntime
 from runtime.skill_runtime import SkillRuntime
@@ -15,38 +17,41 @@ from runtime.skill_runtime import SkillRuntime
 logger = logging.getLogger(__name__)
 
 
-class ExecutionRuntime:
+class ExecutionEngine:
     """
-    Router central de ejecución.
+    Motor central de ejecución.
 
     Responsabilidades:
 
-    - Resolver modalidad de ejecución.
-    - Ordenar steps por dependencias.
-    - Delegar ejecución.
-    - Consolidar resultados.
+    - Ejecutar ExecutionPlans.
+    - Resolver modalidad single/multi_step.
+    - Coordinar runtimes.
+    - Gestionar lifecycle.
+    - Generar ExecutionResult.
 
     No:
 
-    - Ejecuta Agents.
-    - Ejecuta Skills.
-    - Construye contexto.
+    - Detecta intención.
+    - Construye planes.
+    - Implementa agentes.
+    - Implementa skills.
     - Gestiona memoria.
-    - Gestiona aprendizaje.
-    - Modifica lifecycle del plan.
     """
 
-    name = "execution_runtime"
+    name = "execution_engine"
 
     def __init__(
         self,
         agent_runtime: AgentRuntime | None = None,
         skill_runtime: SkillRuntime | None = None,
+        context_manager: ContextManager | None = None,
     ) -> None:
 
         self.agent_runtime = agent_runtime or AgentRuntime()
 
         self.skill_runtime = skill_runtime or SkillRuntime()
+
+        self.context_manager = context_manager or ContextManager()
 
     # ==================================================
     # Public API
@@ -55,43 +60,91 @@ class ExecutionRuntime:
     def execute(
         self,
         plan: ExecutionPlan,
-        context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
 
-        if not isinstance(
-            plan,
-            ExecutionPlan,
-        ):
+        started = time.monotonic()
 
-            raise TypeError(
-                "ExecutionRuntime requiere ExecutionPlan",
+        try:
+
+            self._validate_plan(
+                plan,
             )
 
-        errors = plan.validate()
+            plan.mark_running()
 
-        if errors:
+            self.context_manager.attach_to_plan(
+                plan,
+                {
+                    "plan": plan,
+                },
+            )
+
+            if plan.execution_mode == "single":
+
+                result = self._execute_single(
+                    plan,
+                )
+
+            else:
+
+                result = self._execute_steps(
+                    plan,
+                )
+
+            duration = round(
+                time.monotonic() - started,
+                3,
+            )
+
+            result.metadata.update(
+                {
+                    "engine": self.name,
+                    "duration": duration,
+                    "plan_id": plan.id,
+                }
+            )
+
+            if result.status == "completed":
+
+                plan.mark_completed(
+                    result.data,
+                )
+
+            elif result.status == "partial":
+
+                plan.mark_partial(
+                    result.data,
+                    result.error,
+                )
+
+            else:
+
+                plan.mark_failed(
+                    result.error or "execution failed",
+                )
+
+            return result
+
+        except Exception as exc:
+
+            logger.exception(
+                "ExecutionEngine error",
+            )
+
+            try:
+
+                plan.mark_failed(
+                    str(exc),
+                )
+
+            except Exception:
+
+                pass
 
             return ExecutionResult.fail(
-                error="; ".join(errors),
+                error=str(exc),
                 executor=self.name,
-                plan_id=plan.id,
             )
-
-        execution_context = deepcopy(
-            context or {},
-        )
-
-        if plan.steps:
-
-            return self._execute_steps(
-                plan,
-                execution_context,
-            )
-
-        return self._execute_single(
-            plan,
-            execution_context,
-        )
 
     # ==================================================
     # Single execution
@@ -100,39 +153,25 @@ class ExecutionRuntime:
     def _execute_single(
         self,
         plan: ExecutionPlan,
-        context: dict[str, Any],
     ) -> ExecutionResult:
 
-        if not plan.execution_unit_type:
+        if plan.execution_unit_type == "agent":
 
-            return ExecutionResult.fail(
-                error="Plan sin tipo de unidad.",
-                executor=self.name,
-                plan_id=plan.id,
+            return self.agent_runtime.execute(
+                name=plan.execution_unit,
+                params=plan.params,
+                context=plan.execution_context,
             )
 
-        if not plan.execution_unit:
+        if plan.execution_unit_type == "skill":
 
-            return ExecutionResult.fail(
-                error="Plan sin unidad de ejecución.",
-                executor=self.name,
-                plan_id=plan.id,
+            return self.skill_runtime.execute(
+                name=plan.execution_unit,
+                params=plan.params,
+                context=plan.execution_context,
             )
 
-        step = ExecutionStep(
-            description=(plan.objective or plan.original_task),
-            unit_type=plan.execution_unit_type,
-            unit_name=plan.execution_unit,
-            params=deepcopy(
-                plan.params,
-            ),
-        )
-
-        return self._dispatch(
-            plan,
-            step,
-            context,
-        )
+        raise ValueError(f"Unidad desconocida: {plan.execution_unit_type}")
 
     # ==================================================
     # Multi step execution
@@ -141,107 +180,102 @@ class ExecutionRuntime:
     def _execute_steps(
         self,
         plan: ExecutionPlan,
-        context: dict[str, Any],
     ) -> ExecutionResult:
 
-        children: list[ExecutionResult] = []
+        outputs: list[Any] = []
 
-        completed_steps: list[str] = []
-
-        failed_steps: list[str] = []
-
-        ordered_steps = self._resolve_execution_order(
+        ordered_steps = self._resolve_order(
             plan.steps,
         )
 
         for step in ordered_steps:
 
-            result = self._dispatch(
-                plan,
+            result = self._execute_step(
                 step,
-                context,
+                plan,
             )
 
-            children.append(
-                result,
+            outputs.append(
+                result.data,
             )
 
-            if result.is_success():
-
-                completed_steps.append(
-                    step.id,
-                )
-
-                if isinstance(
-                    result.output,
-                    dict,
-                ):
-
-                    context.update(
-                        result.output,
-                    )
-
-            else:
-
-                failed_steps.append(
-                    step.id,
-                )
+            if result.status != "completed":
 
                 if plan.stop_on_error:
 
-                    break
+                    return ExecutionResult.partial(
+                        data=outputs,
+                        error=result.error,
+                        executor=self.name,
+                    )
 
-        if not failed_steps:
-
-            return ExecutionResult.ok(
-                output=[child.to_dict() for child in children],
-                executor=self.name,
-                plan_id=plan.id,
-            ).with_metadata(
-                steps=len(children),
-            )
-
-        if not completed_steps:
-
-            return ExecutionResult.fail(
-                error="Todos los steps fallaron.",
-                executor=self.name,
-                plan_id=plan.id,
-            ).with_metadata(
-                steps=len(children),
-                failed_steps=failed_steps,
-            )
-
-        return ExecutionResult.partial(
-            output={
-                "completed_steps": completed_steps,
-                "failed_steps": failed_steps,
-            },
+        return ExecutionResult.success(
+            data=outputs,
             executor=self.name,
-            plan_id=plan.id,
-            children=children,
-        ).with_metadata(
-            steps=len(children),
-            completed=len(completed_steps),
-            failed=len(failed_steps),
         )
 
     # ==================================================
-    # Dependency resolver
+    # Step execution
     # ==================================================
 
-    def _resolve_execution_order(
+    def _execute_step(
+        self,
+        step: ExecutionStep,
+        plan: ExecutionPlan,
+    ) -> ExecutionResult:
+
+        if step.unit_type == "agent":
+
+            return self.agent_runtime.execute(
+                name=step.unit_name,
+                params=step.params,
+                context=plan.execution_context,
+            )
+
+        if step.unit_type == "skill":
+
+            return self.skill_runtime.execute(
+                name=step.unit_name,
+                params=step.params,
+                context=plan.execution_context,
+            )
+
+        return ExecutionResult.fail(
+            error=f"Tipo inválido: {step.unit_type}",
+            executor=self.name,
+        )
+
+    # ==================================================
+    # Validation
+    # ==================================================
+
+    def _validate_plan(
+        self,
+        plan: ExecutionPlan,
+    ) -> None:
+
+        errors = plan.validate()
+
+        if errors:
+
+            raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
+
+    # ==================================================
+    # Ordering
+    # ==================================================
+
+    def _resolve_order(
         self,
         steps: list[ExecutionStep],
     ) -> list[ExecutionStep]:
 
-        ordered: list[ExecutionStep] = []
+        resolved = []
 
-        resolved: set[str] = set()
+        pending = list(
+            steps,
+        )
 
-        pending = list(steps)
-
-        available_ids = {step.id for step in steps}
+        completed = set()
 
         while pending:
 
@@ -249,23 +283,19 @@ class ExecutionRuntime:
 
             for step in pending[:]:
 
-                missing = [
-                    dependency for dependency in step.depends_on if dependency not in available_ids
-                ]
+                dependencies = set(
+                    step.depends_on,
+                )
 
-                if missing:
+                if dependencies.issubset(
+                    completed,
+                ):
 
-                    raise ValueError(
-                        f"Dependencias inexistentes: {missing}",
-                    )
-
-                if all(dependency in resolved for dependency in step.depends_on):
-
-                    ordered.append(
+                    resolved.append(
                         step,
                     )
 
-                    resolved.add(
+                    completed.add(
                         step.id,
                     )
 
@@ -277,68 +307,6 @@ class ExecutionRuntime:
 
             if not progress:
 
-                raise RuntimeError(
-                    "Dependencias circulares en ExecutionPlan.",
-                )
+                raise RuntimeError("Dependencias circulares en ExecutionPlan")
 
-        return ordered
-
-    # ==================================================
-    # Dispatcher
-    # ==================================================
-
-    def _dispatch(
-        self,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-        context: dict[str, Any],
-    ) -> ExecutionResult:
-
-        if not step.unit_name:
-
-            return ExecutionResult.fail(
-                error="ExecutionStep sin unidad.",
-                executor=self.name,
-                plan_id=plan.id,
-            )
-
-        unit_type = ExecutionStep.normalize_unit_type(
-            step.unit_type,
-        )
-
-        try:
-
-            if unit_type == "agent":
-
-                return self.agent_runtime.execute(
-                    plan=plan,
-                    step=step,
-                    context=context,
-                )
-
-            if unit_type == "skill":
-
-                return self.skill_runtime.execute(
-                    plan=plan,
-                    step=step,
-                    context=context,
-                )
-
-            return ExecutionResult.fail(
-                error=f"Tipo de unidad inválido: {unit_type}",
-                executor=self.name,
-                plan_id=plan.id,
-            )
-
-        except Exception as exc:
-
-            logger.exception(
-                "Error ejecutando step=%s",
-                step.id,
-            )
-
-            return ExecutionResult.fail(
-                error=str(exc),
-                executor=self.name,
-                plan_id=plan.id,
-            )
+        return resolved

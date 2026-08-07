@@ -13,22 +13,14 @@ class Skill(ABC):
     Contrato base de una Skill ejecutable.
 
     Una Skill representa una capacidad concreta
-    que puede ser invocada por SkillRuntime.
-
-    Responsabilidades:
-
-    - Ejecutar una capacidad específica.
-    - Consumir parámetros del ExecutionStep.
-    - Utilizar contexto recibido.
-    - Exponer metadata descriptiva.
+    invocada por SkillRuntime.
 
     No:
 
     - Decide cuándo ejecutarse.
     - Construye planes.
-    - Gestiona retries.
-    - Gestiona timeouts.
-    - Selecciona otras Skills.
+    - Gestiona lifecycle.
+    - Resuelve otras skills.
     """
 
     name: str = ""
@@ -42,6 +34,29 @@ class Skill(ABC):
     capabilities: tuple[str, ...] = ()
 
     # ==================================================
+    # Initialization
+    # ==================================================
+
+    def __init_subclass__(
+        cls,
+        **kwargs,
+    ) -> None:
+
+        super().__init_subclass__(
+            **kwargs,
+        )
+
+        if not getattr(
+            cls,
+            "name",
+            None,
+        ):
+
+            raise TypeError(
+                f"{cls.__name__} debe definir name",
+            )
+
+    # ==================================================
     # Normalization
     # ==================================================
 
@@ -51,9 +66,21 @@ class Skill(ABC):
     ) -> str:
 
         if not value:
+
             return ""
 
-        return value.lower().strip().replace("-", "_").replace(" ", "_")
+        return (
+            value.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
 
     # ==================================================
     # Validation
@@ -111,7 +138,7 @@ class Skill(ABC):
 
         if requested and requested != current and requested not in aliases:
 
-            warnings.append((f"Step apunta a '{step.unit_name}', " f"Skill activa '{self.name}'."))
+            warnings.append(f"Step apunta a '{step.unit_name}', " f"Skill activa '{self.name}'.")
 
         return warnings
 
@@ -151,6 +178,7 @@ class Skill(ABC):
         )
 
         if not target:
+
             return False
 
         return target in {self.normalize(item) for item in self.capabilities}
@@ -164,12 +192,7 @@ class Skill(ABC):
         self,
         plan: ExecutionPlan,
         step: ExecutionStep,
-        context: dict[str, Any],
+        context: dict[str, Any] | None = None,
     ) -> Any:
-        """
-        Ejecuta la capacidad.
 
-        Debe retornar un resultado serializable.
-        """
-
-        raise NotImplementedError
+        raise NotImplementedError("Las skills deben implementar execute()")

@@ -477,3 +477,76 @@ class ExecutionPlan:
         return copy.deepcopy(
             self,
         )
+
+    # ==================================================
+    # Steps
+    # ==================================================
+
+    def add_step(
+        self,
+        description: str,
+        unit_type: str,
+        unit_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> ExecutionStep:
+
+        step = ExecutionStep(
+            description=description,
+            unit_type=self.normalize_unit_type(
+                unit_type,
+            ),
+            unit_name=unit_name,
+            params=params or {},
+        )
+
+        self.steps.append(
+            step,
+        )
+
+        return step
+
+    # ==================================================
+    # Metadata helpers
+    # ==================================================
+
+    def add_metadata(
+        self,
+        key: str,
+        value: Any,
+    ) -> None:
+
+        self.metadata[key] = value
+
+    def requires_context(
+        self,
+        provider: str,
+    ) -> bool:
+
+        normalized = self.normalize_provider(
+            provider,
+        )
+
+        return normalized in {self.normalize_provider(item) for item in self.context_requirements}
+
+    # ==================================================
+    # Serialization
+    # ==================================================
+
+    def to_dict(
+        self,
+    ) -> dict[str, Any]:
+
+        return {
+            "id": self.id,
+            "status": self.status,
+            "task": self.original_task,
+            "objective": self.objective,
+            "intent": self.intent,
+            "execution_mode": self.execution_mode,
+            "execution_unit": self.execution_unit,
+            "steps": [step.to_dict() for step in self.steps],
+            "context_requirements": list(self.context_requirements),
+            "metadata": dict(self.metadata),
+            "result": self.result,
+            "error": self.error,
+        }

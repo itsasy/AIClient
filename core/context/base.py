@@ -15,6 +15,7 @@ class BaseContextProvider(ABC):
 
     - Tener una key única.
     - Cargar información dentro del contexto.
+    - Ser resoluble mediante ContextRegistry.
 
     No:
 
@@ -32,7 +33,7 @@ class BaseContextProvider(ABC):
     def __init_subclass__(
         cls,
         **kwargs,
-    ):
+    ) -> None:
 
         super().__init_subclass__(**kwargs)
 
@@ -59,6 +60,19 @@ class BaseContextProvider(ABC):
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
+        """
+        Carga información contextual.
+
+        Args:
+            plan:
+                ExecutionPlan actual.
+
+            context:
+                Contexto acumulado hasta este provider.
+
+        Returns:
+            Datos aportados por el provider.
+        """
 
         raise NotImplementedError
