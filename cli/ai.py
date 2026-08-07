@@ -247,7 +247,6 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
-    # ✅ Usar ExecutionEngine en lugar de Pipeline/Orchestrator
     engine = ExecutionEngine()
 
     if args.chat:

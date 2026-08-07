@@ -8,12 +8,7 @@ from core.context.registry import ContextRegistry
 from core.intent import IntentAnalyzer
 from core.planning import PlanBuilder
 
-from runtime import (
-    Pipeline,
-    ExecutionEngine,
-    AgentRuntime,
-    SkillRuntime,
-)
+from runtime.execution_engine import ExecutionEngine
 
 from runtime.registry import (
     AgentRegistry,
@@ -40,26 +35,20 @@ class ApplicationContainer:
     - Decide comportamiento.
     """
 
-    def __init__(
-        self,
-    ) -> None:
+    def __init__(self) -> None:
 
         # ================================
         # Context
         # ================================
 
         self.context_registry = ContextRegistry()
-
-        self.context_manager = ContextManager(
-            registry=self.context_registry,
-        )
+        self.context_manager = ContextManager(registry=self.context_registry)
 
         # ================================
         # Registries
         # ================================
 
         self.agent_registry = AgentRegistry()
-
         self.skill_registry = SkillRegistry()
 
         # ================================
@@ -69,141 +58,65 @@ class ApplicationContainer:
         self._register_defaults()
 
         # ================================
-        # Runtime
-        # ================================
-
-        self.agent_runtime = AgentRuntime(
-            registry=self.agent_registry,
-        )
-
-        self.skill_runtime = SkillRuntime(
-            registry=self.skill_registry,
-        )
-
-        # ================================
-        # Execution
+        # Execution Engine
         # ================================
 
         self.execution_engine = ExecutionEngine(
-            agent_runtime=self.agent_runtime,
-            skill_runtime=self.skill_runtime,
+            agent_registry=self.agent_registry,
+            skill_registry=self.skill_registry,
             context_manager=self.context_manager,
-        )
-
-        # ================================
-        # Planning
-        # ================================
-
-        self.intent_analyzer = IntentAnalyzer()
-
-        self.plan_builder = PlanBuilder()
-
-        # ================================
-        # Pipeline
-        # ================================
-
-        self.pipeline = Pipeline(
-            intent_analyzer=self.intent_analyzer,
-            plan_builder=self.plan_builder,
-            execution_engine=self.execution_engine,
+            intent_analyzer=IntentAnalyzer(),
+            plan_builder=PlanBuilder(),
         )
 
     # ==================================================
     # Registration
     # ==================================================
 
-    def _register_defaults(
-        self,
-    ) -> None:
-
+    def _register_defaults(self) -> None:
         self._register_agents()
-
         self._register_skills()
-
         self._register_context()
 
-    def _register_agents(
-        self,
-    ) -> None:
-
+    def _register_agents(self) -> None:
         try:
-
             from agents.loader import AgentLoader
 
-            loader = AgentLoader(
-                self.agent_registry,
-            )
-
+            loader = AgentLoader(self.agent_registry)
             loader.load_defaults()
-
         except Exception:
+            logger.exception("Error cargando Agents")
 
-            logger.exception(
-                "Error cargando Agents",
-            )
-
-    def _register_skills(
-        self,
-    ) -> None:
-
+    def _register_skills(self) -> None:
         try:
-
             from skills.loader import SkillLoader
 
-            loader = SkillLoader(
-                self.skill_registry,
-            )
-
+            loader = SkillLoader(self.skill_registry)
             loader.load_defaults()
-
         except Exception:
+            logger.exception("Error cargando Skills")
 
-            logger.exception(
-                "Error cargando Skills",
-            )
-
-    def _register_context(
-        self,
-    ) -> None:
-        """
-        Punto de extensión para providers.
-        """
-
+    def _register_context(self) -> None:
+        # Punto de extensión para providers
         return
 
     # ==================================================
     # Public API
     # ==================================================
 
-    def get_pipeline(
-        self,
-    ) -> Pipeline:
+    def get_engine(self) -> ExecutionEngine:
+        return self.execution_engine
 
-        return self.pipeline
-
-    def resolve(
-        self,
-        name: str,
-    ):
-
+    def resolve(self, name: str):
         mapping = {
-            "pipeline": self.pipeline,
-            "execution_engine": self.execution_engine,
-            "agent_runtime": self.agent_runtime,
-            "skill_runtime": self.skill_runtime,
+            "engine": self.execution_engine,
             "context_manager": self.context_manager,
             "agent_registry": self.agent_registry,
             "skill_registry": self.skill_registry,
         }
+        return mapping.get(name)
 
-        return mapping.get(
-            name,
-        )
-
-    def describe(
-        self,
-    ) -> dict:
-
+    def describe(self) -> dict:
         return {
             "agents": self.agent_registry.list(),
             "skills": self.skill_registry.list(),
@@ -212,5 +125,4 @@ class ApplicationContainer:
 
 
 def build_container() -> ApplicationContainer:
-
     return ApplicationContainer()
