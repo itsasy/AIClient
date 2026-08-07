@@ -158,4 +158,4 @@ class ExecutionPlanner:
         if not plan.intent:
             plan.intent = "conversation"
         plan.objective = task
-        ExecutionPlanner._set_execution_unit(plan, "agent", "task_agent", {"task": task})
+        ExecutionPlanner._set_execution_unit(plan, "agent", "task", {"task": task})
