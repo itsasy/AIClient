@@ -12,27 +12,6 @@ from core.execution_step import ExecutionStep
 class ExecutionPlan:
     """
     Contrato central de ejecución de AIClient.
-
-    Representa CÓMO debe ejecutarse una intención.
-
-    Flujo oficial:
-
-        User
-          ↓
-        IntentAnalyzer
-          ↓
-        IntentResult
-          ↓
-        PlanBuilder
-          ↓
-        ExecutionPlan
-          ↓
-        ExecutionEngine
-          ↓
-        ExecutionResult
-
-    El ExecutionPlan contiene el lifecycle de ejecución:
-        pending → planned → validated → running → completed | partial | failed
     """
 
     VALID_EXECUTION_MODES = frozenset({"single", "multi_step"})
@@ -67,7 +46,11 @@ class ExecutionPlan:
     context_requirements: list[str] = field(default_factory=list)
     steps: list[ExecutionStep] = field(default_factory=list)
 
-    # Metadata opcional (infraestructura, preferencias, etc.)
+    max_retries: int = 2
+    stop_on_error: bool = True
+    loaded_context: dict[str, Any] = field(default_factory=dict)
+    execution_context: dict[str, Any] = field(default_factory=dict)
+
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -114,7 +97,6 @@ class ExecutionPlan:
         timeout: int = 120,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionStep:
-        """Agrega un paso ejecutable al plan."""
         step = ExecutionStep(
             description=description,
             unit_type=unit_type,
@@ -129,7 +111,6 @@ class ExecutionPlan:
         return step
 
     def validate(self) -> list[str]:
-        """Valida que el plan sea consistente según su modo de ejecución."""
         errors = []
 
         if not self.original_task:
@@ -146,11 +127,7 @@ class ExecutionPlan:
         elif self.execution_mode == "multi_step":
             if not self.steps and not self.execution_unit:
                 errors.append("Modo multi_step requiere al menos un step o una unidad ejecutable.")
-            if self.execution_unit and self.steps:
-                # Si hay steps, la unidad principal puede ser opcional
-                pass  # pero no es error
 
-        # Verificar dependencias de pasos
         step_ids = {step.id for step in self.steps}
         for step in self.steps:
             for dep in step.depends_on:
@@ -214,6 +191,10 @@ class ExecutionPlan:
             "params": dict(self.params),
             "constraints": list(self.constraints),
             "context_requirements": list(self.context_requirements),
+            "max_retries": self.max_retries,
+            "stop_on_error": self.stop_on_error,
+            "loaded_context": dict(self.loaded_context),
+            "execution_context": dict(self.execution_context),
             "metadata": dict(self.metadata),
             "steps": [step.to_dict() for step in self.steps],
         }
