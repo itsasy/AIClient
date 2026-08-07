@@ -3,9 +3,12 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from runtime.registry.agent_registry import AgentRegistry
 
 from agents.base import Agent
-from runtime.registry.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -13,12 +16,6 @@ logger = logging.getLogger(__name__)
 class AgentLoader:
     """
     Cargador dinámico de Agents.
-
-    Responsabilidades:
-
-    - Importar módulos.
-    - Descubrir Agents.
-    - Registrar clases en AgentRegistry.
     """
 
     def __init__(self, registry: AgentRegistry) -> None:

@@ -1,6 +1,8 @@
-from .base import Skill
-from .loader import SkillLoader
-from .manager import SkillManager
+from __future__ import annotations
+
+from skills.base import Skill
+from skills.loader import SkillLoader
+from skills.manager import SkillManager
 
 __all__ = [
     "Skill",
