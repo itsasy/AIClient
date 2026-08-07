@@ -15,6 +15,8 @@ from runtime.dispatcher import UnitDispatcher
 from runtime.registry.agent_registry import AgentRegistry
 from runtime.registry.skill_registry import SkillRegistry
 
+from skills.loader import SkillLoader
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +50,21 @@ class ExecutionEngine:
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
     ):
+
         self.agent_registry = agent_registry or AgentRegistry()
+
         self.skill_registry = skill_registry or SkillRegistry()
+
+        # Cargar skills disponibles
+        self.skill_loader = SkillLoader(self.skill_registry)
+
+        self.skill_loader.load_defaults()
+
+        logger.info(
+            "Skills cargadas=%s",
+            self.skill_registry.list(),
+        )
+
         self.context_manager = context_manager or ContextManager()
         self.intent_analyzer = intent_analyzer or IntentAnalyzer()
         self.plan_builder = plan_builder or PlanBuilder()
@@ -68,20 +83,20 @@ class ExecutionEngine:
             "retries": 0,
         }
 
-        # Cargar SelfCritic (helper, no agente)
         try:
             from core.self_critic import SelfCritic
 
             self.critic = SelfCritic()
+
         except ImportError:
             logger.warning("SelfCritic no disponible")
             self.critic = None
 
-        # Cargar ContinuousLearner (opcional, post-ejecución)
         try:
             from core.learner import ContinuousLearner
 
             self.learner = ContinuousLearner()
+
         except ImportError:
             logger.warning("ContinuousLearner no disponible")
             self.learner = None

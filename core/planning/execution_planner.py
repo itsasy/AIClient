@@ -172,15 +172,23 @@ class ExecutionPlanner:
     # ======================================================
 
     @staticmethod
-    def _plan_project_analysis(plan: ExecutionPlan, task: str) -> None:
+    def _plan_project_analysis(
+        plan: ExecutionPlan,
+        task: str,
+    ) -> None:
+
         plan.objective = "Analizar el proyecto actual"
+
         plan.execution_mode = "multi_step"
 
         plan.add_step(
-            description="Analizar estructura y código del proyecto",
+            description=("Analizar estructura y archivos " "del proyecto"),
             unit_type="skill",
             unit_name="analyze_project",
-            params={"task": task},
+            params={
+                "path": ".",
+                "task": task,
+            },
         )
 
     # ======================================================

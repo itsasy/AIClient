@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """
     Descubridor dinámico de Skills.
+
+    Carga módulos, descubre clases Skill y las registra
+    automáticamente en SkillRegistry.
     """
 
     DEFAULT_MODULES = (
@@ -32,72 +35,227 @@ class SkillLoader:
         "skills.scraping.job_scraper",
     )
 
-    def __init__(self, registry: SkillRegistry) -> None:
+    def __init__(
+        self,
+        registry: SkillRegistry,
+    ) -> None:
+
         self.registry = registry
+
         self.loaded_modules: set[str] = set()
         self.failed_modules: set[str] = set()
         self.loaded_skills: set[str] = set()
 
-    def load_module(self, module_path: str) -> bool:
+    # ======================================================
+    # Module loading
+    # ======================================================
+
+    def load_module(
+        self,
+        module_path: str,
+    ) -> bool:
+
         if not module_path:
             return False
+
         if module_path in self.loaded_modules:
             return True
 
         try:
-            module = importlib.import_module(module_path)
-            self._discover_module(module)
-            self.loaded_modules.add(module_path)
+
+            module = importlib.import_module(
+                module_path,
+            )
+
+            self._discover_module(
+                module,
+            )
+
+            self.loaded_modules.add(
+                module_path,
+            )
+
+            logger.info(
+                "Skill module cargado=%s",
+                module_path,
+            )
+
             return True
+
         except Exception:
-            self.failed_modules.add(module_path)
-            logger.exception("Error cargando módulo Skill=%s", module_path)
+
+            self.failed_modules.add(
+                module_path,
+            )
+
+            logger.exception(
+                "Error cargando módulo Skill=%s",
+                module_path,
+            )
+
             return False
 
-    def load_modules(self, modules: list[str] | tuple[str, ...]) -> dict[str, bool]:
-        result = {}
+    def load_modules(
+        self,
+        modules: list[str] | tuple[str, ...],
+    ) -> dict[str, bool]:
+
+        result: dict[str, bool] = {}
+
         for module in modules:
-            result[module] = self.load_module(module)
+
+            result[module] = self.load_module(
+                module,
+            )
+
         return result
 
-    def _discover_module(self, module) -> None:
-        for _, obj in inspect.getmembers(module, inspect.isclass):
+    # ======================================================
+    # Discovery
+    # ======================================================
+
+    def _discover_module(
+        self,
+        module,
+    ) -> None:
+
+        for _, obj in inspect.getmembers(
+            module,
+            inspect.isclass,
+        ):
+
             if obj is Skill:
                 continue
-            if not issubclass(obj, Skill):
+
+            if not issubclass(
+                obj,
+                Skill,
+            ):
                 continue
-            if inspect.isabstract(obj):
+
+            if inspect.isabstract(
+                obj,
+            ):
                 continue
+
             if obj.__module__ != module.__name__:
                 continue
-            self._register_skill(obj)
 
-    def _register_skill(self, skill_class: type[Skill]) -> None:
+            self._register_skill(
+                obj,
+            )
+
+    # ======================================================
+    # Registration
+    # ======================================================
+
+    def _register_skill(
+        self,
+        skill_class: type[Skill],
+    ) -> None:
+
         errors = skill_class.validate_definition()
+
         if errors:
-            logger.warning("Skill inválida %s: %s", skill_class, errors)
+
+            logger.warning(
+                "Skill inválida=%s errores=%s",
+                skill_class.__name__,
+                errors,
+            )
+
             return
 
+        name = SkillRegistry.normalize(
+            skill_class.name,
+        )
+
+        aliases = getattr(
+            skill_class,
+            "aliases",
+            None,
+        )
+
         try:
-            self.registry.register(name=skill_class.name, factory=skill_class)
-            self.loaded_skills.add(skill_class.name)
-            logger.info("Skill registrada=%s", skill_class.name)
-        except ValueError:
-            logger.debug("Skill ya registrada=%s", skill_class.name)
+
+            self.registry.register(
+                name=name,
+                factory=skill_class,
+                aliases=aliases,
+            )
+
+            self.loaded_skills.add(
+                name,
+            )
+
+            logger.info(
+                "Skill registrada=%s",
+                name,
+            )
+
+        except ValueError as exc:
+
+            logger.debug(
+                "Skill ya registrada=%s (%s)",
+                name,
+                exc,
+            )
+
         except Exception:
-            logger.exception("Error registrando Skill=%s", skill_class.name)
 
-    def load_defaults(self) -> dict[str, bool]:
-        return self.load_modules(self.DEFAULT_MODULES)
+            logger.exception(
+                "Error registrando Skill=%s",
+                name,
+            )
 
-    def stats(self) -> dict:
+    # ======================================================
+    # Default loading
+    # ======================================================
+
+    def load_defaults(
+        self,
+    ) -> dict[str, bool]:
+
+        return self.load_modules(
+            self.DEFAULT_MODULES,
+        )
+
+    # ======================================================
+    # Inspection
+    # ======================================================
+
+    def stats(
+        self,
+    ) -> dict[str, int]:
+
         return {
-            "modules": len(self.loaded_modules),
-            "failed_modules": len(self.failed_modules),
-            "skills": len(self.loaded_skills),
+            "modules": len(
+                self.loaded_modules,
+            ),
+            "failed_modules": len(
+                self.failed_modules,
+            ),
+            "skills": len(
+                self.loaded_skills,
+            ),
         }
 
-    def clear_state(self) -> None:
+    def loaded(
+        self,
+    ) -> list[str]:
+
+        return sorted(
+            self.loaded_skills,
+        )
+
+    # ======================================================
+    # Reset
+    # ======================================================
+
+    def clear_state(
+        self,
+    ) -> None:
+
         self.loaded_modules.clear()
         self.failed_modules.clear()
         self.loaded_skills.clear()

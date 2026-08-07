@@ -10,7 +10,7 @@ from skills.base import Skill
 
 class AnalyzeCodeSkill(Skill):
 
-    name = "analyze_project"
+    name = "analyze_code"
 
     description = "Analiza código fuente y devuelve información estructurada."
 
