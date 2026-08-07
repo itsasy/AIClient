@@ -1,148 +1,69 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-
 from typing import Any
 
 
 @dataclass(slots=True)
 class IntentResult:
     """
-    Resultado semántico del análisis de intención.
+    Contrato de interpretación de la petición del usuario.
 
-    Representa únicamente comprensión de intención.
+    Representa QUÉ quiere hacer el usuario.
 
-    No:
+    NO representa:
+    - cómo debe ejecutarse;
+    - qué agente debe utilizarse;
+    - qué skill debe ejecutarse;
+    - qué provider LLM debe utilizarse;
+    - qué pasos deben ejecutarse.
 
-    - Construye ExecutionPlans.
-    - Selecciona Agents.
-    - Selecciona Skills.
-    - Ejecuta acciones.
+    Flujo oficial:
+
+        User
+          ↓
+        IntentAnalyzer
+          ↓
+        IntentResult
+          ↓
+        PlanBuilder
+          ↓
+        ExecutionPlan
     """
 
     intent: str
-
     domain: str
-
     category: str = "general"
-
     complexity: str = "normal"
-
     confidence: float = 0.0
+    entities: dict[str, Any] = field(default_factory=dict)
+    signals: list[str] = field(default_factory=list)
+    original_query: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    entities: dict[str, Any] = field(
-        default_factory=dict,
-    )
+    def __post_init__(self) -> None:
+        self.intent = self.intent.strip().lower()
+        self.domain = self.domain.strip().lower()
 
-    signals: list[str] = field(
-        default_factory=list,
-    )
+        if not self.intent:
+            raise ValueError("IntentResult requiere un intent válido.")
 
-    metadata: dict[str, Any] = field(
-        default_factory=dict,
-    )
+        if not self.domain:
+            raise ValueError("IntentResult requiere un domain válido.")
 
-    # ======================================================
-    # Lifecycle
-    # ======================================================
+        if self.confidence is not None:
+            if not 0.0 <= self.confidence <= 1.0:
+                raise ValueError("IntentResult.confidence debe estar entre 0.0 y 1.0.")
 
-    def __post_init__(
-        self,
-    ) -> None:
-
-        self.intent = self.normalize(
-            self.intent,
-        )
-
-        self.domain = self.normalize(
-            self.domain,
-        )
-
-        self.category = self.normalize(
-            self.category,
-        )
-
-        self.complexity = self.normalize(
-            self.complexity,
-        )
-
-        self.confidence = max(
-            0.0,
-            min(
-                1.0,
-                float(self.confidence),
-            ),
-        )
-
-    # ======================================================
-    # Normalization
-    # ======================================================
-
-    @staticmethod
-    def normalize(
-        value: str | None,
-    ) -> str:
-
-        if not value:
-
-            return ""
-
-        return (
-            value.lower()
-            .strip()
-            .replace(
-                "-",
-                "_",
-            )
-            .replace(
-                " ",
-                "_",
-            )
-        )
-
-    # ======================================================
-    # Serialization
-    # ======================================================
-
-    def to_dict(
-        self,
-    ) -> dict[str, Any]:
-
+    def to_dict(self) -> dict[str, Any]:
         return {
             "intent": self.intent,
             "domain": self.domain,
             "category": self.category,
             "complexity": self.complexity,
             "confidence": self.confidence,
-            "entities": dict(
-                self.entities,
-            ),
-            "signals": list(
-                self.signals,
-            ),
-            "metadata": dict(
-                self.metadata,
-            ),
+            "entities": dict(self.entities),
+            "signals": list(self.signals),
+            "original_query": self.original_query,
+            "metadata": dict(self.metadata),
         }
-
-    # ======================================================
-    # Helpers
-    # ======================================================
-
-    def has_entity(
-        self,
-        key: str,
-    ) -> bool:
-
-        return key in self.entities
-
-    def get_entity(
-        self,
-        key: str,
-        default: Any = None,
-    ) -> Any:
-
-        return self.entities.get(
-            key,
-            default,
-        )

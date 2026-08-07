@@ -1,193 +1,111 @@
 from __future__ import annotations
 
 import uuid
-
 from dataclasses import dataclass, field
-
 from typing import Any
-
-VALID_STEP_STATUS = {
-    "pending",
-    "running",
-    "completed",
-    "failed",
-    "skipped",
-}
 
 
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Unidad individual de ejecución.
+    Unidad individual de trabajo dentro de un ExecutionPlan.
 
-    Representa:
+    La unidad ejecutable se identifica exclusivamente mediante:
 
-    - Qué ejecutar.
-    - Cómo ejecutarlo.
-    - Dependencias.
-    - Estado.
+        unit_type
+        unit_name
 
-    No:
+    unit_type solo puede ser:
+        agent
+        skill
 
-    - Ejecuta lógica.
-    - Decide estrategia.
-    - Gestiona runtime.
+    Las herramientas (tools) se ejecutan a través de skills.
     """
 
-    id: str = field(
-        default_factory=lambda: str(uuid.uuid4()),
+    VALID_UNIT_TYPES = frozenset(
+        {
+            "agent",
+            "skill",
+        }
     )
 
-    description: str = ""
-
-    unit_type: str = ""
-
-    unit_name: str = ""
-
-    params: dict[str, Any] = field(
-        default_factory=dict,
-    )
-
-    depends_on: list[str] = field(
-        default_factory=list,
-    )
-
-    status: str = "pending"
-
-    result: Any = None
-
-    error: str | None = None
-
-    metadata: dict[str, Any] = field(
-        default_factory=dict,
-    )
-
-    # ==================================================
-    # Lifecycle
-    # ==================================================
-
-    def set_status(
-        self,
-        status: str,
-    ) -> None:
-
-        status = self.normalize(
-            status,
-        )
-
-        if status not in VALID_STEP_STATUS:
-
-            raise ValueError(f"Estado de step inválido: {status}")
-
-        self.status = status
-
-    def mark_running(
-        self,
-    ) -> None:
-
-        self.set_status(
+    VALID_STATUSES = frozenset(
+        {
+            "pending",
             "running",
-        )
-
-    def mark_completed(
-        self,
-        result: Any = None,
-    ) -> None:
-
-        self.set_status(
             "completed",
-        )
-
-        self.result = result
-        self.error = None
-
-    def mark_failed(
-        self,
-        error: str,
-    ) -> None:
-
-        self.set_status(
             "failed",
-        )
+            "skipped",
+        }
+    )
 
-        self.error = error
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    description: str
+    unit_type: str
+    unit_name: str
+    params: dict[str, Any] = field(default_factory=dict)
+    depends_on: list[str] = field(default_factory=list)
+    expected_output: str | None = None
+    retries: int = 0
+    timeout: int = 120
+    status: str = "pending"
+    result: Any = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    # ==================================================
-    # Validation
-    # ==================================================
+    def __post_init__(self) -> None:
+        self.description = self.description.strip()
+        self.unit_type = self.unit_type.strip().lower()
+        self.unit_name = self.unit_name.strip()
 
-    def validate(
-        self,
-    ) -> list[str]:
+        if not self.description:
+            raise ValueError("ExecutionStep requiere una descripción.")
 
-        errors: list[str] = []
-
-        if not self.description.strip():
-
-            errors.append(
-                "step sin descripción",
-            )
-
-        if not self.unit_type:
-
-            errors.append(
-                "step sin unit_type",
+        if self.unit_type not in self.VALID_UNIT_TYPES:
+            raise ValueError(
+                f"Tipo de unidad inválido: {self.unit_type}. "
+                f"Tipos permitidos: {sorted(self.VALID_UNIT_TYPES)}"
             )
 
         if not self.unit_name:
+            raise ValueError("ExecutionStep requiere un unit_name válido.")
 
-            errors.append(
-                "step sin unit_name",
-            )
+        if self.retries < 0:
+            raise ValueError("ExecutionStep.retries no puede ser negativo.")
 
-        if self.status not in VALID_STEP_STATUS:
+        if self.timeout <= 0:
+            raise ValueError("ExecutionStep.timeout debe ser mayor que cero.")
 
-            errors.append(
-                "step con estado inválido",
-            )
+        if self.status not in self.VALID_STATUSES:
+            raise ValueError(f"Estado de step inválido: {self.status}.")
 
-        if self.status == "failed" and not self.error:
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in {
+            "completed",
+            "failed",
+            "skipped",
+        }
 
-            errors.append(
-                "step fallido requiere error",
-            )
+    def mark_running(self) -> None:
+        self.status = "running"
+        self.error = None
 
-        return errors
+    def mark_completed(self, result: Any = None) -> None:
+        self.status = "completed"
+        self.result = result
+        self.error = None
 
-    # ==================================================
-    # Helpers
-    # ==================================================
+    def mark_failed(self, error: str) -> None:
+        self.status = "failed"
+        self.error = error
 
-    @staticmethod
-    def normalize(
-        value: str,
-    ) -> str:
+    def mark_skipped(self, reason: str | None = None) -> None:
+        self.status = "skipped"
+        if reason:
+            self.metadata["skip_reason"] = reason
 
-        if not value:
-
-            return ""
-
-        return (
-            value.lower()
-            .strip()
-            .replace(
-                "-",
-                "_",
-            )
-            .replace(
-                " ",
-                "_",
-            )
-        )
-
-    # ==================================================
-    # Serialization
-    # ==================================================
-
-    def to_dict(
-        self,
-    ) -> dict[str, Any]:
-
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "description": self.description,
@@ -195,6 +113,9 @@ class ExecutionStep:
             "unit_name": self.unit_name,
             "params": dict(self.params),
             "depends_on": list(self.depends_on),
+            "expected_output": self.expected_output,
+            "retries": self.retries,
+            "timeout": self.timeout,
             "status": self.status,
             "result": self.result,
             "error": self.error,
