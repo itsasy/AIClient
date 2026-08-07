@@ -12,15 +12,30 @@ VALID_STEP_STATUS = {
     "running",
     "completed",
     "failed",
-    "cancelled",
+    "skipped",
 }
 
 
-VALID_UNIT_TYPES = {
+VALID_STEP_TRANSITIONS = {
+    "pending": {
+        "running",
+        "skipped",
+    },
+    "running": {
+        "completed",
+        "failed",
+    },
+    "completed": set(),
+    "failed": {
+        "running",
+    },
+    "skipped": set(),
+}
+
+
+UNIT_TYPES = {
     "agent",
     "skill",
-    "tool",
-    "workflow",
 }
 
 
@@ -29,56 +44,47 @@ UNIT_ALIASES = {
     "agent_runtime": "agent",
     "skills": "skill",
     "skill_runtime": "skill",
-    "tools": "tool",
-    "workflows": "workflow",
 }
 
 
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Unidad mínima ejecutable.
+    Unidad atómica de ejecución.
 
-    Representa:
+    Representa una acción dentro de un ExecutionPlan.
 
-    - Skill.
-    - Agent.
-    - Tool.
-    - Workflow.
+    Responsabilidades:
+
+    - Identificar unidad ejecutora.
+    - Mantener parámetros.
+    - Mantener estado.
+    - Mantener dependencias.
+    - Registrar metadata.
 
     No:
 
-    - Ejecuta.
-    - Resuelve dependencias.
-    - Maneja resultados globales.
+    - Ejecuta Agents.
+    - Ejecuta Skills.
+    - Decide workflows.
     """
-
-    id: str = field(
-        default_factory=lambda: str(uuid.uuid4()),
-    )
-
-    trace_id: str = field(
-        default_factory=lambda: str(uuid.uuid4()),
-    )
 
     description: str = ""
 
-    unit_type: str | None = None
+    unit_type: str = ""
 
-    unit_name: str | None = None
+    unit_name: str = ""
 
     params: dict[str, Any] = field(
         default_factory=dict,
     )
 
-    expected_output: str | None = None
-
-    retries: int | None = None
-
-    timeout: int = 120
-
     depends_on: list[str] = field(
         default_factory=list,
+    )
+
+    id: str = field(
+        default_factory=lambda: str(uuid.uuid4()),
     )
 
     status: str = "pending"
@@ -87,33 +93,45 @@ class ExecutionStep:
 
     error: str | None = None
 
+    retries: int | None = None
+
+    timeout: int = 60
+
     metadata: dict[str, Any] = field(
         default_factory=dict,
     )
 
     created_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(
+            timezone.utc,
+        ),
     )
 
-    started_at: datetime | None = None
+    # ==================================================
+    # Initialization
+    # ==================================================
 
-    completed_at: datetime | None = None
+    def __post_init__(
+        self,
+    ) -> None:
 
-    def __post_init__(self):
+        self.unit_type = self.normalize_unit_type(
+            self.unit_type,
+        )
 
-        self.unit_type = self.normalize_unit_type(self.unit_type)
-
-        if self.unit_name:
-            self.unit_name = self.unit_name.strip()
+    # ==================================================
+    # Normalization
+    # ==================================================
 
     @classmethod
     def normalize_unit_type(
         cls,
         unit_type: str | None,
-    ) -> str | None:
+    ) -> str:
 
         if not unit_type:
-            return None
+
+            return ""
 
         value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
 
@@ -122,28 +140,9 @@ class ExecutionStep:
             value,
         )
 
-    def validate(
-        self,
-    ) -> list[str]:
-
-        errors = []
-
-        if not self.description.strip():
-            errors.append("step sin descripción")
-
-        if self.unit_type not in VALID_UNIT_TYPES:
-            errors.append("tipo de unidad inválido")
-
-        if not self.unit_name:
-            errors.append("unidad sin nombre")
-
-        if self.timeout <= 0:
-            errors.append("timeout inválido")
-
-        if self.retries is not None and self.retries < 0:
-            errors.append("retries inválido")
-
-        return errors
+    # ==================================================
+    # Lifecycle
+    # ==================================================
 
     def set_status(
         self,
@@ -151,34 +150,131 @@ class ExecutionStep:
     ) -> None:
 
         if status not in VALID_STEP_STATUS:
-            raise ValueError(f"Estado inválido: {status}")
+
+            raise ValueError(
+                f"Estado inválido: {status}",
+            )
+
+        allowed = VALID_STEP_TRANSITIONS.get(
+            self.status,
+            set(),
+        )
+
+        if self.status != status and status not in allowed:
+
+            raise ValueError(
+                f"Transición inválida {self.status} -> {status}",
+            )
 
         self.status = status
 
-    def mark_running(self):
+    def mark_running(
+        self,
+    ) -> None:
 
-        self.set_status("running")
-
-        self.started_at = datetime.now(timezone.utc)
+        self.set_status(
+            "running",
+        )
 
     def mark_completed(
         self,
         result: Any = None,
-    ):
+    ) -> None:
 
-        self.set_status("completed")
+        self.set_status(
+            "completed",
+        )
 
         self.result = result
 
-        self.completed_at = datetime.now(timezone.utc)
+        self.error = None
 
     def mark_failed(
         self,
         error: str,
-    ):
+    ) -> None:
 
-        self.set_status("failed")
+        self.set_status(
+            "failed",
+        )
 
         self.error = error
 
-        self.completed_at = datetime.now(timezone.utc)
+    def mark_skipped(
+        self,
+        reason: str | None = None,
+    ) -> None:
+
+        self.set_status(
+            "skipped",
+        )
+
+        self.metadata["skip_reason"] = reason
+
+    # ==================================================
+    # Validation
+    # ==================================================
+
+    def validate(
+        self,
+    ) -> list[str]:
+
+        errors: list[str] = []
+
+        if not self.description.strip():
+
+            errors.append(
+                "step sin descripción",
+            )
+
+        if not self.unit_type:
+
+            errors.append(
+                "step sin tipo de unidad",
+            )
+
+        elif self.unit_type not in UNIT_TYPES:
+
+            errors.append(
+                "tipo de unidad inválido",
+            )
+
+        if not self.unit_name.strip():
+
+            errors.append(
+                "step sin unidad asignada",
+            )
+
+        if self.timeout <= 0:
+
+            errors.append(
+                "timeout inválido",
+            )
+
+        if self.retries is not None and self.retries < 0:
+
+            errors.append(
+                "retries inválido",
+            )
+
+        if len(self.depends_on) != len(set(self.depends_on)):
+
+            errors.append(
+                "dependencias duplicadas",
+            )
+
+        return errors
+
+    # ==================================================
+    # Utilities
+    # ==================================================
+
+    def clone(
+        self,
+    ) -> "ExecutionStep":
+
+        import copy
+
+        return copy.deepcopy(
+            self,
+        )

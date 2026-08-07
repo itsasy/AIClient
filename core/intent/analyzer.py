@@ -10,32 +10,35 @@ logger = logging.getLogger(__name__)
 
 class IntentAnalyzer:
     """
-    Fachada pública del sistema de intención.
+    Fachada pública del sistema de análisis de intención.
 
     Responsabilidades:
 
-    - Recibir consultas.
-    - Delegar detección.
-    - Garantizar resultado válido.
+    - Recibir una consulta.
+    - Ejecutar detección de intención.
+    - Garantizar siempre un IntentResult válido.
 
     No:
 
-    - Contiene reglas.
-    - Crea planes.
+    - Construye ExecutionPlans.
+    - Ejecuta acciones.
     - Selecciona agentes.
     - Selecciona skills.
-    - Ejecuta acciones.
+    - Gestiona contexto.
     """
+
+    name = "intent_analyzer"
 
     def __init__(
         self,
         detector: type[IntentDetectors] = IntentDetectors,
-    ):
+    ) -> None:
+
         self.detector = detector
 
-    # ==================================================
-    # Analysis
-    # ==================================================
+    # ======================================================
+    # Public API
+    # ======================================================
 
     def analyze(
         self,
@@ -47,6 +50,10 @@ class IntentAnalyzer:
             return IntentResult(
                 intent="conversation",
                 domain="conversation",
+                confidence=0.0,
+                signals=[
+                    "empty_query",
+                ],
             )
 
         result = self.detector.detect(
@@ -55,17 +62,28 @@ class IntentAnalyzer:
 
         if result:
 
+            logger.debug(
+                "Intent detectado intent=%s confidence=%s",
+                result.intent,
+                result.confidence,
+            )
+
             return result
 
         logger.debug(
-            "Intent no detectado, fallback conversation query=%s",
+            "Intent fallback conversation query=%s",
             query[:100],
         )
 
         return IntentResult(
             intent="conversation",
             domain="conversation",
+            category="general",
+            confidence=0.0,
             entities={
                 "task": query,
             },
+            signals=[
+                "fallback",
+            ],
         )

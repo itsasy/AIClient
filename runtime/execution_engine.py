@@ -16,24 +16,7 @@ logger = logging.getLogger(__name__)
 
 class ExecutionEngine:
     """
-    Motor principal de ejecución.
-
-    Flujo:
-
-        ExecutionPlan
-              |
-              v
-        Validation
-              |
-              v
-        ContextManager
-              |
-              v
-        ExecutionRuntime
-              |
-              v
-        ExecutionResult
-
+    Motor principal del sistema de ejecución.
 
     Responsabilidades:
 
@@ -44,11 +27,10 @@ class ExecutionEngine:
     - Registrar métricas.
     - Emitir eventos.
 
-
     No:
 
-    - Analiza intención.
     - Crea planes.
+    - Analiza intención.
     - Ejecuta Agents.
     - Ejecuta Skills.
     - Gestiona memoria.
@@ -61,7 +43,7 @@ class ExecutionEngine:
         self,
         context_manager: ContextManager | None = None,
         execution_runtime: ExecutionRuntime | None = None,
-    ):
+    ) -> None:
 
         self.context_manager = context_manager or ContextManager()
 
@@ -79,16 +61,16 @@ class ExecutionEngine:
             "execution_duration": 0,
         }
 
-    # ======================================================
+    # ==================================================
     # Public API
-    # ======================================================
+    # ==================================================
 
     def execute(
         self,
         plan: ExecutionPlan,
     ) -> ExecutionResult:
 
-        start = time.time()
+        started = time.monotonic()
 
         self.metrics["executions"] += 1
 
@@ -112,11 +94,7 @@ class ExecutionEngine:
                 plan,
             )
 
-            # ----------------------------------------------
-            # Context
-            # ----------------------------------------------
-
-            context_start = time.time()
+            context_started = time.monotonic()
 
             context = (
                 self.context_manager.build(
@@ -126,7 +104,7 @@ class ExecutionEngine:
             )
 
             context_duration = round(
-                time.time() - context_start,
+                time.monotonic() - context_started,
                 3,
             )
 
@@ -141,11 +119,7 @@ class ExecutionEngine:
                 },
             )
 
-            # ----------------------------------------------
-            # Runtime execution
-            # ----------------------------------------------
-
-            execution_start = time.time()
+            execution_started = time.monotonic()
 
             result = self.execution_runtime.execute(
                 plan,
@@ -153,12 +127,12 @@ class ExecutionEngine:
             )
 
             execution_duration = round(
-                time.time() - execution_start,
+                time.monotonic() - execution_started,
                 3,
             )
 
             duration = round(
-                time.time() - start,
+                time.monotonic() - started,
                 3,
             )
 
@@ -176,7 +150,7 @@ class ExecutionEngine:
                 }
             )
 
-            self._update_lifecycle(
+            self._apply_result_lifecycle(
                 plan,
                 result,
             )
@@ -186,8 +160,12 @@ class ExecutionEngine:
         except Exception as exc:
 
             duration = round(
-                time.time() - start,
+                time.monotonic() - started,
                 3,
+            )
+
+            logger.exception(
+                "Error en ExecutionEngine",
             )
 
             self.metrics["failed"] += 1
@@ -201,12 +179,8 @@ class ExecutionEngine:
             except Exception:
 
                 logger.exception(
-                    "No se pudo actualizar plan",
+                    "No se pudo actualizar estado del plan",
                 )
-
-            logger.exception(
-                "ExecutionEngine error",
-            )
 
             result = ExecutionResult.fail(
                 error=str(exc),
@@ -232,11 +206,11 @@ class ExecutionEngine:
 
             return result
 
-    # ======================================================
+    # ==================================================
     # Lifecycle
-    # ======================================================
+    # ==================================================
 
-    def _update_lifecycle(
+    def _apply_result_lifecycle(
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
@@ -255,7 +229,9 @@ class ExecutionEngine:
                 result,
             )
 
-        elif result.status == "partial":
+            return
+
+        if result.status == "partial":
 
             plan.mark_partial(
                 result=result.output,
@@ -269,20 +245,22 @@ class ExecutionEngine:
                 result,
             )
 
-        else:
+            return
 
-            plan.mark_failed(
-                result.error or "Error desconocido",
-            )
+        plan.mark_failed(
+            result.error or "Error desconocido",
+        )
 
-            self.emit(
-                "execution_failed",
-                result,
-            )
+        self.metrics["failed"] += 1
 
-    # ======================================================
+        self.emit(
+            "execution_failed",
+            result,
+        )
+
+    # ==================================================
     # Validation
-    # ======================================================
+    # ==================================================
 
     def _validate_plan(
         self,
@@ -294,7 +272,9 @@ class ExecutionEngine:
             ExecutionPlan,
         ):
 
-            raise TypeError("ExecutionEngine requiere ExecutionPlan")
+            raise TypeError(
+                "ExecutionEngine requiere ExecutionPlan",
+            )
 
         errors = plan.validate()
 
@@ -302,9 +282,9 @@ class ExecutionEngine:
 
             raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
 
-    # ======================================================
+    # ==================================================
     # Events
-    # ======================================================
+    # ==================================================
 
     def on(
         self,
@@ -339,13 +319,13 @@ class ExecutionEngine:
             except Exception:
 
                 logger.exception(
-                    "Error listener=%s",
+                    "Error en listener=%s",
                     event,
                 )
 
-    # ======================================================
+    # ==================================================
     # Metrics
-    # ======================================================
+    # ==================================================
 
     def get_metrics(
         self,

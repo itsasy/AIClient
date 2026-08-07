@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class AgentRuntime:
     """
-    Runtime encargado de ejecutar Agents.
+    Runtime central de ejecución de Agents.
 
     Responsabilidades:
 
@@ -26,12 +26,15 @@ class AgentRuntime:
     - Ejecutar Agent.process().
     - Gestionar lifecycle del step.
     - Normalizar resultados.
+    - Registrar metadata.
 
     No:
 
-    - Construye contexto.
+    - Construye planes.
     - Ejecuta Skills.
-    - Decide workflows.
+    - Gestiona contexto global.
+    - Gestiona memoria.
+    - Gestiona aprendizaje.
     """
 
     name = "agent_runtime"
@@ -39,7 +42,7 @@ class AgentRuntime:
     def __init__(
         self,
         agent_manager: AgentManager | None = None,
-    ):
+    ) -> None:
 
         self.agent_manager = agent_manager or AgentManager()
 
@@ -56,39 +59,34 @@ class AgentRuntime:
 
         context = context or {}
 
+        validation_errors = step.validate()
+
+        if validation_errors:
+
+            return self._fail(
+                plan,
+                step,
+                "; ".join(validation_errors),
+            )
+
+        if not step.unit_name:
+
+            return self._fail(
+                plan,
+                step,
+                "ExecutionStep sin Agent asignado.",
+            )
+
         agent = self.agent_manager.resolve(
             step.unit_name,
         )
 
         if agent is None:
 
-            error = f"Agent no encontrado: " f"{step.unit_name}"
-
-            step.mark_failed(
-                error,
-            )
-
-            return self._fail_result(
-                error,
+            return self._fail(
                 plan,
                 step,
-            )
-
-        errors = step.validate()
-
-        if errors:
-
-            error = "; ".join(errors)
-
-            step.mark_failed(
-                error,
-            )
-
-            return self._fail_result(
-                error,
-                plan,
-                step,
-                agent,
+                f"Agent no encontrado: {step.unit_name}",
             )
 
         try:
@@ -103,20 +101,14 @@ class AgentRuntime:
 
         except Exception as exc:
 
-            error = str(exc)
-
-            step.mark_failed(
-                error,
-            )
-
-            return self._fail_result(
-                error,
+            return self._fail(
                 plan,
                 step,
+                f"Error validando Agent: {exc}",
                 agent,
             )
 
-        start = time.time()
+        started = time.monotonic()
 
         try:
 
@@ -128,40 +120,31 @@ class AgentRuntime:
                 step.id,
             )
 
-            result = agent.process(
+            raw_result = agent.process(
                 plan=plan,
                 step=step,
                 context=context,
             )
 
-            normalized = self._normalize_result(
-                result,
+            result = self._normalize_result(
+                raw_result,
+                plan,
+                agent,
             )
 
-            if not normalized.get(
-                "ok",
-                False,
-            ):
+            if not result.is_success():
 
                 raise RuntimeError(
-                    normalized.get(
-                        "error",
-                    )
-                    or "Agent falló"
+                    result.error or "Agent falló",
                 )
 
-            output = normalized.get(
-                "result",
-                result,
-            )
-
             duration = round(
-                time.time() - start,
+                time.monotonic() - started,
                 3,
             )
 
             step.mark_completed(
-                output,
+                result.output,
             )
 
             step.metadata.update(
@@ -171,13 +154,7 @@ class AgentRuntime:
                 }
             )
 
-            execution_result = ExecutionResult.ok(
-                output=output,
-                executor=f"agent:{agent.name}",
-                plan_id=plan.id,
-            )
-
-            execution_result.metadata.update(
+            result.metadata.update(
                 {
                     "agent": agent.name,
                     "step_id": step.id,
@@ -185,58 +162,58 @@ class AgentRuntime:
                 }
             )
 
-            return execution_result
+            return result
 
         except Exception as exc:
-
-            duration = round(
-                time.time() - start,
-                3,
-            )
-
-            error = str(exc)
-
-            step.mark_failed(
-                error,
-            )
 
             logger.exception(
                 "Error ejecutando Agent=%s",
                 agent.name,
             )
 
-            result = self._fail_result(
-                error,
+            return self._fail(
                 plan,
                 step,
+                str(exc),
                 agent,
             )
-
-            result.metadata.update(
-                {
-                    "duration": duration,
-                }
-            )
-
-            return result
 
     # ==================================================
     # Error handling
     # ==================================================
 
-    def _fail_result(
+    def _fail(
         self,
-        error: str,
         plan: ExecutionPlan,
         step: ExecutionStep,
-        agent=None,
+        error: str,
+        agent: Any = None,
     ) -> ExecutionResult:
 
+        try:
+
+            step.mark_failed(
+                error,
+            )
+
+        except Exception:
+
+            logger.exception(
+                "No se pudo marcar step fallido",
+            )
+
         executor = self.name
+
+        metadata = {
+            "step_id": step.id,
+            "agent": step.unit_name,
+        }
 
         if agent:
 
             executor = f"agent:{agent.name}"
+
+            metadata["agent"] = agent.name
 
         result = ExecutionResult.fail(
             error=error,
@@ -245,14 +222,8 @@ class AgentRuntime:
         )
 
         result.metadata.update(
-            {
-                "step_id": step.id,
-            }
+            metadata,
         )
-
-        if agent:
-
-            result.metadata["agent"] = agent.name
 
         return result
 
@@ -263,22 +234,49 @@ class AgentRuntime:
     def _normalize_result(
         self,
         result: Any,
-    ) -> dict[str, Any]:
+        plan: ExecutionPlan,
+        agent: Any,
+    ) -> ExecutionResult:
 
-        if isinstance(result, dict):
+        if isinstance(
+            result,
+            ExecutionResult,
+        ):
+
+            return result
+
+        if isinstance(
+            result,
+            dict,
+        ):
 
             if "ok" in result:
 
-                return result
+                if result.get("ok"):
 
-            return {
-                "ok": True,
-                "result": result,
-                "error": None,
-            }
+                    return ExecutionResult.ok(
+                        output=result.get("result"),
+                        executor=f"agent:{agent.name}",
+                        plan_id=plan.id,
+                    )
 
-        return {
-            "ok": True,
-            "result": result,
-            "error": None,
-        }
+                return ExecutionResult.fail(
+                    error=result.get(
+                        "error",
+                    )
+                    or "Agent falló",
+                    executor=f"agent:{agent.name}",
+                    plan_id=plan.id,
+                )
+
+            return ExecutionResult.ok(
+                output=result,
+                executor=f"agent:{agent.name}",
+                plan_id=plan.id,
+            )
+
+        return ExecutionResult.ok(
+            output=result,
+            executor=f"agent:{agent.name}",
+            plan_id=plan.id,
+        )

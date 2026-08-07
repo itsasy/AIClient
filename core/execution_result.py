@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -9,30 +7,36 @@ from typing import Any
 
 VALID_RESULT_STATUS = {
     "completed",
-    "failed",
     "partial",
+    "failed",
 }
 
 
 @dataclass(slots=True)
 class ExecutionResult:
     """
-    Contrato único de resultado de ejecución.
+    Resultado estándar del sistema de ejecución.
 
-    Representa:
+    Representa la salida de:
 
-    - Resultado exitoso.
-    - Resultado fallido.
-    - Resultado parcial.
+    - AgentRuntime.
+    - SkillRuntime.
+    - ExecutionRuntime.
+    - ExecutionEngine.
+    - Pipeline.
 
-    Puede contener resultados hijos
-    para ejecuciones multi-step o paralelas.
+    Responsabilidades:
+
+    - Transportar resultado.
+    - Transportar errores.
+    - Mantener metadata.
+    - Mantener resultados hijos.
 
     No:
 
     - Ejecuta lógica.
-    - Modifica planes.
-    - Decide retries.
+    - Decide estados.
+    - Gestiona retries.
     """
 
     status: str
@@ -45,27 +49,19 @@ class ExecutionResult:
 
     plan_id: str | None = None
 
-    trace_id: str = field(
-        default_factory=lambda: str(uuid.uuid4()),
-    )
-
-    created_at: datetime = field(
-        default_factory=lambda: datetime.now(timezone.utc),
+    children: list["ExecutionResult"] = field(
+        default_factory=list,
     )
 
     metadata: dict[str, Any] = field(
         default_factory=dict,
     )
 
-    children: list["ExecutionResult"] = field(
-        default_factory=list,
+    created_at: datetime = field(
+        default_factory=lambda: datetime.now(
+            timezone.utc,
+        ),
     )
-
-    def __post_init__(self) -> None:
-
-        if self.status not in VALID_RESULT_STATUS:
-
-            raise ValueError(f"Estado inválido: {self.status}")
 
     # ==================================================
     # Factory methods
@@ -77,6 +73,7 @@ class ExecutionResult:
         output: Any = None,
         executor: str | None = None,
         plan_id: str | None = None,
+        children: list["ExecutionResult"] | None = None,
     ) -> "ExecutionResult":
 
         return cls(
@@ -84,21 +81,7 @@ class ExecutionResult:
             output=output,
             executor=executor,
             plan_id=plan_id,
-        )
-
-    @classmethod
-    def fail(
-        cls,
-        error: str,
-        executor: str | None = None,
-        plan_id: str | None = None,
-    ) -> "ExecutionResult":
-
-        return cls(
-            status="failed",
-            error=error,
-            executor=executor,
-            plan_id=plan_id,
+            children=children or [],
         )
 
     @classmethod
@@ -118,25 +101,50 @@ class ExecutionResult:
             children=children or [],
         )
 
+    @classmethod
+    def fail(
+        cls,
+        error: str,
+        executor: str | None = None,
+        plan_id: str | None = None,
+    ) -> "ExecutionResult":
+
+        return cls(
+            status="failed",
+            error=error,
+            executor=executor,
+            plan_id=plan_id,
+        )
+
     # ==================================================
-    # State
+    # Lifecycle
     # ==================================================
 
-    @property
-    def success(
+    def __post_init__(
         self,
-    ) -> bool:
+    ) -> None:
 
-        return self.status in {
-            "completed",
-            "partial",
-        }
+        if self.status not in VALID_RESULT_STATUS:
+
+            raise ValueError(
+                f"Estado inválido: {self.status}",
+            )
+
+    # ==================================================
+    # Helpers
+    # ==================================================
 
     def is_success(
         self,
     ) -> bool:
 
-        return self.success
+        return self.status == "completed"
+
+    def is_partial(
+        self,
+    ) -> bool:
+
+        return self.status == "partial"
 
     def is_failed(
         self,
@@ -144,34 +152,14 @@ class ExecutionResult:
 
         return self.status == "failed"
 
-    # ==================================================
-    # Children
-    # ==================================================
-
-    def add_child(
-        self,
-        result: "ExecutionResult",
-    ) -> None:
-
-        self.children.append(
-            result,
-        )
-
-    # ==================================================
-    # Metadata
-    # ==================================================
-
     def with_metadata(
         self,
-        values: dict[str, Any] | None = None,
-        **kwargs: Any,
+        **metadata: Any,
     ) -> "ExecutionResult":
 
-        if values:
-            self.metadata.update(values)
-
-        if kwargs:
-            self.metadata.update(kwargs)
+        self.metadata.update(
+            metadata,
+        )
 
         return self
 
@@ -185,13 +173,11 @@ class ExecutionResult:
 
         return {
             "status": self.status,
-            "success": self.success,
             "output": self.output,
             "error": self.error,
             "executor": self.executor,
             "plan_id": self.plan_id,
-            "trace_id": self.trace_id,
-            "created_at": self.created_at.isoformat(),
-            "metadata": self.metadata,
             "children": [child.to_dict() for child in self.children],
+            "metadata": self.metadata.copy(),
+            "created_at": self.created_at.isoformat(),
         }

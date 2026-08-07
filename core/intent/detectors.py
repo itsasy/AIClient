@@ -10,42 +10,56 @@ class IntentDetectors:
     """
     Detectores puros de intención.
 
+    Responsabilidades:
+
+    - Analizar texto.
+    - Detectar patrones semánticos.
+    - Crear IntentResult.
+
     No:
 
-    - Ejecutan.
-    - Crean planes.
+    - Ejecutan acciones.
+    - Crean ExecutionPlans.
     - Seleccionan agentes.
+    - Seleccionan skills.
     """
 
-    @staticmethod
+    name = "intent_detectors"
+
+    # ======================================================
+    # Public API
+    # ======================================================
+
+    @classmethod
     def detect(
+        cls,
         query: str,
     ) -> IntentResult | None:
 
-        q = IntentDetectors.normalize(
+        normalized = cls.normalize(
             query,
         )
 
-        detectors = [
-            IntentDetectors.project_creation,
-            IntentDetectors.refactor,
-            IntentDetectors.debug,
-            IntentDetectors.project_analysis,
-            IntentDetectors.code_generation,
-            IntentDetectors.testing,
-            IntentDetectors.command_execution,
-            IntentDetectors.docker,
-            IntentDetectors.file_creation,
-            IntentDetectors.spec,
-            IntentDetectors.planning,
-            IntentDetectors.documentation,
-        ]
+        detectors = (
+            cls.project_creation,
+            cls.refactor,
+            cls.debug,
+            cls.project_analysis,
+            cls.code_generation,
+            cls.testing,
+            cls.command_execution,
+            cls.docker,
+            cls.file_creation,
+            cls.spec,
+            cls.planning,
+            cls.documentation,
+        )
 
         for detector in detectors:
 
             result = detector(
                 query,
-                q,
+                normalized,
             )
 
             if result:
@@ -64,9 +78,10 @@ class IntentDetectors:
     ) -> str:
 
         if not text:
+
             return ""
 
-        normalized = (
+        value = (
             unicodedata.normalize(
                 "NFKD",
                 text,
@@ -78,14 +93,15 @@ class IntentDetectors:
             .decode()
         )
 
-        return normalized.lower().strip()
+        return value.lower().strip()
 
     # ======================================================
-    # Detectors
+    # Project creation
     # ======================================================
 
-    @staticmethod
+    @classmethod
     def project_creation(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -105,8 +121,8 @@ class IntentDetectors:
                 complexity="high",
                 confidence=0.95,
                 entities={
-                    "framework": IntentDetectors.framework(q),
-                    "name": IntentDetectors.project_name(query),
+                    "framework": cls.framework(q),
+                    "name": cls.project_name(query),
                 },
                 signals=[
                     "framework_detected",
@@ -116,8 +132,13 @@ class IntentDetectors:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Code generation
+    # ======================================================
+
+    @classmethod
     def code_generation(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -134,7 +155,7 @@ class IntentDetectors:
                 confidence=0.85,
                 entities={
                     "task": query,
-                    "language": IntentDetectors.language(q),
+                    "language": cls.language(q),
                 },
                 signals=[
                     "code_keyword",
@@ -143,8 +164,13 @@ class IntentDetectors:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Refactor
+    # ======================================================
+
+    @classmethod
     def refactor(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -170,8 +196,13 @@ class IntentDetectors:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Debug
+    # ======================================================
+
+    @classmethod
     def debug(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -189,12 +220,20 @@ class IntentDetectors:
                 entities={
                     "task": query,
                 },
+                signals=[
+                    "debug_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Testing
+    # ======================================================
+
+    @classmethod
     def testing(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -211,12 +250,20 @@ class IntentDetectors:
                 entities={
                     "task": query,
                 },
+                signals=[
+                    "testing_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Command execution
+    # ======================================================
+
+    @classmethod
     def command_execution(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -233,12 +280,20 @@ class IntentDetectors:
                 entities={
                     "command": query,
                 },
+                signals=[
+                    "command_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Docker
+    # ======================================================
+
+    @classmethod
     def docker(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -252,12 +307,20 @@ class IntentDetectors:
                 entities={
                     "command": query,
                 },
+                signals=[
+                    "docker_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Project analysis
+    # ======================================================
+
+    @classmethod
     def project_analysis(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -275,12 +338,20 @@ class IntentDetectors:
                 entities={
                     "task": query,
                 },
+                signals=[
+                    "analysis_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # File creation
+    # ======================================================
+
+    @classmethod
     def file_creation(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -295,15 +366,23 @@ class IntentDetectors:
                 domain="file",
                 category="creation",
                 entities={
-                    "path": IntentDetectors.file(query),
+                    "path": cls.file(query),
                     "task": query,
                 },
+                signals=[
+                    "file_keyword",
+                ],
             )
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Specification
+    # ======================================================
+
+    @classmethod
     def spec(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -322,8 +401,13 @@ class IntentDetectors:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Planning
+    # ======================================================
+
+    @classmethod
     def planning(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -345,8 +429,13 @@ class IntentDetectors:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Documentation
+    # ======================================================
+
+    @classmethod
     def documentation(
+        cls,
         query: str,
         q: str,
     ) -> IntentResult | None:
@@ -376,7 +465,7 @@ class IntentDetectors:
         q: str,
     ) -> str:
 
-        for item in (
+        for framework in (
             "laravel",
             "react",
             "vue",
@@ -385,8 +474,9 @@ class IntentDetectors:
             "spring",
         ):
 
-            if item in q:
-                return item
+            if framework in q:
+
+                return framework
 
         return "unknown"
 
@@ -396,12 +486,15 @@ class IntentDetectors:
     ) -> str:
 
         if "python" in q:
+
             return "python"
 
         if "php" in q or "laravel" in q:
+
             return "php"
 
         if "typescript" in q:
+
             return "typescript"
 
         return "unknown"

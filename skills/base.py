@@ -10,46 +10,44 @@ from core.execution_step import ExecutionStep
 
 class Skill(ABC):
     """
-    Contrato base para Skills ejecutables.
+    Contrato base de una Skill ejecutable.
 
     Una Skill representa una capacidad concreta
-    ejecutada dentro de un ExecutionPlan.
+    que puede ser invocada por SkillRuntime.
 
     Responsabilidades:
 
-    - Ejecutar una operación específica.
-    - Consumir parámetros del step.
+    - Ejecutar una capacidad específica.
+    - Consumir parámetros del ExecutionStep.
     - Utilizar contexto recibido.
+    - Exponer metadata descriptiva.
 
     No:
 
-    - Decide ejecución.
+    - Decide cuándo ejecutarse.
     - Construye planes.
     - Gestiona retries.
-    - Selecciona otras skills.
+    - Gestiona timeouts.
+    - Selecciona otras Skills.
     """
 
-    # ======================================================
-    # Identity
-    # ======================================================
-
-    name: str = "base"
+    name: str = ""
 
     description: str = ""
 
-    version: str = "1.0"
+    version: str = "1.0.0"
 
     aliases: tuple[str, ...] = ()
 
     capabilities: tuple[str, ...] = ()
 
-    # ======================================================
-    # Helpers
-    # ======================================================
+    # ==================================================
+    # Normalization
+    # ==================================================
 
     @staticmethod
     def normalize(
-        value: str,
+        value: str | None,
     ) -> str:
 
         if not value:
@@ -57,11 +55,71 @@ class Skill(ABC):
 
         return value.lower().strip().replace("-", "_").replace(" ", "_")
 
-    # ======================================================
-    # Metadata
-    # ======================================================
+    # ==================================================
+    # Validation
+    # ==================================================
 
-    def get_metadata(
+    @classmethod
+    def validate_definition(
+        cls,
+    ) -> list[str]:
+
+        errors: list[str] = []
+
+        if not cls.name.strip():
+
+            errors.append(
+                "Skill sin nombre",
+            )
+
+        if not isinstance(
+            cls.aliases,
+            tuple,
+        ):
+
+            errors.append(
+                "aliases debe ser tuple",
+            )
+
+        if not isinstance(
+            cls.capabilities,
+            tuple,
+        ):
+
+            errors.append(
+                "capabilities debe ser tuple",
+            )
+
+        return errors
+
+    def validate_step(
+        self,
+        step: ExecutionStep,
+    ) -> list[str]:
+
+        warnings: list[str] = []
+
+        requested = self.normalize(
+            step.unit_name,
+        )
+
+        current = self.normalize(
+            self.name,
+        )
+
+        aliases = {self.normalize(alias) for alias in self.aliases}
+
+        if requested and requested != current and requested not in aliases:
+
+            warnings.append((f"Step apunta a '{step.unit_name}', " f"Skill activa '{self.name}'."))
+
+        return warnings
+
+    # ==================================================
+    # Metadata
+    # ==================================================
+
+    def metadata(
         self,
     ) -> dict[str, Any]:
 
@@ -73,56 +131,33 @@ class Skill(ABC):
             "capabilities": list(self.capabilities),
         }
 
-    # ======================================================
-    # Capability helpers
-    # ======================================================
+    def get_metadata(
+        self,
+    ) -> dict[str, Any]:
+
+        return self.metadata()
+
+    # ==================================================
+    # Capabilities
+    # ==================================================
 
     def supports(
         self,
         capability: str,
     ) -> bool:
 
-        normalized = self.normalize(
+        target = self.normalize(
             capability,
         )
 
-        if not normalized:
+        if not target:
             return False
 
-        return normalized in {self.normalize(item) for item in self.capabilities}
+        return target in {self.normalize(item) for item in self.capabilities}
 
-    # ======================================================
-    # Validation
-    # ======================================================
-
-    def validate_step(
-        self,
-        step: ExecutionStep,
-    ) -> list[str]:
-
-        warnings: list[str] = []
-
-        step_name = self.normalize(
-            step.unit_name,
-        )
-
-        skill_name = self.normalize(
-            self.name,
-        )
-
-        aliases = {self.normalize(alias) for alias in self.aliases}
-
-        if step_name and step_name != skill_name and step_name not in aliases:
-
-            warnings.append(
-                (f"Step apunta a '{step.unit_name}', " f"pero la skill activa es '{self.name}'.")
-            )
-
-        return warnings
-
-    # ======================================================
+    # ==================================================
     # Execution
-    # ======================================================
+    # ==================================================
 
     @abstractmethod
     def execute(
@@ -134,9 +169,7 @@ class Skill(ABC):
         """
         Ejecuta la capacidad.
 
-        Returns:
-
-            Resultado serializable.
+        Debe retornar un resultado serializable.
         """
 
-        raise NotImplementedError("Las skills deben implementar execute()")
+        raise NotImplementedError

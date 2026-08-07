@@ -14,7 +14,7 @@ class IntentResult:
 
     No:
 
-    - Crea ExecutionPlans.
+    - Construye ExecutionPlans.
     - Selecciona Agents.
     - Selecciona Skills.
     - Ejecuta acciones.
@@ -42,23 +42,27 @@ class IntentResult:
         default_factory=dict,
     )
 
+    # ======================================================
+    # Lifecycle
+    # ======================================================
+
     def __post_init__(
         self,
     ) -> None:
 
-        self.intent = self._normalize(
+        self.intent = self.normalize(
             self.intent,
         )
 
-        self.domain = self._normalize(
+        self.domain = self.normalize(
             self.domain,
         )
 
-        self.category = self._normalize(
+        self.category = self.normalize(
             self.category,
         )
 
-        self.complexity = self._normalize(
+        self.complexity = self.normalize(
             self.complexity,
         )
 
@@ -70,15 +74,35 @@ class IntentResult:
             ),
         )
 
+    # ======================================================
+    # Normalization
+    # ======================================================
+
     @staticmethod
-    def _normalize(
-        value: str,
+    def normalize(
+        value: str | None,
     ) -> str:
 
         if not value:
+
             return ""
 
-        return value.lower().strip().replace("-", "_").replace(" ", "_")
+        return (
+            value.lower()
+            .strip()
+            .replace(
+                "-",
+                "_",
+            )
+            .replace(
+                " ",
+                "_",
+            )
+        )
+
+    # ======================================================
+    # Serialization
+    # ======================================================
 
     def to_dict(
         self,
@@ -90,7 +114,35 @@ class IntentResult:
             "category": self.category,
             "complexity": self.complexity,
             "confidence": self.confidence,
-            "entities": dict(self.entities),
-            "signals": list(self.signals),
-            "metadata": dict(self.metadata),
+            "entities": dict(
+                self.entities,
+            ),
+            "signals": list(
+                self.signals,
+            ),
+            "metadata": dict(
+                self.metadata,
+            ),
         }
+
+    # ======================================================
+    # Helpers
+    # ======================================================
+
+    def has_entity(
+        self,
+        key: str,
+    ) -> bool:
+
+        return key in self.entities
+
+    def get_entity(
+        self,
+        key: str,
+        default: Any = None,
+    ) -> Any:
+
+        return self.entities.get(
+            key,
+            default,
+        )

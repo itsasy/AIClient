@@ -2,28 +2,30 @@ from __future__ import annotations
 
 import logging
 
-from skills.registry import SkillRegistry
-from skills.loader import SkillLoader
 from skills.base import Skill
+from skills.loader import SkillLoader
+from skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
 
 class SkillManager:
     """
-    Resolver central de Skills.
+    Fachada central de gestión de Skills.
 
     Responsabilidades:
 
     - Mantener catálogo.
-    - Resolver skills.
+    - Resolver Skills.
     - Gestionar carga.
+    - Exponer información.
 
     No:
 
-    - Ejecuta skills.
-    - Maneja retries.
+    - Ejecuta Skills.
+    - Gestiona retries.
     - Normaliza resultados.
+    - Decide ejecución.
 
     La ejecución pertenece a SkillRuntime.
     """
@@ -35,7 +37,7 @@ class SkillManager:
         registry: SkillRegistry | None = None,
         loader: SkillLoader | None = None,
         auto_load: bool = True,
-    ):
+    ) -> None:
 
         self.registry = registry or SkillRegistry()
 
@@ -46,6 +48,7 @@ class SkillManager:
         self.loaded_defaults = False
 
         if auto_load:
+
             self.load_defaults()
 
     # ==================================================
@@ -57,55 +60,42 @@ class SkillManager:
     ) -> None:
 
         if self.loaded_defaults:
+
             return
 
-        try:
+        result = self.loader.load_defaults()
 
-            self.loader.load_defaults()
+        self.loaded_defaults = True
 
-            self.loaded_defaults = True
+        failed = [module for module, success in result.items() if not success]
 
-            logger.info(
-                "Skills por defecto cargadas",
-            )
+        if failed:
 
-        except Exception:
-
-            logger.exception(
-                "Error cargando skills por defecto",
+            logger.warning(
+                "Módulos Skill fallidos=%s",
+                failed,
             )
 
     def load_module(
         self,
         module_path: str,
-    ) -> None:
+    ) -> bool:
 
         if not module_path:
-            return
 
-        try:
+            return False
 
-            self.loader.load_module(
-                module_path,
-            )
-
-            logger.info(
-                "Skill module cargado=%s",
-                module_path,
-            )
-
-        except Exception:
-
-            logger.exception(
-                "Error cargando skill module=%s",
-                module_path,
-            )
+        return self.loader.load_module(
+            module_path,
+        )
 
     def reload(
         self,
     ) -> None:
 
         self.clear()
+
+        self.loader.clear_state()
 
         self.loaded_defaults = False
 
@@ -121,45 +111,43 @@ class SkillManager:
     ) -> Skill | None:
 
         if not name:
-            return None
-
-        try:
-
-            return self.registry.get(
-                name.strip(),
-            )
-
-        except Exception:
-
-            logger.exception(
-                "Error resolviendo skill=%s",
-                name,
-            )
 
             return None
+
+        return self.registry.get(
+            name,
+        )
 
     def has(
         self,
         name: str | None,
     ) -> bool:
 
-        if not name:
-            return False
+        return self.registry.has(
+            name,
+        )
 
-        try:
+    # ==================================================
+    # Discovery
+    # ==================================================
 
-            return self.registry.has(
-                name.strip(),
-            )
+    def find_by_capability(
+        self,
+        capability: str,
+    ) -> list[Skill]:
 
-        except Exception:
+        return self.registry.find_by_capability(
+            capability,
+        )
 
-            logger.exception(
-                "Error comprobando skill=%s",
-                name,
-            )
+    def contains_capability(
+        self,
+        capability: str,
+    ) -> bool:
 
-            return False
+        return self.registry.contains_capability(
+            capability,
+        )
 
     # ==================================================
     # Information
@@ -170,6 +158,12 @@ class SkillManager:
     ) -> list[str]:
 
         return self.registry.list()
+
+    def count(
+        self,
+    ) -> int:
+
+        return self.registry.count()
 
     def loaded(
         self,
@@ -193,19 +187,7 @@ class SkillManager:
         self,
     ) -> dict[str, tuple[str, ...]]:
 
-        result: dict[str, tuple[str, ...]] = {}
-
-        for name in self.list():
-
-            skill = self.get(
-                name,
-            )
-
-            if skill:
-
-                result[name] = skill.capabilities
-
-        return result
+        return self.registry.capabilities()
 
     # ==================================================
     # Management
@@ -217,20 +199,12 @@ class SkillManager:
     ) -> None:
 
         if not name:
+
             return
 
-        try:
-
-            self.registry.unregister(
-                name.strip(),
-            )
-
-        except Exception:
-
-            logger.exception(
-                "Error eliminando skill=%s",
-                name,
-            )
+        self.registry.unregister(
+            name,
+        )
 
     def clear(
         self,

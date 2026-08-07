@@ -7,8 +7,7 @@ from typing import Any, Callable
 
 from core.execution_result import ExecutionResult
 from core.intent import IntentAnalyzer, IntentResult
-
-from core.planning.plan_builder import PlanBuilder
+from core.planning import PlanBuilder
 
 from runtime.execution_engine import ExecutionEngine
 
@@ -21,27 +20,27 @@ class Pipeline:
 
     Flujo:
 
-        User Input
-            |
-            v
+        Input
+          |
+          v
         IntentAnalyzer
-            |
-            v
+          |
+          v
         PlanBuilder
-            |
-            v
+          |
+          v
         ExecutionPlan
-            |
-            v
+          |
+          v
         ExecutionEngine
-            |
-            v
+          |
+          v
         ExecutionResult
 
 
     Responsabilidades:
 
-    - Recibir input externo.
+    - Recibir entrada externa.
     - Analizar intención.
     - Crear ExecutionPlan.
     - Delegar ejecución.
@@ -54,7 +53,6 @@ class Pipeline:
     - Construye contexto.
     - Gestiona memoria.
     - Gestiona aprendizaje.
-    - Modifica resultados.
     """
 
     name = "pipeline"
@@ -64,7 +62,7 @@ class Pipeline:
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
         execution_engine: ExecutionEngine | None = None,
-    ):
+    ) -> None:
 
         self.intent_analyzer = intent_analyzer or IntentAnalyzer()
 
@@ -77,6 +75,7 @@ class Pipeline:
         self.metrics = {
             "executions": 0,
             "success": 0,
+            "partial": 0,
             "failed": 0,
             "duration": 0,
         }
@@ -91,7 +90,7 @@ class Pipeline:
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionResult:
 
-        start = time.time()
+        started = time.monotonic()
 
         metadata = metadata or {}
 
@@ -107,10 +106,6 @@ class Pipeline:
                 },
             )
 
-            # ==========================================
-            # Intent Analysis
-            # ==========================================
-
             intent: IntentResult = self.intent_analyzer.analyze(
                 user_input,
             )
@@ -119,10 +114,6 @@ class Pipeline:
                 "intent_detected",
                 intent,
             )
-
-            # ==========================================
-            # Plan creation
-            # ==========================================
 
             plan = self.plan_builder.build(
                 intent=intent,
@@ -140,16 +131,12 @@ class Pipeline:
                 plan,
             )
 
-            # ==========================================
-            # Execution
-            # ==========================================
-
             result = self.execution_engine.execute(
                 plan,
             )
 
             duration = round(
-                time.time() - start,
+                time.monotonic() - started,
                 3,
             )
 
@@ -163,51 +150,31 @@ class Pipeline:
 
             self.metrics["duration"] += duration
 
-            # ==========================================
-            # Result lifecycle
-            # ==========================================
+            self._update_metrics(
+                result,
+            )
 
-            if result.status == "completed":
-
-                self.metrics["success"] += 1
-
-                self.emit(
-                    "pipeline_completed",
+            self.emit(
+                self._resolve_event(
                     result,
-                )
-
-            elif result.status == "partial":
-
-                self.metrics["success"] += 1
-
-                self.emit(
-                    "pipeline_partial",
-                    result,
-                )
-
-            else:
-
-                self.metrics["failed"] += 1
-
-                self.emit(
-                    "pipeline_failed",
-                    result,
-                )
+                ),
+                result,
+            )
 
             return result
 
         except Exception as exc:
 
             duration = round(
-                time.time() - start,
+                time.monotonic() - started,
                 3,
             )
-
-            self.metrics["failed"] += 1
 
             logger.exception(
                 "Pipeline error",
             )
+
+            self.metrics["failed"] += 1
 
             result = ExecutionResult.fail(
                 error=str(exc),
@@ -227,6 +194,42 @@ class Pipeline:
             )
 
             return result
+
+    # ==================================================
+    # Lifecycle
+    # ==================================================
+
+    def _update_metrics(
+        self,
+        result: ExecutionResult,
+    ) -> None:
+
+        if result.status == "completed":
+
+            self.metrics["success"] += 1
+
+        elif result.status == "partial":
+
+            self.metrics["partial"] += 1
+
+        else:
+
+            self.metrics["failed"] += 1
+
+    def _resolve_event(
+        self,
+        result: ExecutionResult,
+    ) -> str:
+
+        if result.status == "completed":
+
+            return "pipeline_completed"
+
+        if result.status == "partial":
+
+            return "pipeline_partial"
+
+        return "pipeline_failed"
 
     # ==================================================
     # Events

@@ -2,172 +2,173 @@ from __future__ import annotations
 
 import logging
 
+from typing import Any
+
 from core.execution_plan import ExecutionPlan
-
-from core.context.base import BaseContextProvider
-from core.context.registry import ContextRegistry
-
-
-from core.context.project_provider import ProjectProvider
-from core.context.engram_provider import EngramProvider
-from core.context.memory_provider import MemoryProvider
-from core.context.obsidian_provider import ObsidianProvider
-from core.context.documents_provider import DocumentsProvider
-from core.context.gentleman_provider import GentlemanProvider
-from core.context.standards_provider import StandardsProvider
-from core.context.spec_provider import SpecProvider
 
 logger = logging.getLogger(__name__)
 
 
 class ContextManager:
     """
-    Constructor de contexto.
+    Constructor central de contexto de ejecución.
 
     Responsabilidades:
 
-    - Resolver providers.
-    - Construir contexto.
-    - Gestionar cache.
+    - Resolver proveedores de contexto.
+    - Construir contexto para ExecutionPlan.
+    - Registrar contexto cargado.
 
     No:
 
-    - Ejecuta agentes.
-    - Ejecuta skills.
-    - Decide planes.
+    - Ejecuta Agents.
+    - Ejecuta Skills.
+    - Gestiona memoria persistente.
+    - Decide qué contexto necesita un plan.
     """
+
+    name = "context_manager"
 
     def __init__(
         self,
-        registry: ContextRegistry | None = None,
-    ):
-
-        self.registry = registry or ContextRegistry()
-
-        self.metrics = {
-            "providers_loaded": 0,
-            "providers_failed": 0,
-            "contexts_generated": 0,
-        }
-
-        self._context_cache: dict[
-            str,
-            dict,
-        ] = {}
-
-        self._register_defaults()
-
-    # ==================================================
-    # Defaults
-    # ==================================================
-
-    def _register_defaults(
-        self,
+        providers: dict[str, Any] | None = None,
     ) -> None:
 
-        providers = [
-            ProjectProvider,
-            MemoryProvider,
-            EngramProvider,
-            DocumentsProvider,
-            GentlemanProvider,
-            StandardsProvider,
-            SpecProvider,
-            ObsidianProvider,
-        ]
-
-        for provider in providers:
-
-            try:
-
-                self.registry.register(provider)
-
-            except ValueError:
-
-                pass
+        self.providers: dict[str, Any] = providers or {}
 
     # ==================================================
-    # Build
+    # Public API
     # ==================================================
 
     def build(
         self,
         plan: ExecutionPlan,
-    ) -> dict:
+    ) -> dict[str, Any]:
 
-        if plan.id in self._context_cache:
+        if not isinstance(
+            plan,
+            ExecutionPlan,
+        ):
 
-            return self._context_cache[plan.id]
+            raise TypeError(
+                "ContextManager requiere ExecutionPlan",
+            )
 
-        context = {
-            "query": plan.original_task,
-            "execution_plan": plan.to_dict(),
-        }
+        context: dict[str, Any] = {}
 
-        for requirement in dict.fromkeys(plan.context_requirements):
-
-            provider = self.registry.get(requirement)
-
-            if provider is None:
-
-                self.metrics["providers_failed"] += 1
-
-                logger.warning(
-                    "Provider no encontrado=%s",
-                    requirement,
-                )
-
-                continue
+        for provider_name in plan.context_requirements:
 
             try:
 
-                provider.load(
+                value = self._resolve_provider(
+                    provider_name,
                     plan,
-                    context,
                 )
 
-                self.metrics["providers_loaded"] += 1
+                if value is not None:
+
+                    context[provider_name] = value
 
             except Exception:
 
-                self.metrics["providers_failed"] += 1
-
                 logger.exception(
-                    "Error provider=%s",
-                    requirement,
+                    "Error cargando contexto provider=%s",
+                    provider_name,
                 )
 
-        self.metrics["contexts_generated"] += 1
-
-        self._context_cache[plan.id] = context
+        plan.loaded_context = context.copy()
 
         return context
 
     # ==================================================
-    # Management
+    # Provider management
     # ==================================================
 
-    def register_provider(
+    def register(
         self,
-        provider: type[BaseContextProvider],
-    ):
+        name: str,
+        provider: Any,
+    ) -> None:
 
-        self.registry.register(provider)
+        if not name:
 
-    def clear_cache(
+            raise ValueError(
+                "Provider requiere nombre",
+            )
+
+        self.providers[self._normalize(name)] = provider
+
+    def unregister(
         self,
-    ):
+        name: str,
+    ) -> None:
 
-        self._context_cache.clear()
+        self.providers.pop(
+            self._normalize(name),
+            None,
+        )
 
-    def providers(
+    # ==================================================
+    # Resolution
+    # ==================================================
+
+    def _resolve_provider(
+        self,
+        name: str,
+        plan: ExecutionPlan,
+    ) -> Any:
+
+        key = self._normalize(
+            name,
+        )
+
+        provider = self.providers.get(
+            key,
+        )
+
+        if provider is None:
+
+            logger.debug(
+                "Provider no disponible=%s",
+                key,
+            )
+
+            return None
+
+        if callable(provider):
+
+            return provider(
+                plan,
+            )
+
+        return provider
+
+    # ==================================================
+    # Helpers
+    # ==================================================
+
+    def _normalize(
+        self,
+        value: str,
+    ) -> str:
+
+        return value.lower().strip().replace("-", "_").replace(" ", "_")
+
+    # ==================================================
+    # Information
+    # ==================================================
+
+    def available(
         self,
     ) -> list[str]:
 
-        return self.registry.list()
+        return sorted(
+            self.providers.keys(),
+        )
 
-    def get_metrics(
+    def contains(
         self,
-    ) -> dict:
+        name: str,
+    ) -> bool:
 
-        return self.metrics.copy()
+        return self._normalize(name) in self.providers

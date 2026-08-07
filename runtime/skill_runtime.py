@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 import time
 
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+from concurrent.futures import (
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+)
+
 from typing import Any, Callable
 
 from core.execution_plan import ExecutionPlan
@@ -22,17 +26,19 @@ class SkillRuntime:
     Responsabilidades:
 
     - Resolver Skills.
-    - Ejecutar Steps.
+    - Ejecutar Skills.
+    - Gestionar timeout.
     - Gestionar retries.
-    - Aplicar timeout.
     - Normalizar resultados.
     - Registrar metadata.
 
     No:
 
-    - Contiene lógica de negocio.
-    - Decide qué Skill usar.
     - Construye planes.
+    - Decide Skills.
+    - Gestiona contexto global.
+    - Modifica ExecutionPlan.
+    - Ejecuta Agents.
     """
 
     name = "skill_runtime"
@@ -40,7 +46,7 @@ class SkillRuntime:
     def __init__(
         self,
         skill_manager: SkillManager | None = None,
-    ):
+    ) -> None:
 
         self.skill_manager = skill_manager or SkillManager()
 
@@ -57,41 +63,26 @@ class SkillRuntime:
 
         context = context or {}
 
+        validation_errors = step.validate()
+
+        if validation_errors:
+
+            return self._fail(
+                plan,
+                step,
+                "; ".join(validation_errors),
+            )
+
         skill = self.skill_manager.get(
             step.unit_name,
         )
 
         if skill is None:
 
-            error = f"Skill no encontrada: {step.unit_name}"
-
-            self._safe_mark_failed(
-                step,
-                error,
-            )
-
-            return self._fail_result(
-                error,
+            return self._fail(
                 plan,
                 step,
-            )
-
-        validation_errors = step.validate()
-
-        if validation_errors:
-
-            error = "; ".join(validation_errors)
-
-            self._safe_mark_failed(
-                step,
-                error,
-            )
-
-            return self._fail_result(
-                error,
-                plan,
-                step,
-                skill,
+                f"Skill no encontrada: {step.unit_name}",
             )
 
         try:
@@ -106,18 +97,10 @@ class SkillRuntime:
 
         except Exception as exc:
 
-            error = f"Error validando skill: {exc}"
-
-            self._safe_mark_failed(
-                step,
-                error,
-            )
-
-            return self._fail_result(
-                error,
+            return self._fail(
                 plan,
                 step,
-                skill,
+                f"Error validando Skill: {exc}",
             )
 
         retries = step.retries if step.retries is not None else plan.max_retries
@@ -132,8 +115,6 @@ class SkillRuntime:
 
             try:
 
-                step.mark_running()
-
                 logger.info(
                     "Ejecutando skill=%s step=%s intento=%s",
                     skill.name,
@@ -147,45 +128,27 @@ class SkillRuntime:
                         step=step,
                         context=context,
                     ),
-                    timeout=step.timeout,
+                    step.timeout,
                 )
 
                 result = self._normalize_result(
                     raw_result,
+                    plan,
+                    skill.name,
                 )
 
-                if not result["ok"]:
+                if result.status != "completed":
 
-                    raise RuntimeError(result.get("error") or "Skill falló")
-
-                output = result.get(
-                    "result",
-                )
+                    raise RuntimeError(
+                        result.error or "Skill falló",
+                    )
 
                 duration = round(
                     time.monotonic() - started,
                     3,
                 )
 
-                step.mark_completed(
-                    output,
-                )
-
-                step.metadata.update(
-                    {
-                        "skill": skill.name,
-                        "attempts": attempts,
-                        "duration": duration,
-                    }
-                )
-
-                execution_result = ExecutionResult.ok(
-                    output=output,
-                    executor=f"skill:{skill.name}",
-                    plan_id=plan.id,
-                )
-
-                execution_result.metadata.update(
+                result.metadata.update(
                     {
                         "skill": skill.name,
                         "step_id": step.id,
@@ -194,99 +157,54 @@ class SkillRuntime:
                     }
                 )
 
-                return execution_result
-
-            except TimeoutError as exc:
-
-                logger.warning(
-                    "Timeout Skill=%s intento=%s",
-                    skill.name,
-                    attempts,
-                )
-
-                if attempts > retries:
-
-                    error = str(exc)
-
-                    self._safe_mark_failed(
-                        step,
-                        error,
-                    )
-
-                    return self._fail_result(
-                        error,
-                        plan,
-                        step,
-                        skill,
-                        attempts,
-                    )
+                return result
 
             except Exception as exc:
 
                 logger.warning(
-                    "Fallo Skill=%s intento=%s error=%s",
+                    "Error ejecutando skill=%s intento=%s error=%s",
                     skill.name,
                     attempts,
                     exc,
                 )
 
-                if not self._is_retryable_error(exc):
-
-                    error = str(exc)
-
-                    self._safe_mark_failed(
-                        step,
-                        error,
-                    )
-
-                    return self._fail_result(
-                        error,
-                        plan,
-                        step,
-                        skill,
-                        attempts,
-                    )
-
                 if attempts > retries:
 
-                    error = str(exc)
-
-                    self._safe_mark_failed(
-                        step,
-                        error,
-                    )
-
-                    return self._fail_result(
-                        error,
+                    return self._fail(
                         plan,
                         step,
-                        skill,
+                        str(exc),
+                        skill.name,
                         attempts,
+                        started,
                     )
 
-            if attempts <= retries:
-
-                self._wait_retry(
+                self._retry_wait(
                     attempts,
                 )
 
-        return self._fail_result(
-            "Max retries alcanzado",
+        return self._fail(
             plan,
             step,
-            skill,
+            "Max retries alcanzado",
+            skill.name,
             attempts,
+            started,
         )
 
     # ==================================================
-    # Execution helpers
+    # Execution
     # ==================================================
 
     def _execute_with_timeout(
         self,
         func: Callable[[], Any],
-        timeout: int,
+        timeout: int | None,
     ) -> Any:
+
+        if not timeout:
+
+            return func()
 
         with ThreadPoolExecutor(
             max_workers=1,
@@ -304,25 +222,79 @@ class SkillRuntime:
 
             except FutureTimeoutError:
 
-                raise TimeoutError(f"Skill excedió timeout de {timeout}s")
+                raise TimeoutError(
+                    f"Skill excedió timeout de {timeout}s",
+                )
 
-    def _is_retryable_error(
+    # ==================================================
+    # Result normalization
+    # ==================================================
+
+    def _normalize_result(
         self,
-        error: Exception,
-    ) -> bool:
+        result: Any,
+        plan: ExecutionPlan,
+        skill_name: str,
+    ) -> ExecutionResult:
 
-        non_retryable = (
-            ValueError,
-            TypeError,
-            KeyError,
+        if isinstance(
+            result,
+            ExecutionResult,
+        ):
+
+            return result
+
+        return ExecutionResult.ok(
+            output=result,
+            executor=f"skill:{skill_name}",
+            plan_id=plan.id,
         )
 
-        return not isinstance(
-            error,
-            non_retryable,
+    # ==================================================
+    # Error handling
+    # ==================================================
+
+    def _fail(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+        error: str,
+        skill_name: str | None = None,
+        attempts: int | None = None,
+        started: float | None = None,
+    ) -> ExecutionResult:
+
+        result = ExecutionResult.fail(
+            error=error,
+            executor=(f"skill:{skill_name}" if skill_name else self.name),
+            plan_id=plan.id,
         )
 
-    def _wait_retry(
+        result.metadata.update(
+            {
+                "step_id": step.id,
+                "skill": skill_name or step.unit_name,
+            }
+        )
+
+        if attempts is not None:
+
+            result.metadata["attempts"] = attempts
+
+        if started is not None:
+
+            result.metadata["duration"] = round(
+                time.monotonic() - started,
+                3,
+            )
+
+        return result
+
+    # ==================================================
+    # Retry
+    # ==================================================
+
+    def _retry_wait(
         self,
         attempt: int,
     ) -> None:
@@ -335,92 +307,3 @@ class SkillRuntime:
         time.sleep(
             delay,
         )
-
-    # ==================================================
-    # State helpers
-    # ==================================================
-
-    def _safe_mark_failed(
-        self,
-        step: ExecutionStep,
-        error: str,
-    ) -> None:
-
-        try:
-
-            step.mark_failed(
-                error,
-            )
-
-        except Exception:
-
-            logger.exception(
-                "Error marcando step fallido",
-            )
-
-    def _fail_result(
-        self,
-        error: str,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-        skill=None,
-        attempts: int | None = None,
-    ) -> ExecutionResult:
-
-        executor = self.name
-
-        if skill:
-
-            executor = f"skill:{skill.name}"
-
-        result = ExecutionResult.fail(
-            error=error,
-            executor=executor,
-            plan_id=plan.id,
-        )
-
-        result.metadata.update(
-            {
-                "step_id": step.id,
-            }
-        )
-
-        if skill:
-
-            result.metadata["skill"] = skill.name
-
-        if attempts is not None:
-
-            result.metadata["attempts"] = attempts
-
-        return result
-
-    # ==================================================
-    # Result normalization
-    # ==================================================
-
-    def _normalize_result(
-        self,
-        result: Any,
-    ) -> dict[str, Any]:
-
-        if isinstance(result, dict):
-
-            return {
-                "ok": result.get(
-                    "ok",
-                    True,
-                ),
-                "result": result.get(
-                    "result",
-                ),
-                "error": result.get(
-                    "error",
-                ),
-            }
-
-        return {
-            "ok": True,
-            "result": result,
-            "error": None,
-        }
