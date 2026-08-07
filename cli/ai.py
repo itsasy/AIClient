@@ -13,7 +13,7 @@ from core.config import Config
 from core.engram_memory import EngramMemory
 from core.spec_manager import SpecManager
 from core.document_ingestor import DocumentIngestor
-from runtime.execution_engine import ExecutionEngine
+from container import build_container
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(
@@ -232,7 +232,7 @@ Ejemplos:
         return
 
     # =============================================================
-    # 2. CONSULTA DIRECTA (usando ExecutionEngine)
+    # 2. CONSULTA DIRECTA (usando ExecutionEngine desde el contenedor)
     # =============================================================
     query = " ".join(args.query).strip()
 
@@ -247,7 +247,9 @@ Ejemplos:
         print("    ai --forget <id>")
         return
 
-    engine = ExecutionEngine()
+    # ✅ Obtener el engine desde el contenedor (con registries cargados)
+    container = build_container()
+    engine = container.get_engine()
 
     if args.chat:
         print("🤖 Modo Chat (escribe 'exit' para salir)\n")

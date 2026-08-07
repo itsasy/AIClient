@@ -110,7 +110,6 @@ class ExecutionEngine:
         self.metrics["executions"] += 1
 
         try:
-            # 1. Validación
             errors = plan.validate()
             if errors:
                 return self._fail(plan, "; ".join(errors))
@@ -118,14 +117,14 @@ class ExecutionEngine:
             plan.mark_validated()
             plan.mark_running()
 
-            # 2. Contexto
             context = self.context_manager.build(plan) or {}
             plan.loaded_context = context
 
-            # 3. Ejecución
-            result = self._execute_with_retries(plan, context)
+            if plan.is_multi_step():
+                result = self._execute_steps(plan, context)
+            else:
+                result = self._execute_single(plan, context)
 
-            # 4. Duración y metadata
             duration = round(time.monotonic() - started, 3)
             result.metadata.update(
                 {
@@ -135,13 +134,8 @@ class ExecutionEngine:
                 }
             )
 
-            # 5. Aplicar estado al plan
             self._apply_plan_state(plan, result)
             self._update_metrics(result)
-
-            # 6. Aprendizaje post-ejecución (desacoplado, no bloquea)
-            self._learn(plan, result)
-
             return result
 
         except Exception as exc:
