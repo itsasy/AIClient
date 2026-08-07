@@ -78,27 +78,39 @@ def extract_error(result):
     """
     Extrae el mensaje de error de un ExecutionResult no exitoso.
     """
+    # 1. Si hay un error general en el ExecutionResult
     if result.error:
-        # Si hay un error general
         return result.error
 
-    # Si es partial o failure, puede tener lista de resultados de pasos
-    if isinstance(result.result, list):
-        errors = []
-        for step_result in result.result:
-            if isinstance(step_result, dict) and not step_result.get("ok", True):
-                error_msg = step_result.get("error", "Error desconocido en paso")
-                errors.append(f"• {error_msg}")
-        if errors:
-            return "Fallaron los siguientes pasos:\n" + "\n".join(errors)
+    # 2. Función recursiva para buscar error en cualquier estructura
+    def find_error(data):
+        if isinstance(data, dict):
+            # Buscar "error" directamente
+            if "error" in data and data["error"]:
+                return data["error"]
+            # Buscar "ok" False
+            if "ok" in data and not data.get("ok"):
+                return data.get("error", "Error desconocido")
+            # Buscar dentro de "result"
+            if "result" in data:
+                return find_error(data["result"])
+        elif isinstance(data, list):
+            for item in data:
+                error = find_error(item)
+                if error:
+                    return error
+        elif hasattr(data, "is_failure") and data.is_failure:
+            if hasattr(data, "error") and data.error:
+                return data.error
+        return None
 
-    # Si el resultado es un dict con "error"
-    if isinstance(result.result, dict):
-        if "error" in result.result:
-            return result.result["error"]
-        if "ok" in result.result and not result.result.get("ok"):
-            return result.result.get("error", "Error desconocido")
+    # 3. Buscar en result.result
+    error_msg = find_error(result.result)
+    if error_msg:
+        return error_msg
 
+    # 4. Si no se pudo extraer, mostrar el resultado para depuración
+    logger.debug(f"No se pudo extraer error. result.result: {result.result}")
     return "Error desconocido en la ejecución."
 
 

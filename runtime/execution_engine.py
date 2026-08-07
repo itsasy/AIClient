@@ -209,38 +209,83 @@ class ExecutionEngine:
         )
         return self.dispatcher.dispatch(plan, step, context)
 
-    def _execute_steps(self, plan: ExecutionPlan, context: dict) -> ExecutionResult:
+    def _execute_steps(
+        self,
+        plan: ExecutionPlan,
+        context: dict,
+    ) -> ExecutionResult:
+
         if not plan.steps:
             return self._fail(plan, "Plan multi_step sin pasos.")
 
         ordered = self._resolve_order(plan.steps)
-        results: list[ExecutionResult] = []
-        failed_steps: list[str] = []
+
+        results = []
+        errors = []
 
         for step in ordered:
+
+            logger.info(
+                "Ejecutando step %s (%s:%s)",
+                step.description,
+                step.unit_type,
+                step.unit_name,
+            )
+
             result = self.dispatcher.dispatch(plan, step, context)
+
             results.append(result)
 
             if result.is_failure:
-                failed_steps.append(step.id)
+
+                error = result.error or "Error desconocido"
+
+                logger.error(
+                    "Step '%s' falló: %s",
+                    step.description,
+                    error,
+                )
+
+                errors.append(
+                    {
+                        "step": step.description,
+                        "unit": step.unit_name,
+                        "error": error,
+                    }
+                )
+
                 if plan.stop_on_error:
                     break
 
-        if not failed_steps:
+        # éxito completo
+        if not errors:
+
             return ExecutionResult.success(
                 plan_id=plan.id,
                 result=[r.result for r in results],
                 executor=self.name,
             )
-        elif not results:
-            return self._fail(plan, "Todos los steps fallaron.")
-        else:
-            return ExecutionResult.partial(
+
+        # fallo completo
+        if len(errors) == len(results):
+
+            detail = "\n".join(f"- {e['step']} ({e['unit']}): {e['error']}" for e in errors)
+
+            return ExecutionResult.fail(
                 plan_id=plan.id,
-                result=[r.result for r in results],
-                error=f"Fallaron {len(failed_steps)} pasos",
+                error=detail,
                 executor=self.name,
             )
+
+        # parcial
+        detail = "\n".join(f"- {e['step']} ({e['unit']}): {e['error']}" for e in errors)
+
+        return ExecutionResult.partial(
+            plan_id=plan.id,
+            result=[r.result for r in results],
+            error=detail,
+            executor=self.name,
+        )
 
     # ==========================================================
     # Evaluación (SelfCritic)
@@ -348,6 +393,13 @@ class ExecutionEngine:
             self.metrics["retries"] += 1
 
     def _fail(self, plan: ExecutionPlan, error: str) -> ExecutionResult:
+
+        logger.error(
+            "Plan %s falló: %s",
+            plan.id,
+            error,
+        )
+
         return ExecutionResult.fail(
             plan_id=plan.id,
             error=error,

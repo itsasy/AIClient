@@ -8,7 +8,7 @@ from llm.router import LLMRouter
 
 
 class TaskAgent(Agent):
-    name = "task"
+    name = "task_agent"
     role = "Agente general de resolución"
 
     def process(
