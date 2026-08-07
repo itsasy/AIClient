@@ -7,6 +7,14 @@ from typing import Any
 
 from core.execution_step import ExecutionStep
 
+UNIT_ALIASES = {
+    "agents": "agent",
+    "agent_runtime": "agent",
+    "skills": "skill",
+    "skill_runtime": "skill",
+}
+UNIT_TYPES = {"agent", "skill"}
+
 
 @dataclass(slots=True)
 class ExecutionPlan:
@@ -53,9 +61,33 @@ class ExecutionPlan:
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # ==========================================================
+    # Métodos de clase para normalización
+    # ==========================================================
+
+    @classmethod
+    def normalize_unit_type(cls, unit_type: str | None) -> str | None:
+        if not unit_type:
+            return None
+        value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
+        return UNIT_ALIASES.get(value, value)
+
+    @classmethod
+    def normalize_execution_mode(cls, mode: str | None) -> str:
+        if not mode:
+            return "single"
+        value = mode.lower().strip().replace("-", "_").replace(" ", "_")
+        if value not in cls.VALID_EXECUTION_MODES:
+            return "single"
+        return value
+
+    # ==========================================================
+    # Lifecycle
+    # ==========================================================
+
     def __post_init__(self) -> None:
         self.original_task = self.original_task.strip()
-        self.execution_mode = self.execution_mode.strip().lower()
+        self.execution_mode = self.normalize_execution_mode(self.execution_mode)
 
         if self.execution_mode not in self.VALID_EXECUTION_MODES:
             raise ValueError(
@@ -64,7 +96,7 @@ class ExecutionPlan:
             )
 
         if self.execution_unit_type is not None:
-            self.execution_unit_type = self.execution_unit_type.strip().lower()
+            self.execution_unit_type = self.normalize_unit_type(self.execution_unit_type)
 
         if self.execution_unit is not None:
             self.execution_unit = self.execution_unit.strip()
@@ -99,7 +131,7 @@ class ExecutionPlan:
     ) -> ExecutionStep:
         step = ExecutionStep(
             description=description,
-            unit_type=unit_type,
+            unit_type=self.normalize_unit_type(unit_type) or unit_type,
             unit_name=unit_name,
             params=params or {},
             expected_output=expected_output,
