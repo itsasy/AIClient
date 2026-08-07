@@ -8,7 +8,7 @@ from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
 from core.execution_step import ExecutionStep
 from core.context.manager import ContextManager
-from core.intent import IntentAnalyzer, IntentResult
+from core.intent import IntentAnalyzer
 from core.planning import PlanBuilder
 
 from runtime.dispatcher import UnitDispatcher
@@ -26,7 +26,16 @@ class ExecutionEngine:
 
     Flujo:
         User input → IntentAnalyzer → PlanBuilder → ExecutionPlan
-        → validate → context → execute → finalize → ExecutionResult
+        → validate → context → execute → evaluate → finalize → ExecutionResult
+
+    Etapas:
+        1. Validación del plan
+        2. Construcción de contexto
+        3. Ejecución (single o multi-step)
+        4. Evaluación (SelfCritic, opcional)
+        5. Reintentos (si falla y hay retries)
+        6. Aprendizaje post-ejecución (desacoplado)
+        7. Finalización y resultado
     """
 
     name = "execution_engine"
@@ -56,7 +65,26 @@ class ExecutionEngine:
             "partial": 0,
             "failed": 0,
             "cancelled": 0,
+            "retries": 0,
         }
+
+        # Cargar SelfCritic (helper, no agente)
+        try:
+            from core.self_critic import SelfCritic
+
+            self.critic = SelfCritic()
+        except ImportError:
+            logger.warning("SelfCritic no disponible")
+            self.critic = None
+
+        # Cargar ContinuousLearner (opcional, post-ejecución)
+        try:
+            from core.learner import ContinuousLearner
+
+            self.learner = ContinuousLearner()
+        except ImportError:
+            logger.warning("ContinuousLearner no disponible")
+            self.learner = None
 
     # ==========================================================
     # Public API
@@ -82,6 +110,7 @@ class ExecutionEngine:
         self.metrics["executions"] += 1
 
         try:
+            # 1. Validación
             errors = plan.validate()
             if errors:
                 return self._fail(plan, "; ".join(errors))
@@ -89,14 +118,14 @@ class ExecutionEngine:
             plan.mark_validated()
             plan.mark_running()
 
+            # 2. Contexto
             context = self.context_manager.build(plan) or {}
             plan.loaded_context = context
 
-            if plan.is_multi_step():
-                result = self._execute_steps(plan, context)
-            else:
-                result = self._execute_single(plan, context)
+            # 3. Ejecución
+            result = self._execute_with_retries(plan, context)
 
+            # 4. Duración y metadata
             duration = round(time.monotonic() - started, 3)
             result.metadata.update(
                 {
@@ -106,8 +135,13 @@ class ExecutionEngine:
                 }
             )
 
+            # 5. Aplicar estado al plan
             self._apply_plan_state(plan, result)
             self._update_metrics(result)
+
+            # 6. Aprendizaje post-ejecución (desacoplado, no bloquea)
+            self._learn(plan, result)
+
             return result
 
         except Exception as exc:
@@ -119,7 +153,54 @@ class ExecutionEngine:
             return self._fail(plan, str(exc))
 
     # ==========================================================
-    # Ejecución interna (coordinación)
+    # Ejecución con reintentos
+    # ==========================================================
+
+    def _execute_with_retries(self, plan: ExecutionPlan, context: dict) -> ExecutionResult:
+        """
+        Ejecuta el plan con reintentos controlados.
+        """
+        max_retries = plan.metadata.get("max_retries", plan.max_retries)
+        retries = 0
+        last_result = None
+
+        while retries <= max_retries:
+            # Ejecutar
+            if plan.is_multi_step():
+                result = self._execute_steps(plan, context)
+            else:
+                result = self._execute_single(plan, context)
+
+            # Evaluar (SelfCritic)
+            result = self._evaluate(plan, result)
+
+            # Si pasa, devolver
+            if result.is_success or result.is_partial:
+                return result
+
+            # Si falla y hay reintentos disponibles
+            if result.is_failure and retries < max_retries:
+                retries += 1
+                self.metrics["retries"] += 1
+                logger.info("Reintentando plan %s (intento %d/%d)", plan.id, retries, max_retries)
+                result.metadata["retry_count"] = retries
+                # Pequeña pausa antes de reintentar
+                time.sleep(0.5)
+                last_result = result
+                continue
+
+            # Si no hay más reintentos, devolver fallo
+            return result
+
+        # Si se agotaron los reintentos
+        return last_result or ExecutionResult.fail(
+            plan_id=plan.id,
+            error="Se agotaron los reintentos",
+            executor=self.name,
+        )
+
+    # ==========================================================
+    # Etapas de ejecución
     # ==========================================================
 
     def _execute_single(self, plan: ExecutionPlan, context: dict) -> ExecutionResult:
@@ -168,6 +249,64 @@ class ExecutionEngine:
             )
 
     # ==========================================================
+    # Evaluación (SelfCritic)
+    # ==========================================================
+
+    def _evaluate(self, plan: ExecutionPlan, result: ExecutionResult) -> ExecutionResult:
+        """
+        Etapa de evaluación post-ejecución.
+        """
+        # Si no se requiere crítica, pasar
+        if not plan.metadata.get("requires_self_critic", False):
+            return result
+
+        # Si ya es fallo, no criticar
+        if result.is_failure:
+            return result
+
+        if self.critic is None:
+            return result
+
+        try:
+            evaluation = self.critic.evaluate(plan, result)
+            if evaluation.get("pass", True):
+                return result
+            else:
+                # Si la crítica falla, marcar como retry
+                return ExecutionResult.retry(
+                    plan_id=plan.id,
+                    error=evaluation.get("reason", "Evaluación fallida"),
+                    retries=result.retries + 1,
+                    executor="self_critic",
+                )
+        except Exception as exc:
+            logger.warning("SelfCritic falló: %s", exc)
+            return result
+
+    # ==========================================================
+    # Aprendizaje post-ejecución
+    # ==========================================================
+
+    def _learn(self, plan: ExecutionPlan, result: ExecutionResult) -> None:
+        """
+        Aprendizaje continuo post-ejecución (no bloquea).
+        """
+        if self.learner is None:
+            return
+
+        if not result.is_success and not result.is_partial:
+            return
+
+        try:
+            # Extraer aprendizaje de la interacción
+            self.learner.extract_and_learn(
+                user_query=plan.original_task,
+                assistant_response=str(result.result or result.error or ""),
+            )
+        except Exception as exc:
+            logger.debug("Aprendizaje continuo falló: %s", exc)
+
+    # ==========================================================
     # Helpers
     # ==========================================================
 
@@ -211,6 +350,8 @@ class ExecutionEngine:
             self.metrics["failed"] += 1
         elif result.is_cancelled:
             self.metrics["cancelled"] += 1
+        elif result.is_retry:
+            self.metrics["retries"] += 1
 
     def _fail(self, plan: ExecutionPlan, error: str) -> ExecutionResult:
         return ExecutionResult.fail(
