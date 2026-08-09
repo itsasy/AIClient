@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import logging
 
+from agents.architect import ArchitectAgent
 from agents.base import Agent
-from agents.loader import AgentLoader
-from runtime.registry.agent_registry import AgentRegistry
+from agents.coder import CoderAgent
+from agents.executor import ExecutorAgent
+from agents.multi_turn import MultiTurnAgent
+from agents.task_agent import TaskAgent
+
+from core.execution_plan import ExecutionPlan
 
 logger = logging.getLogger(__name__)
 

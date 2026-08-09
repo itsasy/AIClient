@@ -33,6 +33,10 @@ class GentlemanSkills:
             Path.home() / ".claude" / "skills",
         ),
         (
+            "claude_subagents",
+            Path.home() / ".claude" / "subagents",
+        ),
+        (
             "codex",
             Path.home() / ".codex" / "skills",
         ),

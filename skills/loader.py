@@ -33,6 +33,13 @@ class SkillLoader:
         "skills.proposals.generator",
         "skills.scraping.integrations",
         "skills.scraping.job_scraper",
+        "skills.files.write_file",
+        "skills.projects.create_project",
+        "skills.audit.security_audit",
+        "skills.audit.performance_audit",
+        "skills.audit.quality_audit",
+        "skills.audit.architecture_audit",
+
     )
 
     def __init__(

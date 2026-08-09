@@ -20,6 +20,10 @@ UNIT_TYPES = {"agent", "skill"}
 class ExecutionPlan:
     """
     Contrato central de ejecución de AIClient.
+
+    Este objeto es la fuente de verdad para toda ejecución.
+    Contiene todo lo necesario para que el sistema ejecute
+    una tarea sin reinterpretar la intención.
     """
 
     VALID_EXECUTION_MODES = frozenset({"single", "multi_step"})
@@ -36,28 +40,122 @@ class ExecutionPlan:
         }
     )
 
+    # ==========================================================
+    # Identidad y metadatos
+    # ==========================================================
+
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     status: str = "pending"
+
+    # ==========================================================
+    # Intención del usuario (interpretada una sola vez)
+    # ==========================================================
 
     original_task: str = ""
     intent: str | None = None
     intent_category: str | None = None
     objective: str | None = None
 
-    execution_mode: str = "single"
-    execution_unit_type: str | None = None
-    execution_unit: str | None = None
+    # ==========================================================
+    # Ejecución
+    # ==========================================================
+
+    execution_mode: str = "single"  # "single" | "multi_step"
+    execution_unit_type: str | None = None  # "agent" | "skill"
+    execution_unit: str | None = None  # nombre del agente o skill
+
+    # ==========================================================
+    # Parámetros y restricciones
+    # ==========================================================
 
     params: dict[str, Any] = field(default_factory=dict)
     constraints: list[str] = field(default_factory=list)
-    context_requirements: list[str] = field(default_factory=list)
+
+    # ==========================================================
+    # REQUISITOS DE CONTEXTO (nuevo)
+    # ==========================================================
+    #
+    # Define qué contexto debe cargar ContextManager.
+    # Cada clave es un proveedor de contexto.
+    # El valor indica si debe cargarse.
+    #
+    # Valores posibles:
+    #   - project: inspección del proyecto
+    #   - engram: memoria persistente
+    #   - obsidian: segundo cerebro
+    #   - gentleman: skills externas
+    #   - standards: estándares aprendidos
+    #   - documents: documentos ingeridos
+    #   - memory: historial conversacional
+    #
+    # Por defecto, nada se carga.
+    # Esto garantiza que "hola" no cargue contexto innecesario.
+    # ==========================================================
+
+    context_requirements: dict[str, bool] = field(
+        default_factory=lambda: {
+            "project": False,
+            "engram": False,
+            "obsidian": False,
+            "gentleman": False,
+            "standards": False,
+            "documents": False,
+            "memory": False,
+        }
+    )
+
+    # ==========================================================
+    # GOBERNANZA (nuevo)
+    # ==========================================================
+    #
+    # Define las restricciones de seguridad y permisos.
+    # Afecta a Skills que interactúan con el sistema operativo.
+    # ==========================================================
+
+    governance: dict[str, Any] = field(
+        default_factory=lambda: {
+            "mode": "safe",  # "safe" | "powerful"
+            "allow_shell": False,
+            "allow_network": False,
+            "allow_write": False,
+            "allow_sudo": False,
+        }
+    )
+
+    # ==========================================================
+    # POLÍTICA DE EJECUCIÓN (nuevo)
+    # ==========================================================
+    #
+    # Define cómo se comporta ExecutionEngine.
+    # ==========================================================
+
+    execution_policy: dict[str, Any] = field(
+        default_factory=lambda: {
+            "autonomous": False,  # si es True, no pide confirmación
+            "max_retries": 2,
+            "requires_approval": False,
+            "stop_on_error": True,
+            "timeout": 300,
+        }
+    )
+
+    # ==========================================================
+    # Pasos (para modo multi_step)
+    # ==========================================================
+
     steps: list[ExecutionStep] = field(default_factory=list)
 
-    max_retries: int = 2
-    stop_on_error: bool = True
+    # ==========================================================
+    # Contexto cargado (runtime)
+    # ==========================================================
+
     loaded_context: dict[str, Any] = field(default_factory=dict)
     execution_context: dict[str, Any] = field(default_factory=dict)
+
+    # ==========================================================
+    # Metadatos (solo para información adicional)
+    # ==========================================================
 
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -118,6 +216,64 @@ class ExecutionPlan:
                 f"Estados permitidos: {sorted(self.VALID_STATUSES)}"
             )
 
+        # Normalizar governance
+        if "mode" in self.governance:
+            self.governance["mode"] = self.governance["mode"].lower().strip()
+
+    # ==========================================================
+    # Context helpers
+    # ==========================================================
+
+    def requires_context(self, provider: str) -> bool:
+        """Devuelve True si el plan requiere un proveedor de contexto específico."""
+        return self.context_requirements.get(provider, False)
+
+    def set_context_requirement(self, provider: str, required: bool) -> None:
+        """Establece un requisito de contexto."""
+        self.context_requirements[provider] = required
+
+    # ==========================================================
+    # Governance helpers
+    # ==========================================================
+
+    def is_safe_mode(self) -> bool:
+        return self.governance.get("mode", "safe") == "safe"
+
+    def is_powerful_mode(self) -> bool:
+        return self.governance.get("mode", "safe") == "powerful"
+
+    def allows_shell(self) -> bool:
+        return self.governance.get("allow_shell", False)
+
+    def allows_network(self) -> bool:
+        return self.governance.get("allow_network", False)
+
+    def allows_write(self) -> bool:
+        return self.governance.get("allow_write", False)
+
+    def allows_sudo(self) -> bool:
+        return self.governance.get("allow_sudo", False)
+
+    # ==========================================================
+    # Policy helpers
+    # ==========================================================
+
+    def is_autonomous(self) -> bool:
+        return self.execution_policy.get("autonomous", False)
+
+    def get_max_retries(self) -> int:
+        return self.execution_policy.get("max_retries", 2)
+
+    def requires_approval(self) -> bool:
+        return self.execution_policy.get("requires_approval", False)
+
+    def get_timeout(self) -> int:
+        return self.execution_policy.get("timeout", 300)
+
+    # ==========================================================
+    # Steps
+    # ==========================================================
+
     def add_step(
         self,
         description: str,
@@ -141,6 +297,16 @@ class ExecutionPlan:
         )
         self.steps.append(step)
         return step
+
+    def has_steps(self) -> bool:
+        return bool(self.steps)
+
+    def is_multi_step(self) -> bool:
+        return self.execution_mode == "multi_step"
+
+    # ==========================================================
+    # Validation
+    # ==========================================================
 
     def validate(self) -> list[str]:
         errors = []
@@ -171,6 +337,10 @@ class ExecutionPlan:
     def is_valid(self) -> bool:
         return not bool(self.validate())
 
+    # ==========================================================
+    # Status
+    # ==========================================================
+
     def mark_planned(self) -> None:
         self.status = "planned"
 
@@ -192,21 +362,9 @@ class ExecutionPlan:
     def mark_cancelled(self) -> None:
         self.status = "cancelled"
 
-    def has_steps(self) -> bool:
-        return bool(self.steps)
-
-    def is_multi_step(self) -> bool:
-        return self.execution_mode == "multi_step"
-
-    def requires_context(self, provider: str) -> bool:
-        return provider in self.context_requirements
-
-    def uses_unit(self, unit_type: str, unit_name: str) -> bool:
-        if self.execution_unit_type == unit_type and self.execution_unit == unit_name:
-            return True
-        return any(
-            step.unit_type == unit_type and step.unit_name == unit_name for step in self.steps
-        )
+    # ==========================================================
+    # Serialization
+    # ==========================================================
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -222,9 +380,11 @@ class ExecutionPlan:
             "execution_unit": self.execution_unit,
             "params": dict(self.params),
             "constraints": list(self.constraints),
-            "context_requirements": list(self.context_requirements),
-            "max_retries": self.max_retries,
-            "stop_on_error": self.stop_on_error,
+            "context_requirements": dict(self.context_requirements),
+            "governance": dict(self.governance),
+            "execution_policy": dict(self.execution_policy),
+            "max_retries": self.get_max_retries(),
+            "stop_on_error": self.execution_policy.get("stop_on_error", True),
             "loaded_context": dict(self.loaded_context),
             "execution_context": dict(self.execution_context),
             "metadata": dict(self.metadata),

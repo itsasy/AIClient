@@ -4,6 +4,16 @@ import logging
 from copy import deepcopy
 from typing import Any
 
+from core.context.engram_provider import EngramProvider
+from core.context.gentleman_provider import GentlemanProvider
+from core.context.memory_provider import MemoryProvider
+from core.context.obsidian_provider import ObsidianProvider
+from core.context.project_provider import ProjectProvider
+from core.context.standards_provider import StandardsProvider
+from core.context.documents_provider import DocumentsProvider
+from core.context.spec_provider import SpecProvider
+from core.context.swarmforge_provider import SwarmForgeProvider
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,21 +22,35 @@ class ContextManager:
     Construye y controla el contexto de ejecución.
 
     Principio fundamental:
-
         runtime context != LLM context
 
     El contexto interno puede contener información amplia.
     Cada Agent recibe únicamente la vista necesaria para su tarea.
+
+    Los proveedores solo se cargan si el plan los solicita
+    mediante context_requirements.
     """
 
     def __init__(
         self,
         providers: dict[str, Any] | None = None,
     ) -> None:
+        # Proveedores por defecto
+        self._providers = {
+            "project": ProjectProvider(),
+            "engram": EngramProvider(),
+            "memory": MemoryProvider(),
+            "obsidian": ObsidianProvider(),
+            "gentleman": GentlemanProvider(),
+            "standards": StandardsProvider(),
+            "documents": DocumentsProvider(),
+            "spec": SpecProvider(),
+            "swarmforge": SwarmForgeProvider(),
+        }
 
-        self.providers = dict(
-            providers or {},
-        )
+        # Sobrescribir con providers personalizados si se pasan
+        if providers:
+            self._providers.update(providers)
 
     # ==========================================================
     # Base context
@@ -41,144 +65,39 @@ class ContextManager:
         """
         Construye contexto base sin destruir el contexto existente.
         """
+        context: dict[str, Any] = deepcopy(existing_context or {})
 
-        context: dict[str, Any] = deepcopy(
-            existing_context or {},
-        )
-
-        context.setdefault(
-            "execution",
-            {},
-        )
-
+        context.setdefault("execution", {})
         context["execution"].update(
             {
-                "plan_id": getattr(
-                    plan,
-                    "id",
-                    None,
-                ),
-                "intent": getattr(
-                    plan,
-                    "intent",
-                    None,
-                ),
-                "original_task": getattr(
-                    plan,
-                    "original_task",
-                    None,
-                ),
-                "execution_mode": getattr(
-                    plan,
-                    "execution_mode",
-                    None,
-                ),
+                "plan_id": getattr(plan, "id", None),
+                "intent": getattr(plan, "intent", None),
+                "original_task": getattr(plan, "original_task", None),
+                "execution_mode": getattr(plan, "execution_mode", None),
             }
         )
 
         if step is not None:
             context["execution"]["current_step"] = {
-                "id": getattr(
-                    step,
-                    "id",
-                    None,
-                ),
-                "unit_type": getattr(
-                    step,
-                    "unit_type",
-                    None,
-                ),
-                "unit_name": getattr(
-                    step,
-                    "unit_name",
-                    None,
-                ),
-                "description": getattr(
-                    step,
-                    "description",
-                    None,
-                ),
-                "params": dict(
-                    getattr(
-                        step,
-                        "params",
-                        {},
-                    )
-                    or {}
-                ),
-                "depends_on": list(
-                    getattr(
-                        step,
-                        "depends_on",
-                        [],
-                    )
-                    or []
-                ),
+                "id": getattr(step, "id", None),
+                "unit_type": getattr(step, "unit_type", None),
+                "unit_name": getattr(step, "unit_name", None),
+                "description": getattr(step, "description", None),
+                "params": dict(getattr(step, "params", {}) or {}),
+                "depends_on": list(getattr(step, "depends_on", []) or []),
             }
 
-        return context
-
-    # ==========================================================
-    # Provider context
-    # ==========================================================
-
-    def load_providers(
-        self,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Ejecuta proveedores de contexto registrados.
-
-        Cada proveedor puede devolver:
-
-            dict
-
-        o:
-
-            None
-
-        Los datos se almacenan bajo la clave del proveedor.
-        """
-
-        for name, provider in self.providers.items():
-            try:
-                if hasattr(provider, "build"):
-                    data = provider.build(
-                        context,
-                    )
-                elif hasattr(provider, "get_context"):
-                    data = provider.get_context(
-                        context,
-                    )
-                elif callable(provider):
-                    data = provider(
-                        context,
-                    )
-                else:
-                    logger.warning(
-                        "Provider '%s' no tiene interfaz válida",
-                        name,
-                    )
-                    continue
-
-                if data is None:
-                    continue
-
-                if not isinstance(data, dict):
-                    logger.warning(
-                        "Provider '%s' devolvió %s; " "se esperaba dict",
-                        name,
-                        type(data).__name__,
-                    )
-                    continue
-
-                context[name] = data
-
-            except Exception:
-                logger.exception(
-                    "Error cargando provider=%s",
-                    name,
-                )
+        # ======================================================
+        # Cargar proveedores bajo demanda según el plan
+        # ======================================================
+        if plan is not None:
+            for key, provider in self._providers.items():
+                if plan.requires_context(key):
+                    try:
+                        provider.load(plan, context)
+                        logger.debug("Contexto cargado: %s", key)
+                    except Exception as e:
+                        logger.warning("Error cargando proveedor %s: %s", key, e)
 
         return context
 
@@ -194,47 +113,19 @@ class ContextManager:
     ) -> None:
         """
         Registra el resultado de un step en el contexto de runtime.
-
-        Los resultados se conservan por ID para permitir que
-        steps dependientes los consulten.
         """
-
-        execution = context.setdefault(
-            "execution",
-            {},
-        )
-
-        steps = execution.setdefault(
-            "steps",
-            {},
-        )
-
-        step_id = getattr(
-            step,
-            "id",
-            None,
-        )
+        execution = context.setdefault("execution", {})
+        steps = execution.setdefault("steps", {})
+        step_id = getattr(step, "id", None)
 
         if not step_id:
             return
 
         steps[step_id] = {
             "id": step_id,
-            "unit_type": getattr(
-                step,
-                "unit_type",
-                None,
-            ),
-            "unit_name": getattr(
-                step,
-                "unit_name",
-                None,
-            ),
-            "description": getattr(
-                step,
-                "description",
-                None,
-            ),
+            "unit_type": getattr(step, "unit_type", None),
+            "unit_name": getattr(step, "unit_name", None),
+            "description": getattr(step, "description", None),
             "result": result,
         }
 
@@ -248,36 +139,15 @@ class ContextManager:
         step: Any,
     ) -> dict[str, Any]:
         """
-        Obtiene exclusivamente los resultados de los steps
-        de los que depende el step actual.
+        Obtiene los resultados de los steps de los que depende el actual.
         """
-
-        execution = context.get(
-            "execution",
-            {},
-        )
-
-        steps = execution.get(
-            "steps",
-            {},
-        )
-
-        dependencies = (
-            getattr(
-                step,
-                "depends_on",
-                [],
-            )
-            or []
-        )
+        execution = context.get("execution", {})
+        steps = execution.get("steps", {})
+        dependencies = getattr(step, "depends_on", []) or []
 
         result: dict[str, Any] = {}
-
         for dependency_id in dependencies:
-            dependency = steps.get(
-                dependency_id,
-            )
-
+            dependency = steps.get(dependency_id)
             if dependency is not None:
                 result[dependency_id] = dependency
 
@@ -295,231 +165,35 @@ class ContextManager:
     ) -> dict[str, Any]:
         """
         Construye el contexto específico que recibirá un Agent.
-
-        No copia todo el runtime context.
-
-        Actualmente soporta especialmente:
-
-            agent:architect
         """
-
         agent_context: dict[str, Any] = {
             "execution": {
-                "plan_id": getattr(
-                    plan,
-                    "id",
-                    None,
-                ),
-                "intent": getattr(
-                    plan,
-                    "intent",
-                    None,
-                ),
-                "original_task": getattr(
-                    plan,
-                    "original_task",
-                    None,
-                ),
+                "plan_id": getattr(plan, "id", None),
+                "intent": getattr(plan, "intent", None),
+                "original_task": getattr(plan, "original_task", None),
                 "current_step": {
-                    "id": getattr(
-                        step,
-                        "id",
-                        None,
-                    ),
-                    "unit_type": getattr(
-                        step,
-                        "unit_type",
-                        None,
-                    ),
-                    "unit_name": getattr(
-                        step,
-                        "unit_name",
-                        None,
-                    ),
-                    "description": getattr(
-                        step,
-                        "description",
-                        None,
-                    ),
+                    "id": getattr(step, "id", None),
+                    "unit_type": getattr(step, "unit_type", None),
+                    "unit_name": getattr(step, "unit_name", None),
+                    "description": getattr(step, "description", None),
                 },
-            },
+            }
         }
 
-        dependency_results = self.get_dependency_results(
-            context,
-            step,
-        )
-
+        dependency_results = self.get_dependency_results(context, step)
         if dependency_results:
             agent_context["execution"]["dependencies"] = dependency_results
 
-        unit_name = (
-            str(
-                getattr(
-                    step,
-                    "unit_name",
-                    "",
-                )
-            )
-            .strip()
-            .lower()
-        )
-
-        # ------------------------------------------------------
-        # Arquitectura
-        # ------------------------------------------------------
-
-        if unit_name == "architect":
-            self._add_architecture_context(
-                agent_context,
-                dependency_results,
-            )
+        # Copiar contexto relevante para el agente
+        for key in (
+            "project",
+            "architecture",
+            "project_analysis",
+            "swarmforge",
+            "gentleman",
+            "standards",
+        ):
+            if key in context:
+                agent_context[key] = context[key]
 
         return agent_context
-
-    # ==========================================================
-    # Architecture context
-    # ==========================================================
-
-    def _add_architecture_context(
-        self,
-        target: dict[str, Any],
-        dependencies: dict[str, Any],
-    ) -> None:
-
-        for dependency in dependencies.values():
-
-            result = dependency.get(
-                "result",
-            )
-
-            if not isinstance(
-                result,
-                dict,
-            ):
-                continue
-
-            # ExecutionResult / dispatcher wrappers.
-            nested = result.get(
-                "result",
-            )
-
-            if isinstance(
-                nested,
-                dict,
-            ):
-                result = nested
-
-            architecture_context = result.get(
-                "architecture_context",
-            )
-
-            if isinstance(
-                architecture_context,
-                dict,
-            ):
-                target["architecture"] = architecture_context
-
-                target["project_summary"] = result.get(
-                    "summary",
-                    "",
-                )
-
-                return
-
-            # Compatibilidad con resultados antiguos.
-            snapshot = result.get(
-                "snapshot",
-            )
-
-            if isinstance(
-                snapshot,
-                dict,
-            ):
-                target["architecture"] = self._compact_snapshot(
-                    snapshot,
-                )
-
-                target["project_summary"] = result.get(
-                    "summary",
-                    "",
-                )
-
-                return
-
-    # ==========================================================
-    # Compatibility
-    # ==========================================================
-
-    @staticmethod
-    def _compact_snapshot(
-        snapshot: dict[str, Any],
-    ) -> dict[str, Any]:
-        """
-        Convierte un snapshot antiguo en contexto arquitectónico
-        sin transportar contenido fuente.
-        """
-
-        files = []
-
-        for item in snapshot.get(
-            "files",
-            [],
-        ):
-            if not isinstance(
-                item,
-                dict,
-            ):
-                continue
-
-            files.append(
-                {
-                    key: item.get(key)
-                    for key in (
-                        "path",
-                        "filename",
-                        "extension",
-                        "language",
-                        "lines",
-                        "size",
-                    )
-                    if key in item
-                }
-            )
-
-        return {
-            "project": {
-                "name": snapshot.get(
-                    "project_name",
-                    "Unknown",
-                ),
-                "root_path": snapshot.get(
-                    "root_path",
-                    "",
-                ),
-                "file_count": len(files),
-                "directory_count": len(
-                    snapshot.get(
-                        "directories",
-                        [],
-                    )
-                ),
-            },
-            "languages": dict(
-                snapshot.get(
-                    "languages",
-                    {},
-                )
-            ),
-            "extensions": dict(
-                snapshot.get(
-                    "extensions",
-                    {},
-                )
-            ),
-            "directories": snapshot.get(
-                "directories",
-                [],
-            ),
-            "files": files,
-        }

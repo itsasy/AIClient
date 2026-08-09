@@ -7,7 +7,6 @@ from typing import Type
 
 from agents.base import Agent
 from agents.architect import ArchitectAgent
-from agents.planner import PlannerAgent
 
 from runtime.registry.agent_registry import AgentRegistry
 
@@ -31,10 +30,7 @@ class AgentLoader:
         - Gestiona el lifecycle de ejecución.
     """
 
-    DEFAULT_AGENTS: tuple[Type[Agent], ...] = (
-        ArchitectAgent,
-        PlannerAgent,
-    )
+    DEFAULT_AGENTS: tuple[Type[Agent], ...] = (ArchitectAgent,)
 
     def __init__(
         self,
