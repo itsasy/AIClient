@@ -11,11 +11,20 @@ logger = logging.getLogger(__name__)
 
 class SkillManager:
     """
-    Fachada central de gestión de Skills.
+    Fachada central para la gestión de Skills.
 
-    El Manager coordina Registry + Loader.
+    Responsabilidades:
+        - Coordinar SkillLoader y SkillRegistry.
+        - Cargar Skills.
+        - Resolver Skills.
+        - Consultar capacidades y metadata.
+        - Exponer operaciones administrativas del sistema.
 
-    No ejecuta Skills.
+    No:
+        - Ejecuta Skills.
+        - Decide qué Skill debe ejecutarse.
+        - Gestiona el lifecycle de ExecutionPlan.
+        - Ejecuta Tools.
     """
 
     name = "skill_manager"
@@ -26,10 +35,11 @@ class SkillManager:
         loader: SkillLoader | None = None,
         auto_load: bool = True,
     ) -> None:
-
         self.registry = registry or SkillRegistry()
 
-        self.loader = loader or SkillLoader(self.registry)
+        self.loader = loader or SkillLoader(
+            self.registry,
+        )
 
         self.loaded_defaults = False
 
@@ -41,7 +51,6 @@ class SkillManager:
     # ==========================================================
 
     def load_defaults(self) -> None:
-
         if self.loaded_defaults:
             return
 
@@ -61,7 +70,6 @@ class SkillManager:
         self,
         module_path: str,
     ) -> bool:
-
         if not module_path:
             return False
 
@@ -70,7 +78,6 @@ class SkillManager:
         )
 
     def reload(self) -> None:
-
         self.clear()
 
         self.loader.clear_state()
@@ -87,21 +94,23 @@ class SkillManager:
         self,
         name: str | None,
     ) -> Skill | None:
-
         if not name:
             return None
 
-        return self.registry.get(name)
+        return self.registry.get(
+            name,
+        )
 
     def has(
         self,
         name: str | None,
     ) -> bool:
-
         if not name:
             return False
 
-        return self.registry.has(name)
+        return self.registry.has(
+            name,
+        )
 
     # ==========================================================
     # Capabilities
@@ -111,7 +120,6 @@ class SkillManager:
         self,
         capability: str,
     ) -> list[Skill]:
-
         return self.registry.find_by_capability(
             capability,
         )
@@ -120,55 +128,66 @@ class SkillManager:
         self,
         capability: str,
     ) -> bool:
-
         return self.registry.contains_capability(
             capability,
         )
 
-    def capabilities(
-        self,
-    ) -> dict[str, tuple[str, ...]]:
-
-        return self.registry.capabilities()
-
     # ==========================================================
-    # Queries
+    # Registry queries
     # ==========================================================
 
     def list(self) -> list[str]:
-
         return self.registry.list()
 
     def count(self) -> int:
-
         return self.registry.count()
 
-    def loaded(self) -> list[str]:
-
-        return self.loader.loaded()
-
     def aliases(self) -> dict[str, str]:
-
         return self.registry.aliases()
 
     def metadata(self) -> list[dict]:
-
         return self.registry.metadata()
 
+    def capabilities(
+        self,
+    ) -> dict[str, tuple[str, ...]]:
+        return self.registry.capabilities()
+
     # ==========================================================
-    # Lifecycle
+    # Loader state
+    # ==========================================================
+
+    def loaded(self) -> list[str]:
+        """
+        Skills descubiertas y cargadas por SkillLoader.
+
+        El estado de carga pertenece al Loader, no al Registry.
+        """
+        return self.loader.loaded()
+
+    def loader_stats(self) -> dict[str, int]:
+        return self.loader.stats()
+
+    # ==========================================================
+    # Administration
     # ==========================================================
 
     def unregister(
         self,
         name: str,
     ) -> None:
-
         if not name:
             return
 
-        self.registry.unregister(name)
+        self.registry.unregister(
+            name,
+        )
 
     def clear(self) -> None:
+        """
+        Limpia únicamente las Skills registradas.
 
+        El estado interno del Loader se mantiene separado y
+        puede reiniciarse mediante clear_state().
+        """
         self.registry.clear()

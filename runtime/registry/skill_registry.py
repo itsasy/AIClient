@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from skills.base import Skill
@@ -11,21 +11,21 @@ logger = logging.getLogger(__name__)
 
 class SkillRegistry:
     """
-    Registro central de Skills.
+    Registro central y único de Skills.
 
     Responsabilidades:
-
-    - Registrar Skills.
-    - Resolver Skills por nombre o alias.
-    - Crear instancias bajo demanda.
-    - Consultar capacidades y metadata.
+        - Registrar clases Skill.
+        - Resolver Skills por nombre o alias.
+        - Crear instancias.
+        - Consultar capabilities.
+        - Exponer metadata.
 
     No:
-
-    - Ejecuta Skills.
-    - Gestiona lifecycle.
-    - Decide qué Skill ejecutar.
-    - Conoce ExecutionEngine.
+        - Ejecuta Skills.
+        - Construye contexto.
+        - Decide qué Skill ejecutar.
+        - Gestiona ExecutionPlan.
+        - Gestiona lifecycle.
     """
 
     def __init__(self) -> None:
@@ -82,6 +82,7 @@ class SkillRegistry:
         )
 
         if callable(validate_definition):
+
             errors = validate_definition()
 
             if errors:
@@ -92,15 +93,28 @@ class SkillRegistry:
         self._skills[key] = factory
 
         if aliases:
+
             for alias in aliases:
-                alias_key = self.normalize(alias)
+
+                alias_key = self.normalize(
+                    alias,
+                )
 
                 if not alias_key:
                     continue
 
-                if alias_key in self._aliases and self._aliases[alias_key] != key:
+                if alias_key in self._skills and alias_key != key:
                     raise ValueError(
-                        f"Alias de Skill en conflicto: {alias_key}",
+                        f"Alias colisiona con Skill: " f"{alias_key}",
+                    )
+
+                existing = self._aliases.get(
+                    alias_key,
+                )
+
+                if existing is not None and existing != key:
+                    raise ValueError(
+                        f"Alias ya registrado: " f"{alias_key}",
                     )
 
                 self._aliases[alias_key] = key
@@ -140,17 +154,10 @@ class SkillRegistry:
                 "Skill no registrada=%s",
                 key,
             )
+
             return None
 
-        try:
-            return factory()
-
-        except Exception:
-            logger.exception(
-                "Error creando Skill=%s",
-                key,
-            )
-            raise
+        return factory()
 
     # ==========================================================
     # Queries
@@ -188,21 +195,17 @@ class SkillRegistry:
         )
 
     # ==========================================================
-    # Capability queries
+    # Capabilities
     # ==========================================================
 
-    def find_by_capability(
+    def capabilities(
         self,
-        capability: str,
-    ) -> list[Skill]:
+    ) -> dict[str, tuple[str, ...]]:
 
-        normalized = self.normalize(
-            capability,
-        )
-
-        result: list[Skill] = []
+        result: dict[str, tuple[str, ...]] = {}
 
         for name in self.list():
+
             factory = self._skills[name]
 
             capabilities = getattr(
@@ -211,9 +214,39 @@ class SkillRegistry:
                 (),
             )
 
-            normalized_capabilities = {self.normalize(item) for item in capabilities}
+            result[name] = tuple(
+                capabilities or (),
+            )
 
-            if normalized in normalized_capabilities:
+        return result
+
+    def find_by_capability(
+        self,
+        capability: str,
+    ) -> list[Skill]:
+
+        target = self.normalize(
+            capability,
+        )
+
+        if not target:
+            return []
+
+        result: list[Skill] = []
+
+        for name in self.list():
+
+            factory = self._skills[name]
+
+            capabilities = getattr(
+                factory,
+                "capabilities",
+                (),
+            )
+
+            normalized = {self.normalize(item) for item in capabilities}
+
+            if target in normalized:
                 result.append(
                     factory(),
                 )
@@ -231,36 +264,18 @@ class SkillRegistry:
             )
         )
 
-    def capabilities(
-        self,
-    ) -> dict[str, tuple[str, ...]]:
-
-        result: dict[str, tuple[str, ...]] = {}
-
-        for name in self.list():
-            factory = self._skills[name]
-
-            result[name] = tuple(
-                getattr(
-                    factory,
-                    "capabilities",
-                    (),
-                )
-            )
-
-        return result
-
     # ==========================================================
     # Metadata
     # ==========================================================
 
     def metadata(
         self,
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
 
-        result: list[dict] = []
+        result: list[dict[str, Any]] = []
 
         for name in self.list():
+
             factory = self._skills[name]
 
             result.append(

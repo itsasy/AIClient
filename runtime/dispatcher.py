@@ -20,13 +20,12 @@ class UnitDispatcher:
     Responsabilidades:
         - Resolver Agent o Skill.
         - Invocar su contrato de ejecución.
-        - Normalizar errores de infraestructura de dispatch.
+        - Normalizar errores de dispatch.
 
     No:
         - Decide qué unidad ejecutar.
-        - Gestiona el lifecycle del plan.
-        - Gestiona el lifecycle del step.
-        - Construye contexto.
+        - Construye ExecutionPlans.
+        - Gestiona lifecycle.
         - Ejecuta retries.
         - Evalúa resultados.
         - Hace learning.
@@ -51,31 +50,28 @@ class UnitDispatcher:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        unit_type = step.unit_type
-        unit_name = step.unit_name
-
-        if unit_type == "agent":
+        if step.unit_type == "agent":
             return self._dispatch_agent(
-                plan=plan,
-                step=step,
-                context=context,
+                plan,
+                step,
+                context,
             )
 
-        if unit_type == "skill":
+        if step.unit_type == "skill":
             return self._dispatch_skill(
-                plan=plan,
-                step=step,
-                context=context,
+                plan,
+                step,
+                context,
             )
 
         return ExecutionResult.fail(
             plan_id=plan.id,
-            error=f"Tipo de unidad inválido: {unit_type}",
+            error=f"Tipo de unidad inválido: {step.unit_type}",
             executor="dispatcher",
             metadata={
                 "step_id": step.id,
-                "unit_type": unit_type,
-                "unit_name": unit_name,
+                "unit_type": step.unit_type,
+                "unit_name": step.unit_name,
             },
         )
 

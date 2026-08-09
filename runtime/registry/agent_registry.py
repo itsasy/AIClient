@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Type
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from agents.base import Agent
@@ -11,23 +11,23 @@ logger = logging.getLogger(__name__)
 
 class AgentRegistry:
     """
-    Registro central de Agents.
+    Registro central y único de Agents.
 
     Responsabilidades:
-        - Registrar implementaciones de Agents.
+        - Registrar clases Agent.
         - Resolver Agents por nombre o alias.
-        - Crear instancias bajo demanda.
-        - Exponer metadata básica del registro.
+        - Crear instancias.
+        - Exponer metadata.
 
     No:
         - Ejecuta Agents.
-        - Conoce ExecutionEngine.
-        - Conoce ExecutionPlan.
-        - Decide qué Agent debe ejecutarse.
+        - Decide qué Agent ejecutar.
+        - Gestiona ExecutionPlan.
+        - Gestiona lifecycle.
     """
 
     def __init__(self) -> None:
-        self._agents: dict[str, Type[Agent]] = {}
+        self._agents: dict[str, type[Agent]] = {}
         self._aliases: dict[str, str] = {}
 
     # ==========================================================
@@ -38,6 +38,7 @@ class AgentRegistry:
     def normalize(
         value: str | None,
     ) -> str:
+
         if not value:
             return ""
 
@@ -50,10 +51,11 @@ class AgentRegistry:
     def register(
         self,
         name: str,
-        factory: Type[Agent],
+        factory: type[Agent],
         aliases: tuple[str, ...] | list[str] | None = None,
         overwrite: bool = False,
     ) -> None:
+
         key = self.normalize(name)
 
         if not key:
@@ -71,10 +73,6 @@ class AgentRegistry:
                 f"Agent ya registrado: {key}",
             )
 
-        # ------------------------------------------------------
-        # Validar contrato del Agent
-        # ------------------------------------------------------
-
         validate_definition = getattr(
             factory,
             "validate_definition",
@@ -82,6 +80,7 @@ class AgentRegistry:
         )
 
         if callable(validate_definition):
+
             errors = validate_definition()
 
             if errors:
@@ -89,18 +88,34 @@ class AgentRegistry:
                     f"Agent inválido '{key}': " + "; ".join(errors),
                 )
 
-        # ------------------------------------------------------
-        # Registrar
-        # ------------------------------------------------------
-
         self._agents[key] = factory
 
         if aliases:
-            for alias in aliases:
-                alias_key = self.normalize(alias)
 
-                if alias_key:
-                    self._aliases[alias_key] = key
+            for alias in aliases:
+
+                alias_key = self.normalize(
+                    alias,
+                )
+
+                if not alias_key:
+                    continue
+
+                if alias_key in self._agents and alias_key != key:
+                    raise ValueError(
+                        f"Alias colisiona con Agent: " f"{alias_key}",
+                    )
+
+                existing = self._aliases.get(
+                    alias_key,
+                )
+
+                if existing is not None and existing != key:
+                    raise ValueError(
+                        f"Alias ya registrado: " f"{alias_key}",
+                    )
+
+                self._aliases[alias_key] = key
 
         logger.info(
             "Agent registrado=%s",
@@ -115,6 +130,7 @@ class AgentRegistry:
         self,
         name: str,
     ) -> str:
+
         key = self.normalize(name)
 
         return self._aliases.get(
@@ -126,11 +142,10 @@ class AgentRegistry:
         self,
         name: str,
     ) -> Agent | None:
+
         key = self.resolve_name(name)
 
-        factory = self._agents.get(
-            key,
-        )
+        factory = self._agents.get(key)
 
         if factory is None:
             logger.warning(
@@ -140,16 +155,7 @@ class AgentRegistry:
 
             return None
 
-        try:
-            return factory()
-
-        except Exception:
-            logger.exception(
-                "Error creando Agent=%s",
-                key,
-            )
-
-            raise
+        return factory()
 
     # ==========================================================
     # Queries
@@ -159,11 +165,13 @@ class AgentRegistry:
         self,
         name: str,
     ) -> bool:
+
         return self.resolve_name(name) in self._agents
 
     def list(
         self,
     ) -> list[str]:
+
         return sorted(
             self._agents.keys(),
         )
@@ -171,6 +179,7 @@ class AgentRegistry:
     def count(
         self,
     ) -> int:
+
         return len(
             self._agents,
         )
@@ -178,6 +187,7 @@ class AgentRegistry:
     def aliases(
         self,
     ) -> dict[str, str]:
+
         return dict(
             self._aliases,
         )
@@ -188,37 +198,42 @@ class AgentRegistry:
 
     def metadata(
         self,
-    ) -> list[dict]:
-        result = []
+    ) -> list[dict[str, Any]]:
+
+        result: list[dict[str, Any]] = []
 
         for name in self.list():
+
             factory = self._agents[name]
-
-            metadata_method = getattr(
-                factory,
-                "metadata",
-                None,
-            )
-
-            if callable(metadata_method):
-                try:
-                    result.append(
-                        metadata_method(
-                            factory(),
-                        ),
-                    )
-                    continue
-
-                except Exception:
-                    logger.exception(
-                        "No se pudo obtener metadata " "del Agent=%s",
-                        name,
-                    )
 
             result.append(
                 {
                     "name": name,
-                },
+                    "description": getattr(
+                        factory,
+                        "description",
+                        "",
+                    ),
+                    "version": getattr(
+                        factory,
+                        "version",
+                        "",
+                    ),
+                    "aliases": tuple(
+                        getattr(
+                            factory,
+                            "aliases",
+                            (),
+                        )
+                    ),
+                    "capabilities": tuple(
+                        getattr(
+                            factory,
+                            "capabilities",
+                            (),
+                        )
+                    ),
+                }
             )
 
         return result
@@ -231,9 +246,8 @@ class AgentRegistry:
         self,
         name: str,
     ) -> None:
-        key = self.resolve_name(
-            name,
-        )
+
+        key = self.resolve_name(name)
 
         self._agents.pop(
             key,
@@ -250,6 +264,7 @@ class AgentRegistry:
     def clear(
         self,
     ) -> None:
+
         self._agents.clear()
         self._aliases.clear()
 

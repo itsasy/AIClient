@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Any
 
-from agents.loader import AgentLoader
+from agents.manager import AgentManager
 from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
@@ -12,9 +12,7 @@ from core.execution_step import ExecutionStep
 from core.intent import IntentAnalyzer
 from core.planning import PlanBuilder
 from runtime.dispatcher import UnitDispatcher
-from runtime.registry.agent_registry import AgentRegistry
-from runtime.registry.skill_registry import SkillRegistry
-from skills.loader import SkillLoader
+from skills.manager import SkillManager
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +49,29 @@ class ExecutionEngine:
             ↓
         learning
 
-    Ningún otro componente coordina el lifecycle.
+    El Engine coordina la ejecución.
+
+    No:
+        - Descubre Agents.
+        - Descubre Skills.
+        - Decide qué Agent/Skill utilizar.
+        - Registra unidades.
     """
 
     name = "execution_engine"
 
     def __init__(
         self,
-        agent_registry: AgentRegistry | None = None,
-        skill_registry: SkillRegistry | None = None,
+        agent_manager: AgentManager | None = None,
+        skill_manager: SkillManager | None = None,
         context_manager: ContextManager | None = None,
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
     ) -> None:
+
+        # ------------------------------------------------------
+        # Core services
+        # ------------------------------------------------------
 
         self.context_manager = context_manager or ContextManager()
 
@@ -72,35 +80,20 @@ class ExecutionEngine:
         self.plan_builder = plan_builder or PlanBuilder()
 
         # ------------------------------------------------------
-        # Registries
+        # Managers
         # ------------------------------------------------------
 
-        self.agent_registry = agent_registry or AgentRegistry()
+        self.agent_manager = agent_manager or AgentManager()
 
-        self.skill_registry = skill_registry or SkillRegistry()
-
-        # ------------------------------------------------------
-        # Loaders
-        # ------------------------------------------------------
-
-        self.agent_loader = AgentLoader(
-            self.agent_registry,
-        )
-
-        self.skill_loader = SkillLoader(
-            self.skill_registry,
-        )
-
-        self.agent_loader.load_defaults()
-        self.skill_loader.load_defaults()
+        self.skill_manager = skill_manager or SkillManager()
 
         # ------------------------------------------------------
         # Dispatcher
         # ------------------------------------------------------
 
         self.dispatcher = UnitDispatcher(
-            agent_registry=self.agent_registry,
-            skill_registry=self.skill_registry,
+            agent_registry=self.agent_manager.registry,
+            skill_registry=self.skill_manager.registry,
         )
 
         # ------------------------------------------------------
@@ -128,8 +121,8 @@ class ExecutionEngine:
 
         logger.info(
             "ExecutionEngine inicializado | agents=%s | skills=%s",
-            self.agent_registry.list(),
-            self.skill_registry.list(),
+            self.agent_manager.list(),
+            self.skill_manager.list(),
         )
 
     # ==========================================================
@@ -162,13 +155,9 @@ class ExecutionEngine:
         )
 
         if metadata:
-            plan.metadata.update(
-                metadata,
-            )
+            plan.metadata.update(metadata)
 
-        return self.execute(
-            plan,
-        )
+        return self.execute(plan)
 
     def execute(
         self,
@@ -204,16 +193,9 @@ class ExecutionEngine:
             # 2. Context
             # --------------------------------------------------
 
-            context = (
-                self.context_manager.build(
-                    plan,
-                )
-                or {}
-            )
+            context = self.context_manager.build(plan) or {}
 
-            plan.loaded_context = dict(
-                context,
-            )
+            plan.loaded_context = dict(context)
 
             self._initialize_execution_context(
                 plan,
@@ -227,7 +209,7 @@ class ExecutionEngine:
             plan.mark_running()
 
             # --------------------------------------------------
-            # 4. Execute + evaluate + retry
+            # 4. Execute / evaluate / retry
             # --------------------------------------------------
 
             result = self._execute_with_retries(
@@ -308,9 +290,7 @@ class ExecutionEngine:
             }
         )
 
-        self._update_metrics(
-            result,
-        )
+        self._update_metrics(result)
 
         return result
 
@@ -372,15 +352,11 @@ class ExecutionEngine:
             "status": result.status,
             "result": result.result,
             "error": result.error,
-            "metadata": dict(
-                result.metadata,
-            ),
+            "metadata": dict(result.metadata),
         }
 
         if result.is_success:
-            step.mark_completed(
-                result.result,
-            )
+            step.mark_completed(result.result)
 
         elif result.is_failure:
             step.mark_failed(
@@ -396,9 +372,7 @@ class ExecutionEngine:
         step: ExecutionStep,
     ) -> dict[str, Any]:
 
-        step_context = dict(
-            context,
-        )
+        step_context = dict(context)
 
         execution = context.get(
             "execution",
@@ -420,18 +394,14 @@ class ExecutionEngine:
             if dependency is not None:
                 dependencies[dependency_id] = dependency
 
-        step_context["execution"] = dict(
-            execution,
-        )
+        step_context["execution"] = dict(execution)
 
         step_context["execution"]["current_step"] = {
             "id": step.id,
             "description": step.description,
             "unit_type": step.unit_type,
             "unit_name": step.unit_name,
-            "params": dict(
-                step.params,
-            ),
+            "params": dict(step.params),
         }
 
         step_context["execution"]["dependencies"] = dependencies
@@ -456,7 +426,6 @@ class ExecutionEngine:
         )
 
         retries = 0
-        last_result: ExecutionResult | None = None
 
         while True:
 
@@ -476,11 +445,30 @@ class ExecutionEngine:
                 result,
             )
 
+            # --------------------------------------------------
+            # Successful execution
+            # --------------------------------------------------
+
             if result.is_success or result.is_partial:
                 return result
 
-            if not result.is_failure:
+            # --------------------------------------------------
+            # Cancelled execution
+            # --------------------------------------------------
+
+            if result.is_cancelled:
                 return result
+
+            # --------------------------------------------------
+            # Only failure/retry states may continue
+            # --------------------------------------------------
+
+            if not (result.is_failure or result.status == "retry"):
+                return result
+
+            # --------------------------------------------------
+            # Retry limit
+            # --------------------------------------------------
 
             if retries >= max_retries:
                 return result
@@ -490,8 +478,6 @@ class ExecutionEngine:
             self.metrics["retries"] += 1
 
             result.metadata["retry_count"] = retries
-
-            last_result = result
 
             logger.info(
                 "Retry plan=%s intento=%s/%s",
@@ -506,8 +492,6 @@ class ExecutionEngine:
             )
 
             time.sleep(0.5)
-
-        return last_result
 
     def _reset_execution_context(
         self,
@@ -549,9 +533,7 @@ class ExecutionEngine:
             description=(plan.objective or plan.original_task),
             unit_type=plan.execution_unit_type,
             unit_name=plan.execution_unit,
-            params=dict(
-                plan.params,
-            ),
+            params=dict(plan.params),
         )
 
         step.mark_running()
@@ -631,9 +613,7 @@ class ExecutionEngine:
                     result,
                 )
 
-                results.append(
-                    result,
-                )
+                results.append(result)
 
                 errors.append(
                     {
@@ -669,9 +649,7 @@ class ExecutionEngine:
                 result,
             )
 
-            results.append(
-                result,
-            )
+            results.append(result)
 
             if result.is_failure:
 
@@ -808,10 +786,7 @@ class ExecutionEngine:
             result,
         )
 
-        if evaluation.get(
-            "pass",
-            True,
-        ):
+        if evaluation.get("pass", True):
             return result
 
         return ExecutionResult.retry(
@@ -834,7 +809,7 @@ class ExecutionEngine:
         result: ExecutionResult,
     ) -> None:
 
-        if not result.is_success and not result.is_partial:
+        if not (result.is_success or result.is_partial):
             return
 
         try:
@@ -937,6 +912,9 @@ class ExecutionEngine:
         elif result.is_cancelled:
             self.metrics["cancelled"] += 1
 
+    def get_metrics(self) -> dict[str, int]:
+        return dict(self.metrics)
+
     # ==========================================================
     # Failure
     # ==========================================================
@@ -957,16 +935,4 @@ class ExecutionEngine:
             plan_id=plan.id,
             error=error,
             executor=self.name,
-        )
-
-    # ==========================================================
-    # Metrics API
-    # ==========================================================
-
-    def get_metrics(
-        self,
-    ) -> dict[str, int]:
-
-        return dict(
-            self.metrics,
         )
