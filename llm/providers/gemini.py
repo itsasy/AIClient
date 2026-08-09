@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from google import genai
 from google.genai import errors
@@ -20,12 +23,17 @@ class GeminiProvider(LLMProvider):
 
     name = "gemini"
 
-    DEFAULT_SYSTEM_PROMPT = "You are a senior software architect " "and AI coding assistant."
+    DEFAULT_SYSTEM_PROMPT = (
+        "You are a senior software architect "
+        "and AI coding assistant."
+    )
 
-    def __init__(self):
+    def __init__(self) -> None:
 
         if not Config.GEMINI_API_KEY:
-            raise ProviderAuthenticationError("GEMINI_API_KEY no está configurada.")
+            raise ProviderAuthenticationError(
+                "GEMINI_API_KEY no está configurada."
+            )
 
         self.client = genai.Client(
             api_key=Config.GEMINI_API_KEY,
@@ -36,37 +44,39 @@ class GeminiProvider(LLMProvider):
     def generate(
         self,
         prompt: str,
-        **kwargs,
+        *,
+        model: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        **kwargs: Any,
     ) -> str:
 
         if not prompt or not prompt.strip():
-            raise ProviderError("El prompt no puede estar vacío.")
+            raise ProviderError(
+                "El prompt no puede estar vacío."
+            )
 
-        system_prompt = kwargs.get(
-            "system_role",
-            self.DEFAULT_SYSTEM_PROMPT,
+        selected_model = model or self.model
+
+        selected_system_prompt = (
+            system_prompt or self.DEFAULT_SYSTEM_PROMPT
         )
 
         logger.info(
-            "Enviando solicitud a Gemini | Modelo: %s",
-            self.model,
+            "Gemini request | model=%s",
+            selected_model,
         )
 
         try:
 
             response = self.client.models.generate_content(
-                model=self.model,
+                model=selected_model,
                 contents=prompt,
                 config=GenerateContentConfig(
-                    system_instruction=system_prompt,
-                    temperature=kwargs.get(
-                        "temperature",
-                        0.2,
-                    ),
-                    max_output_tokens=kwargs.get(
-                        "max_tokens",
-                        4096,
-                    ),
+                    system_instruction=selected_system_prompt,
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
                 ),
             )
 
@@ -106,11 +116,14 @@ class GeminiProvider(LLMProvider):
                 except Exception:
 
                     logger.debug(
-                        "No se pudo extraer texto " "desde candidates de Gemini.",
+                        "No se pudo extraer texto "
+                        "desde candidates de Gemini.",
                         exc_info=True,
                     )
 
-            raise ProviderError("Gemini devolvió una respuesta vacía.")
+            raise ProviderError(
+                "Gemini devolvió una respuesta vacía."
+            )
 
         except errors.ClientError as exc:
 
@@ -120,23 +133,26 @@ class GeminiProvider(LLMProvider):
                 None,
             )
 
-            if status_code in (
-                401,
-                403,
-            ):
+            if status_code in (401, 403):
+
                 raise ProviderAuthenticationError(
-                    f"Error de autenticación " f"en Gemini: {exc}"
+                    f"Error de autenticación en Gemini: {exc}"
                 ) from exc
 
             if status_code == 429:
-                raise ProviderRateLimitError(f"Gemini alcanzó el límite " f"de uso: {exc}") from exc
 
-            raise ProviderError(f"Error de cliente en Gemini: {exc}") from exc
+                raise ProviderRateLimitError(
+                    f"Gemini alcanzó el límite de uso: {exc}"
+                ) from exc
+
+            raise ProviderError(
+                f"Error de cliente en Gemini: {exc}"
+            ) from exc
 
         except errors.ServerError as exc:
 
             raise ProviderUnavailableError(
-                "Gemini no está disponible " f"temporalmente: {exc}"
+                f"Gemini no está disponible temporalmente: {exc}"
             ) from exc
 
         except (
@@ -149,13 +165,17 @@ class GeminiProvider(LLMProvider):
 
         except errors.APIError as exc:
 
-            raise ProviderError(f"Error de API de Gemini: {exc}") from exc
+            raise ProviderError(
+                f"Error de API de Gemini: {exc}"
+            ) from exc
 
         except Exception as exc:
 
             logger.exception(
-                "Error inesperado usando Gemini (%s).",
-                self.model,
+                "Error inesperado usando Gemini | model=%s",
+                selected_model,
             )
 
-            raise ProviderError(f"Error inesperado en Gemini: {exc}") from exc
+            raise ProviderError(
+                f"Error inesperado en Gemini: {exc}"
+            ) from exc

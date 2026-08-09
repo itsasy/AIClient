@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import ClassVar
 
 from core.config import Config
 from core.execution_plan import ExecutionPlan
@@ -10,18 +11,30 @@ logger = logging.getLogger(__name__)
 
 class ProviderSelector:
     """
-    Selecciona proveedor LLM según ExecutionPlan.
+    Selecciona el proveedor LLM y su cadena de fallback.
 
-    Prioridad:
+    Responsabilidades:
+        - Resolver el proveedor preferido.
+        - Resolver la categoría del plan.
+        - Obtener proveedor/fallbacks desde Config.
+        - Normalizar la cadena de fallback.
 
-        1. preferred_provider
-        2. intent_category reconocida
+    No:
+        - Construye prompts.
+        - Ejecuta proveedores.
+        - Modifica el ExecutionPlan.
+        - Decide qué agente o skill ejecutar.
+
+    Prioridad de selección:
+
+        1. preferred_provider explícito
+        2. intent_category
         3. execution_unit_type
         4. execution_mode
         5. default
     """
 
-    CATEGORY_MAP = {
+    CATEGORY_MAP: ClassVar[dict[str, tuple[str, list[str]]]] = {
         "code": (
             Config.CODE_PROVIDER,
             Config.CODE_FALLBACKS,
@@ -56,7 +69,7 @@ class ProviderSelector:
         ),
     }
 
-    CATEGORY_ALIASES = {
+    CATEGORY_ALIASES: ClassVar[dict[str, str]] = {
         "project": "architecture",
         "planning": "architecture",
         "analysis": "architecture",
@@ -70,69 +83,42 @@ class ProviderSelector:
         cls,
         plan: ExecutionPlan,
     ) -> tuple[str, list[str]]:
+        """
+        Selecciona proveedor y fallback chain para un plan.
 
-        # ======================================================
+        Returns:
+            tuple[str, list[str]]:
+                proveedor principal y proveedores fallback.
+        """
+
+        if plan is None:
+            raise ValueError("plan no puede ser None.")
+
+        # --------------------------------------------------
         # 1. Provider explícito
-        # ======================================================
+        # --------------------------------------------------
 
-        preferred = plan.metadata.get(
-            "preferred_provider",
-        )
+        preferred = cls._get_preferred_provider(plan)
 
         if preferred:
-            provider = (
-                str(
-                    preferred,
-                )
-                .lower()
-                .strip()
+            fallbacks = cls._clean_chain(
+                preferred,
+                Config.DEFAULT_FALLBACKS,
             )
 
             logger.info(
-                "Provider forzado=%s",
-                provider,
+                "Provider explícito seleccionado | provider=%s | fallbacks=%s",
+                preferred,
+                fallbacks,
             )
 
-            return (
-                provider,
-                cls._clean_chain(
-                    provider,
-                    Config.DEFAULT_FALLBACKS,
-                ),
-            )
+            return preferred, fallbacks
 
-        # ======================================================
-        # 2. Intent category
-        # ======================================================
+        # --------------------------------------------------
+        # 2. Resolver categoría
+        # --------------------------------------------------
 
-        category = cls._category_from_intent(
-            plan.intent_category,
-        )
-
-        # ======================================================
-        # 3. Execution unit
-        # ======================================================
-
-        if category is None:
-            category = cls._category_from_unit(
-                plan.execution_unit_type,
-            )
-
-        # ======================================================
-        # 4. Execution mode
-        # ======================================================
-
-        if category is None:
-            category = cls._category_from_mode(
-                plan,
-            )
-
-        # ======================================================
-        # 5. Default
-        # ======================================================
-
-        if category is None:
-            category = "fast"
+        category = cls._resolve_category(plan)
 
         provider, fallbacks = cls.CATEGORY_MAP.get(
             category,
@@ -142,21 +128,84 @@ class ProviderSelector:
             ),
         )
 
-        logger.info(
-            "Provider=%s | category=%s | unit=%s:%s",
+        provider = cls._normalize_provider(provider)
+
+        fallbacks = cls._clean_chain(
             provider,
-            category,
-            plan.execution_unit_type,
-            plan.execution_unit,
+            fallbacks,
         )
 
-        return (
+        logger.info(
+            "Provider seleccionado | provider=%s | category=%s | fallbacks=%s",
             provider,
-            cls._clean_chain(
-                provider,
-                fallbacks,
-            ),
+            category,
+            fallbacks,
         )
+
+        return provider, fallbacks
+
+    # ======================================================
+    # Provider
+    # ======================================================
+
+    @classmethod
+    def _get_preferred_provider(
+        cls,
+        plan: ExecutionPlan,
+    ) -> str | None:
+
+        preferred = plan.metadata.get("preferred_provider")
+
+        if preferred is None:
+            return None
+
+        normalized = cls._normalize_provider(str(preferred))
+
+        return normalized or None
+
+    @staticmethod
+    def _normalize_provider(
+        provider: str,
+    ) -> str:
+
+        return provider.strip().lower()
+
+    # ======================================================
+    # Category resolution
+    # ======================================================
+
+    @classmethod
+    def _resolve_category(
+        cls,
+        plan: ExecutionPlan,
+    ) -> str:
+
+        # 1. Intent category
+        category = cls._category_from_intent(
+            plan.intent_category,
+        )
+
+        if category:
+            return category
+
+        # 2. Execution unit
+        category = cls._category_from_unit(
+            plan.execution_unit_type,
+        )
+
+        if category:
+            return category
+
+        # 3. Execution mode
+        category = cls._category_from_mode(
+            plan,
+        )
+
+        if category:
+            return category
+
+        # 4. Default
+        return "fast"
 
     @classmethod
     def _category_from_intent(
@@ -167,7 +216,7 @@ class ProviderSelector:
         if not intent_category:
             return None
 
-        normalized = intent_category.lower().strip()
+        normalized = str(intent_category).strip().lower()
 
         normalized = cls.CATEGORY_ALIASES.get(
             normalized,
@@ -175,6 +224,10 @@ class ProviderSelector:
         )
 
         if normalized not in cls.CATEGORY_MAP:
+            logger.debug(
+                "Intent category no reconocida=%s",
+                normalized,
+            )
             return None
 
         return normalized
@@ -187,15 +240,15 @@ class ProviderSelector:
         if not unit_type:
             return None
 
-        normalized = unit_type.lower().strip()
-
-        if normalized == "agent":
-            return "architecture"
+        normalized = str(unit_type).strip().lower()
 
         if normalized == "skill":
             return "code"
 
-        return "fast"
+        if normalized == "agent":
+            return "architecture"
+
+        return None
 
     @staticmethod
     def _category_from_mode(
@@ -207,23 +260,42 @@ class ProviderSelector:
 
         return None
 
-    @staticmethod
+    # ======================================================
+    # Fallback chain
+    # ======================================================
+
+    @classmethod
     def _clean_chain(
+        cls,
         provider: str,
-        chain: list[str],
+        chain: list[str] | tuple[str, ...] | None,
     ) -> list[str]:
+
+        normalized_provider = cls._normalize_provider(
+            provider,
+        )
+
+        if not chain:
+            return []
 
         clean: list[str] = []
 
-        provider = provider.lower()
-
         for item in chain:
-            item = item.lower()
 
-            if item == provider:
+            if item is None:
                 continue
 
-            if item not in clean:
-                clean.append(item)
+            normalized = cls._normalize_provider(str(item))
+
+            if not normalized:
+                continue
+
+            if normalized == normalized_provider:
+                continue
+
+            if normalized in clean:
+                continue
+
+            clean.append(normalized)
 
         return clean
