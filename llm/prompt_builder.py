@@ -4,20 +4,26 @@ import json
 import logging
 from typing import Any
 
+from core.execution_plan import ExecutionPlan
+
 logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
     """
-    Construye prompts para el LLM.
+    Construye prompts para el LLM a partir de un ExecutionPlan
+    y del contexto explícitamente proporcionado.
 
     Responsabilidad:
 
-        structured context
-            ↓
-        task prompt
+        ExecutionPlan + structured context
+                    ↓
+                task prompt
 
-    No debe serializar indiscriminadamente todo el runtime.
+    No consulta contexto externo.
+    No accede a ContextManager.
+    No accede a proveedores LLM.
+    No ejecuta Agents ni Skills.
     """
 
     MAX_CONTEXT_CHARS = 30_000
@@ -44,8 +50,9 @@ Reglas obligatorias:
         self,
         max_context_chars: int | None = None,
     ) -> None:
-
-        self.max_context_chars = max_context_chars or self.MAX_CONTEXT_CHARS
+        self.max_context_chars = (
+            max_context_chars if max_context_chars is not None else self.MAX_CONTEXT_CHARS
+        )
 
     # ==========================================================
     # Public API
@@ -53,46 +60,18 @@ Reglas obligatorias:
 
     def build(
         self,
-        plan: Any,
+        plan: ExecutionPlan,
         context: dict[str, Any] | None = None,
     ) -> str:
 
-        context = dict(
-            context or {},
-        )
-
-        intent = getattr(
-            plan,
-            "intent",
-            None,
-        )
-
-        original_task = getattr(
-            plan,
-            "original_task",
-            "",
-        )
-
-        unit_type = getattr(
-            plan,
-            "execution_unit_type",
-            None,
-        )
-
-        unit_name = getattr(
-            plan,
-            "execution_unit",
-            None,
-        )
+        context = dict(context or {})
 
         logger.info(
             "Construyendo prompt | context=%s",
             list(context.keys()),
         )
 
-        compact_context = self._prepare_context(
-            context,
-        )
+        compact_context = self._prepare_context(context)
 
         serialized_context = self._serialize(
             compact_context,
@@ -110,10 +89,7 @@ Reglas obligatorias:
             )
 
         prompt = self._compose(
-            original_task=original_task,
-            intent=intent,
-            unit_type=unit_type,
-            unit_name=unit_name,
+            plan=plan,
             context=serialized_context,
         )
 
@@ -135,46 +111,22 @@ Reglas obligatorias:
 
         prepared: dict[str, Any] = {}
 
-        # ------------------------------------------------------
-        # Agent role
-        # ------------------------------------------------------
-
         if "agent_role" in context:
             prepared["agent_role"] = context["agent_role"]
-
-        # ------------------------------------------------------
-        # Analysis requirements
-        # ------------------------------------------------------
 
         if "analysis_requirements" in context:
             prepared["analysis_requirements"] = context["analysis_requirements"]
 
-        # ------------------------------------------------------
-        # Requested output
-        # ------------------------------------------------------
-
         if "requested_output" in context:
             prepared["requested_output"] = context["requested_output"]
 
-        # ------------------------------------------------------
-        # Project summary
-        # ------------------------------------------------------
-
         if "project_summary" in context:
             prepared["project_summary"] = context["project_summary"]
-
-        # ------------------------------------------------------
-        # Architecture
-        # ------------------------------------------------------
 
         if "architecture" in context:
             prepared["architecture"] = self._sanitize_architecture(
                 context["architecture"],
             )
-
-        # ------------------------------------------------------
-        # Execution
-        # ------------------------------------------------------
 
         if "execution" in context:
             prepared["execution"] = self._sanitize_execution(
@@ -192,31 +144,18 @@ Reglas obligatorias:
         architecture: Any,
     ) -> Any:
 
-        if not isinstance(
-            architecture,
-            dict,
-        ):
+        if not isinstance(architecture, dict):
             return architecture
 
-        result = dict(
-            architecture,
-        )
+        result = dict(architecture)
 
-        files = result.get(
-            "files",
-        )
+        files = result.get("files")
 
-        if isinstance(
-            files,
-            list,
-        ):
+        if isinstance(files, list):
             clean_files = []
 
             for file_data in files:
-                if not isinstance(
-                    file_data,
-                    dict,
-                ):
+                if not isinstance(file_data, dict):
                     continue
 
                 clean_files.append(
@@ -236,27 +175,14 @@ Reglas obligatorias:
 
             result["files"] = clean_files
 
-        directories = result.get(
-            "directories",
-        )
+        directories = result.get("directories")
 
-        if isinstance(
-            directories,
-            list,
-        ):
-            result["directories"] = [
-                self._sanitize_directory(
-                    item,
-                )
-                for item in directories
-            ]
+        if isinstance(directories, list):
+            result["directories"] = [self._sanitize_directory(item) for item in directories]
 
-        # Never allow source content through
-        # the architecture context.
-        result.pop(
-            "content",
-            None,
-        )
+        # Nunca introducir contenido fuente
+        # dentro del contexto arquitectónico.
+        result.pop("content", None)
 
         return result
 
@@ -265,10 +191,7 @@ Reglas obligatorias:
         directory: Any,
     ) -> Any:
 
-        if not isinstance(
-            directory,
-            dict,
-        ):
+        if not isinstance(directory, dict):
             return directory
 
         return {
@@ -291,19 +214,16 @@ Reglas obligatorias:
         execution: Any,
     ) -> Any:
 
-        if not isinstance(
-            execution,
-            dict,
-        ):
+        if not isinstance(execution, dict):
             return execution
 
         return {
             key: execution.get(key)
             for key in (
                 "plan_id",
-                "intent",
-                "original_task",
+                "task",
                 "current_step",
+                "dependencies",
             )
             if key in execution
         }
@@ -357,10 +277,7 @@ Reglas obligatorias:
 
     def _compose(
         self,
-        original_task: str,
-        intent: str | None,
-        unit_type: str | None,
-        unit_name: str | None,
+        plan: ExecutionPlan,
         context: str,
     ) -> str:
 
@@ -369,15 +286,19 @@ Reglas obligatorias:
 
 ## Tarea del usuario
 
-{original_task}
+{plan.original_task}
 
 ## Intent
 
-{intent or "unknown"}
+{plan.intent or "unknown"}
+
+## Categoría del intent
+
+{plan.intent_category or "unknown"}
 
 ## Unidad ejecutora
 
-{unit_type or "unknown"}:{unit_name or "unknown"}
+{plan.execution_unit_type or "unknown"}:{plan.execution_unit or "unknown"}
 
 ## Contexto disponible
 

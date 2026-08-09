@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import logging
+from typing import Any
 
 from core.execution_plan import ExecutionPlan
 from llm.prompt_builder import PromptBuilder
@@ -11,18 +14,47 @@ logger = logging.getLogger(__name__)
 class LLMRouter:
     """
     Punto único de comunicación con proveedores LLM.
+
+    Flujo:
+
+        ExecutionPlan
+            ↓
+        ProviderSelector
+            ↓
+        PromptBuilder
+            ↓
+        ProviderManager
+            ↓
+        Provider
     """
 
-    provider_manager = ProviderManager()
+    def __init__(
+        self,
+        provider_manager: ProviderManager | None = None,
+        prompt_builder: PromptBuilder | None = None,
+    ) -> None:
+        self.provider_manager = provider_manager or ProviderManager()
 
-    @classmethod
-    def generate(cls, plan: ExecutionPlan, context: dict | None = None, **kwargs) -> str:
-        context = context or {}
+        self.prompt_builder = prompt_builder or PromptBuilder()
+
+    def generate(
+        self,
+        plan: ExecutionPlan,
+        context: dict[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> str:
+
+        context = dict(context or {})
 
         try:
-            provider, fallbacks = ProviderSelector.select(plan)
+            provider, fallbacks = ProviderSelector.select(
+                plan,
+            )
+
         except Exception:
-            logger.exception("Error seleccionando proveedor LLM")
+            logger.exception(
+                "Error seleccionando proveedor LLM",
+            )
             raise
 
         logger.info(
@@ -34,9 +66,14 @@ class LLMRouter:
             len(plan.steps) if plan.steps else 0,
         )
 
-        prompt = PromptBuilder.build(plan=plan, context=context)
+        prompt_builder = PromptBuilder()
 
-        return cls.provider_manager.generate(
+        prompt = prompt_builder.build(
+            plan=plan,
+            context=context,
+        )
+
+        return self.provider_manager.generate(
             prompt=prompt,
             provider_name=provider,
             fallback_chain=fallbacks,

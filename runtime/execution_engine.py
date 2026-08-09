@@ -4,19 +4,17 @@ import logging
 import time
 from typing import Any
 
+from agents.loader import AgentLoader
+from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
 from core.execution_step import ExecutionStep
-from core.context.manager import ContextManager
 from core.intent import IntentAnalyzer
 from core.planning import PlanBuilder
-
 from runtime.dispatcher import UnitDispatcher
 from runtime.registry.agent_registry import AgentRegistry
 from runtime.registry.skill_registry import SkillRegistry
-
 from skills.loader import SkillLoader
-from agents.loader import AgentLoader
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +23,13 @@ class ExecutionEngine:
     """
     Único dueño del lifecycle de ejecución.
 
-    Coordina las etapas, no las implementa.
+    Flujo oficial:
 
-    Flujo:
-
-        User input
+        user input
             ↓
         IntentAnalyzer
+            ↓
+        IntentResult
             ↓
         PlanBuilder
             ↓
@@ -47,14 +45,13 @@ class ExecutionEngine:
             ↓
         retry
             ↓
-        learn
-            ↓
         finalize
             ↓
         ExecutionResult
+            ↓
+        learning
 
-    En un plan multi-step, el resultado de cada step se incorpora
-    al execution context antes de ejecutar los steps dependientes.
+    Ningún otro componente coordina el lifecycle.
     """
 
     name = "execution_engine"
@@ -66,10 +63,7 @@ class ExecutionEngine:
         context_manager: ContextManager | None = None,
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
-    ):
-        # ==========================================================
-        # Core dependencies
-        # ==========================================================
+    ) -> None:
 
         self.context_manager = context_manager or ContextManager()
 
@@ -77,58 +71,43 @@ class ExecutionEngine:
 
         self.plan_builder = plan_builder or PlanBuilder()
 
-        # ==========================================================
+        # ------------------------------------------------------
         # Registries
-        # ==========================================================
+        # ------------------------------------------------------
 
         self.agent_registry = agent_registry or AgentRegistry()
 
         self.skill_registry = skill_registry or SkillRegistry()
 
-        # ==========================================================
-        # Agent loading
-        # ==========================================================
+        # ------------------------------------------------------
+        # Loaders
+        # ------------------------------------------------------
 
         self.agent_loader = AgentLoader(
             self.agent_registry,
         )
 
-        self.agent_loader.load_defaults()
-
-        logger.info(
-            "Agents cargados=%s",
-            self.agent_registry.list(),
-        )
-
-        # ==========================================================
-        # Skill loading
-        # ==========================================================
-
         self.skill_loader = SkillLoader(
             self.skill_registry,
         )
 
+        self.agent_loader.load_defaults()
         self.skill_loader.load_defaults()
 
-        logger.info(
-            "Skills cargadas=%s",
-            self.skill_registry.list(),
-        )
-
-        # ==========================================================
+        # ------------------------------------------------------
         # Dispatcher
-        # ==========================================================
+        # ------------------------------------------------------
 
         self.dispatcher = UnitDispatcher(
             agent_registry=self.agent_registry,
             skill_registry=self.skill_registry,
         )
 
-        # ==========================================================
+        # ------------------------------------------------------
         # Metrics
-        # ==========================================================
+        # ------------------------------------------------------
 
-        self.metrics = {
+        self.metrics: dict[str, int] = {
             "executions": 0,
             "success": 0,
             "partial": 0,
@@ -137,37 +116,21 @@ class ExecutionEngine:
             "retries": 0,
         }
 
-        # ==========================================================
-        # Self-Critic
-        # ==========================================================
+        # ------------------------------------------------------
+        # Post-execution services
+        # ------------------------------------------------------
 
-        try:
-            from core.self_critic import SelfCritic
+        from core.learner import ContinuousLearner
+        from core.self_critic import SelfCritic
 
-            self.critic = SelfCritic()
+        self.critic = SelfCritic()
+        self.learner = ContinuousLearner()
 
-        except ImportError:
-            logger.warning(
-                "SelfCritic no disponible",
-            )
-
-            self.critic = None
-
-        # ==========================================================
-        # Continuous Learning
-        # ==========================================================
-
-        try:
-            from core.learner import ContinuousLearner
-
-            self.learner = ContinuousLearner()
-
-        except ImportError:
-            logger.warning(
-                "ContinuousLearner no disponible",
-            )
-
-            self.learner = None
+        logger.info(
+            "ExecutionEngine inicializado | agents=%s | skills=%s",
+            self.agent_registry.list(),
+            self.skill_registry.list(),
+        )
 
     # ==========================================================
     # Public API
@@ -178,8 +141,14 @@ class ExecutionEngine:
         user_input: str,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionResult:
+
+        if not user_input or not user_input.strip():
+            raise ValueError(
+                "user_input no puede estar vacío.",
+            )
+
         logger.info(
-            "Engine: procesando entrada: %s",
+            "Engine procesando entrada=%s",
             user_input[:100],
         )
 
@@ -197,51 +166,68 @@ class ExecutionEngine:
                 metadata,
             )
 
-        return self.execute(plan)
+        return self.execute(
+            plan,
+        )
 
     def execute(
         self,
         plan: ExecutionPlan,
     ) -> ExecutionResult:
+
         started = time.monotonic()
 
         self.metrics["executions"] += 1
 
         try:
             # --------------------------------------------------
-            # 1. Validación
+            # 1. Validate
             # --------------------------------------------------
 
             errors = plan.validate()
 
             if errors:
-                return self._fail(
+                result = self._fail(
                     plan,
                     "; ".join(errors),
+                )
+
+                return self._finalize(
+                    plan,
+                    result,
+                    started,
                 )
 
             plan.mark_validated()
 
             # --------------------------------------------------
-            # 2. Contexto inicial
+            # 2. Context
             # --------------------------------------------------
 
-            context = self.context_manager.build(plan) or {}
+            context = (
+                self.context_manager.build(
+                    plan,
+                )
+                or {}
+            )
 
             plan.loaded_context = dict(
                 context,
             )
 
-            # Crear espacio explícito para resultados de ejecución.
             self._initialize_execution_context(
                 plan,
                 context,
             )
 
+            # --------------------------------------------------
+            # 3. Running
+            # --------------------------------------------------
+
             plan.mark_running()
 
             # --------------------------------------------------
-            # 3. Ejecución + evaluación + retries
+            # 4. Execute + evaluate + retry
             # --------------------------------------------------
 
             result = self._execute_with_retries(
@@ -250,24 +236,17 @@ class ExecutionEngine:
             )
 
             # --------------------------------------------------
-            # 4. Metadatos finales
+            # 5. Finalize
             # --------------------------------------------------
 
-            duration = round(
-                time.monotonic() - started,
-                3,
-            )
-
-            result.metadata.update(
-                {
-                    "engine": self.name,
-                    "duration": duration,
-                    "plan_id": plan.id,
-                }
+            result = self._finalize(
+                plan,
+                result,
+                started,
             )
 
             # --------------------------------------------------
-            # 5. Aprendizaje
+            # 6. Learning
             # --------------------------------------------------
 
             self._learn(
@@ -275,36 +254,65 @@ class ExecutionEngine:
                 result,
             )
 
-            # --------------------------------------------------
-            # 6. Estado final
-            # --------------------------------------------------
-
-            self._apply_plan_state(
-                plan,
-                result,
-            )
-
-            self._update_metrics(
-                result,
-            )
-
             return result
 
         except Exception as exc:
             logger.exception(
-                "Engine error",
+                "Error fatal en ExecutionEngine",
             )
 
             try:
                 plan.mark_failed()
-
             except Exception:
-                pass
+                logger.exception(
+                    "No se pudo marcar plan como failed",
+                )
 
-            return self._fail(
+            result = self._fail(
                 plan,
                 str(exc),
             )
+
+            return self._finalize(
+                plan,
+                result,
+                started,
+            )
+
+    # ==========================================================
+    # Finalization
+    # ==========================================================
+
+    def _finalize(
+        self,
+        plan: ExecutionPlan,
+        result: ExecutionResult,
+        started: float,
+    ) -> ExecutionResult:
+
+        self._apply_plan_state(
+            plan,
+            result,
+        )
+
+        duration = round(
+            time.monotonic() - started,
+            3,
+        )
+
+        result.metadata.update(
+            {
+                "engine": self.name,
+                "duration": duration,
+                "plan_id": plan.id,
+            }
+        )
+
+        self._update_metrics(
+            result,
+        )
+
+        return result
 
     # ==========================================================
     # Execution context
@@ -315,16 +323,6 @@ class ExecutionEngine:
         plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> None:
-        """
-        Inicializa el espacio donde se almacenan los resultados
-        de los steps.
-
-        El contexto original sigue siendo responsabilidad del
-        ContextManager.
-
-        El bloque "execution" pertenece exclusivamente al
-        ExecutionEngine.
-        """
 
         execution = context.setdefault(
             "execution",
@@ -355,13 +353,6 @@ class ExecutionEngine:
         step: ExecutionStep,
         result: ExecutionResult,
     ) -> None:
-        """
-        Persiste el resultado de un step dentro del contexto
-        de ejecución.
-
-        Esto permite que steps posteriores consuman resultados
-        producidos por sus dependencias.
-        """
 
         execution = context.setdefault(
             "execution",
@@ -381,10 +372,11 @@ class ExecutionEngine:
             "status": result.status,
             "result": result.result,
             "error": result.error,
-            "metadata": dict(result.metadata),
+            "metadata": dict(
+                result.metadata,
+            ),
         }
 
-        # Mantener el resultado también en el propio step.
         if result.is_success:
             step.mark_completed(
                 result.result,
@@ -403,12 +395,6 @@ class ExecutionEngine:
         context: dict[str, Any],
         step: ExecutionStep,
     ) -> dict[str, Any]:
-        """
-        Construye el contexto que recibe una unidad ejecutable.
-
-        Además del contexto global, expone explícitamente los
-        resultados de las dependencias del step.
-        """
 
         step_context = dict(
             context,
@@ -443,7 +429,9 @@ class ExecutionEngine:
             "description": step.description,
             "unit_type": step.unit_type,
             "unit_name": step.unit_name,
-            "params": dict(step.params),
+            "params": dict(
+                step.params,
+            ),
         }
 
         step_context["execution"]["dependencies"] = dependencies
@@ -451,106 +439,82 @@ class ExecutionEngine:
         return step_context
 
     # ==========================================================
-    # Execution with retries
+    # Retry
     # ==========================================================
 
     def _execute_with_retries(
         self,
         plan: ExecutionPlan,
-        context: dict,
+        context: dict[str, Any],
     ) -> ExecutionResult:
-        """
-        Ejecuta el plan con reintentos controlados.
 
-        La evaluación ocurre sobre el resultado completo del plan,
-        no sobre cada step individual.
-        """
-
-        max_retries = plan.metadata.get(
-            "max_retries",
-            plan.max_retries,
+        max_retries = int(
+            plan.metadata.get(
+                "max_retries",
+                plan.max_retries,
+            ),
         )
 
         retries = 0
         last_result: ExecutionResult | None = None
 
-        while retries <= max_retries:
-            # --------------------------------------------------
-            # Ejecutar
-            # --------------------------------------------------
+        while True:
 
             if plan.is_multi_step():
                 result = self._execute_steps(
                     plan,
                     context,
                 )
-
             else:
                 result = self._execute_single(
                     plan,
                     context,
                 )
 
-            # --------------------------------------------------
-            # Evaluar
-            # --------------------------------------------------
-
             result = self._evaluate(
                 plan,
                 result,
             )
 
-            # --------------------------------------------------
-            # Éxito
-            # --------------------------------------------------
-
             if result.is_success or result.is_partial:
                 return result
 
-            # --------------------------------------------------
-            # Retry
-            # --------------------------------------------------
+            if not result.is_failure:
+                return result
 
-            if result.is_failure and retries < max_retries:
-                retries += 1
+            if retries >= max_retries:
+                return result
 
-                self.metrics["retries"] += 1
+            retries += 1
 
-                logger.info(
-                    "Reintentando plan %s " "(intento %d/%d)",
-                    plan.id,
-                    retries,
-                    max_retries,
-                )
+            self.metrics["retries"] += 1
 
-                result.metadata["retry_count"] = retries
+            result.metadata["retry_count"] = retries
 
-                last_result = result
+            last_result = result
 
-                # Reiniciar resultados de ejecución para que
-                # el retry empiece desde un estado coherente.
-                self._reset_execution_context(
-                    plan,
-                    context,
-                )
+            logger.info(
+                "Retry plan=%s intento=%s/%s",
+                plan.id,
+                retries,
+                max_retries,
+            )
 
-                time.sleep(0.5)
+            self._reset_execution_context(
+                plan,
+                context,
+            )
 
-                continue
+            time.sleep(0.5)
 
-            return result
-
-        return last_result or ExecutionResult.fail(
-            plan_id=plan.id,
-            error="Se agotaron los reintentos",
-            executor=self.name,
-        )
+        return last_result
 
     def _reset_execution_context(
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> None:
+
         execution = context.setdefault(
             "execution",
             {},
@@ -572,8 +536,9 @@ class ExecutionEngine:
     def _execute_single(
         self,
         plan: ExecutionPlan,
-        context: dict,
+        context: dict[str, Any],
     ) -> ExecutionResult:
+
         if not plan.execution_unit_type or not plan.execution_unit:
             return self._fail(
                 plan,
@@ -584,8 +549,12 @@ class ExecutionEngine:
             description=(plan.objective or plan.original_task),
             unit_type=plan.execution_unit_type,
             unit_name=plan.execution_unit,
-            params=plan.params,
+            params=dict(
+                plan.params,
+            ),
         )
+
+        step.mark_running()
 
         step_context = self._build_step_context(
             plan,
@@ -615,8 +584,9 @@ class ExecutionEngine:
     def _execute_steps(
         self,
         plan: ExecutionPlan,
-        context: dict,
+        context: dict[str, Any],
     ) -> ExecutionResult:
+
         if not plan.steps:
             return self._fail(
                 plan,
@@ -631,29 +601,13 @@ class ExecutionEngine:
         errors: list[dict[str, str]] = []
 
         for step in ordered:
-            logger.info(
-                "Ejecutando step %s (%s:%s)",
-                step.description,
-                step.unit_type,
-                step.unit_name,
-            )
-
-            # --------------------------------------------------
-            # Dependencias
-            # --------------------------------------------------
 
             dependency_failure = self._dependency_failure(
                 step,
-                plan,
                 context,
             )
 
             if dependency_failure is not None:
-                logger.error(
-                    "Step '%s' omitido: %s",
-                    step.description,
-                    dependency_failure,
-                )
 
                 step.mark_skipped(
                     dependency_failure,
@@ -694,19 +648,11 @@ class ExecutionEngine:
 
                 continue
 
-            # --------------------------------------------------
-            # Contexto específico del step
-            # --------------------------------------------------
-
             step_context = self._build_step_context(
                 plan,
                 context,
                 step,
             )
-
-            # --------------------------------------------------
-            # Ejecución
-            # --------------------------------------------------
 
             step.mark_running()
 
@@ -727,18 +673,9 @@ class ExecutionEngine:
                 result,
             )
 
-            # --------------------------------------------------
-            # Error
-            # --------------------------------------------------
-
             if result.is_failure:
-                error = result.error or "Error desconocido"
 
-                logger.error(
-                    "Step '%s' falló: %s",
-                    step.description,
-                    error,
-                )
+                error = result.error or "Error desconocido"
 
                 errors.append(
                     {
@@ -751,10 +688,6 @@ class ExecutionEngine:
                 if plan.stop_on_error:
                     break
 
-        # ------------------------------------------------------
-        # Resultado final
-        # ------------------------------------------------------
-
         result_payload = [
             {
                 "step_id": step.id,
@@ -766,28 +699,13 @@ class ExecutionEngine:
                 "error": result.error,
             }
             for step, result in zip(
-                [
-                    step
-                    for step in ordered
-                    if step.status != "skipped"
-                    or step.id
-                    in context.get(
-                        "execution",
-                        {},
-                    ).get(
-                        "steps",
-                        {},
-                    )
-                ],
+                ordered,
                 results,
             )
         ]
 
-        # ------------------------------------------------------
-        # Éxito completo
-        # ------------------------------------------------------
-
         if not errors:
+
             final_result = results[-1].result if results else None
 
             return ExecutionResult.success(
@@ -800,11 +718,8 @@ class ExecutionEngine:
                 },
             )
 
-        # ------------------------------------------------------
-        # Fallo completo
-        # ------------------------------------------------------
-
         if len(errors) == len(results):
+
             detail = "\n".join(
                 f"- {error['step']} " f"({error['unit']}): " f"{error['error']}" for error in errors
             )
@@ -817,10 +732,6 @@ class ExecutionEngine:
                     "steps": result_payload,
                 },
             )
-
-        # ------------------------------------------------------
-        # Ejecución parcial
-        # ------------------------------------------------------
 
         detail = "\n".join(
             f"- {error['step']} " f"({error['unit']}): " f"{error['error']}" for error in errors
@@ -837,15 +748,15 @@ class ExecutionEngine:
         )
 
     # ==========================================================
-    # Dependency validation
+    # Dependencies
     # ==========================================================
 
     def _dependency_failure(
         self,
         step: ExecutionStep,
-        plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> str | None:
+
         if not step.depends_on:
             return None
 
@@ -860,6 +771,7 @@ class ExecutionEngine:
         )
 
         for dependency_id in step.depends_on:
+
             dependency = completed_steps.get(
                 dependency_id,
             )
@@ -881,9 +793,6 @@ class ExecutionEngine:
         plan: ExecutionPlan,
         result: ExecutionResult,
     ) -> ExecutionResult:
-        """
-        Etapa de evaluación post-ejecución.
-        """
 
         if not plan.metadata.get(
             "requires_self_critic",
@@ -894,38 +803,26 @@ class ExecutionEngine:
         if result.is_failure:
             return result
 
-        if self.critic is None:
+        evaluation = self.critic.evaluate(
+            plan,
+            result,
+        )
+
+        if evaluation.get(
+            "pass",
+            True,
+        ):
             return result
 
-        try:
-            evaluation = self.critic.evaluate(
-                plan,
-                result,
-            )
-
-            if evaluation.get(
-                "pass",
-                True,
-            ):
-                return result
-
-            return ExecutionResult.retry(
-                plan_id=plan.id,
-                error=evaluation.get(
-                    "reason",
-                    "Evaluación fallida",
-                ),
-                retries=result.retries + 1,
-                executor="self_critic",
-            )
-
-        except Exception as exc:
-            logger.warning(
-                "SelfCritic falló: %s",
-                exc,
-            )
-
-            return result
+        return ExecutionResult.retry(
+            plan_id=plan.id,
+            error=evaluation.get(
+                "reason",
+                "Evaluación fallida",
+            ),
+            retries=result.retries + 1,
+            executor="self_critic",
+        )
 
     # ==========================================================
     # Learning
@@ -936,14 +833,6 @@ class ExecutionEngine:
         plan: ExecutionPlan,
         result: ExecutionResult,
     ) -> None:
-        """
-        Aprendizaje continuo post-ejecución.
-
-        No debe bloquear la respuesta principal.
-        """
-
-        if self.learner is None:
-            return
 
         if not result.is_success and not result.is_partial:
             return
@@ -957,51 +846,45 @@ class ExecutionEngine:
             )
 
         except Exception as exc:
-            logger.debug(
-                "Aprendizaje continuo falló: %s",
+            logger.warning(
+                "Learning post-ejecución falló: %s",
                 exc,
             )
 
     # ==========================================================
-    # Helpers
+    # Ordering
     # ==========================================================
 
     def _resolve_order(
         self,
         steps: list[ExecutionStep],
     ) -> list[ExecutionStep]:
+
         ordered: list[ExecutionStep] = []
-
         resolved: set[str] = set()
-
         pending = list(steps)
 
         available_ids = {step.id for step in steps}
 
         while pending:
+
             progress = False
 
             for step in pending[:]:
-                missing = [dep for dep in step.depends_on if dep not in available_ids]
+
+                missing = [
+                    dependency for dependency in step.depends_on if dependency not in available_ids
+                ]
 
                 if missing:
                     raise ValueError(
                         f"Dependencias inexistentes: {missing}",
                     )
 
-                if all(dep in resolved for dep in step.depends_on):
-                    ordered.append(
-                        step,
-                    )
-
-                    resolved.add(
-                        step.id,
-                    )
-
-                    pending.remove(
-                        step,
-                    )
-
+                if all(dependency in resolved for dependency in step.depends_on):
+                    ordered.append(step)
+                    resolved.add(step.id)
+                    pending.remove(step)
                     progress = True
 
             if not progress:
@@ -1011,11 +894,16 @@ class ExecutionEngine:
 
         return ordered
 
+    # ==========================================================
+    # Plan state
+    # ==========================================================
+
     def _apply_plan_state(
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
     ) -> None:
+
         if result.is_success:
             plan.mark_completed()
 
@@ -1028,10 +916,15 @@ class ExecutionEngine:
         elif result.is_cancelled:
             plan.mark_cancelled()
 
+    # ==========================================================
+    # Metrics
+    # ==========================================================
+
     def _update_metrics(
         self,
         result: ExecutionResult,
     ) -> None:
+
         if result.is_success:
             self.metrics["success"] += 1
 
@@ -1044,14 +937,16 @@ class ExecutionEngine:
         elif result.is_cancelled:
             self.metrics["cancelled"] += 1
 
-        elif result.is_retry:
-            self.metrics["retries"] += 1
+    # ==========================================================
+    # Failure
+    # ==========================================================
 
     def _fail(
         self,
         plan: ExecutionPlan,
         error: str,
     ) -> ExecutionResult:
+
         logger.error(
             "Plan %s falló: %s",
             plan.id,
@@ -1064,7 +959,14 @@ class ExecutionEngine:
             executor=self.name,
         )
 
+    # ==========================================================
+    # Metrics API
+    # ==========================================================
+
     def get_metrics(
         self,
-    ) -> dict[str, Any]:
-        return self.metrics.copy()
+    ) -> dict[str, int]:
+
+        return dict(
+            self.metrics,
+        )
