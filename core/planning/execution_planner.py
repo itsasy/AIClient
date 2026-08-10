@@ -89,10 +89,7 @@ class ExecutionPlanner:
         # Execution mode
         # =====================================================
 
-        # generate_steps_with_llm NO cambia el modo de ejecución.
-        # Solamente habilita generación LLM cuando el plan ya
-        # corresponde a multi_step.
-        if complexity in {"high", "complex"}:
+        if complexity in {"high", "complex"} or generate_steps_with_llm:
             plan.execution_mode = "multi_step"
         else:
             plan.execution_mode = "single"
@@ -169,11 +166,74 @@ class ExecutionPlanner:
     # =========================================================
 
     @staticmethod
+    def _extract_file_path(task: str) -> str:
+        """
+        Extrae el nombre/ruta explícito del archivo desde una
+        instrucción de creación de archivo.
+
+        Ejemplos:
+
+            crea un archivo prueba.txt
+            crear archivo config.json
+            crea un archivo src/main.py con el contenido ...
+            crear el archivo "notas.md" con contenido "hola"
+
+        Devuelve una cadena vacía si no encuentra un path.
+        """
+
+        if not isinstance(task, str):
+            return ""
+
+        patterns = (
+            # archivo "src/test.py"
+            r"\barchivo\s+[\"']([^\"']+)[\"']",
+            # el archivo "src/test.py"
+            r"\bel\s+archivo\s+[\"']([^\"']+)[\"']",
+            # archivo src/test.py
+            r"\barchivo\s+([^\s\"']+)",
+            # el archivo src/test.py
+            r"\bel\s+archivo\s+([^\s\"']+)",
+        )
+
+        structural_words = {
+            "con",
+            "contenido",
+            "que",
+            "contenga",
+            "conteniendo",
+        }
+
+        for pattern in patterns:
+            match = re.search(
+                pattern,
+                task,
+                re.IGNORECASE,
+            )
+
+            if not match:
+                continue
+
+            path = match.group(1).strip()
+
+            if not path:
+                continue
+
+            if path.lower() in structural_words:
+                continue
+
+            return path
+
+        return ""
+
+    @staticmethod
     def _extract_file_content(task: str) -> str:
         """
         Extrae contenido simple desde una instrucción de creación
         de archivo.
         """
+
+        if not isinstance(task, str):
+            return ""
 
         patterns = (
             r"con el contenido\s+(.+)$",
@@ -189,13 +249,15 @@ class ExecutionPlanner:
                 re.IGNORECASE,
             )
 
-            if match:
-                content = match.group(1).strip()
+            if not match:
+                continue
 
-                if len(content) >= 2 and content[0] in {"'", '"'} and content[-1] == content[0]:
-                    content = content[1:-1]
+            content = match.group(1).strip()
 
-                return content
+            if len(content) >= 2 and content[0] in {"'", '"'} and content[-1] == content[0]:
+                content = content[1:-1]
+
+            return content
 
         return ""
 
@@ -242,11 +304,11 @@ class ExecutionPlanner:
             return
 
         plan.add_step(
-            description=(f"Ejecutar {unit_type}: {unit_name}"),
+            description=f"Ejecutar {unit_type}: {unit_name}",
             unit_type=unit_type,
             unit_name=unit_name,
             params=params,
-            expected_output=(f"Resultado de {unit_type}: {unit_name}"),
+            expected_output=f"Resultado de {unit_type}: {unit_name}",
         )
 
     # =========================================================
@@ -260,7 +322,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Crear un nuevo proyecto de software"
-
         plan.execution_mode = "multi_step"
 
         framework = intent.get_entity(
@@ -277,18 +338,18 @@ class ExecutionPlanner:
         plan.context_requirements["gentleman"] = True
 
         analyze = plan.add_step(
-            description=(f"Analizar requisitos para proyecto {framework}"),
+            description=f"Analizar requisitos para proyecto {framework}",
             unit_type="agent",
             unit_name="architect",
             params={
                 "task": task,
                 "framework": framework,
             },
-            expected_output=("Decisiones arquitectónicas " "y requisitos estructurados."),
+            expected_output="Decisiones arquitectónicas y requisitos estructurados.",
         )
 
         generate = plan.add_step(
-            description=(f"Generar estructura inicial para {framework}"),
+            description=f"Generar estructura inicial para {framework}",
             unit_type="agent",
             unit_name="coder",
             params={
@@ -296,7 +357,7 @@ class ExecutionPlanner:
                 "framework": framework,
                 "project_name": name,
             },
-            expected_output=("Estructura inicial y código base " "del proyecto."),
+            expected_output="Estructura inicial y código base del proyecto.",
         )
 
         generate.depends_on.append(analyze.id)
@@ -328,7 +389,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Analizar y resolver problema técnico"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["project"] = True
@@ -341,7 +401,7 @@ class ExecutionPlanner:
             params={
                 "task": task,
             },
-            expected_output=("Diagnóstico técnico del problema."),
+            expected_output="Diagnóstico técnico del problema.",
         )
 
         validate = plan.add_step(
@@ -351,7 +411,7 @@ class ExecutionPlanner:
             params={
                 "task": task,
             },
-            expected_output=("Resultado de validaciones."),
+            expected_output="Resultado de validaciones.",
         )
 
         validate.depends_on.append(analyze.id)
@@ -363,7 +423,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Refactorizar código existente"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["project"] = True
@@ -376,7 +435,7 @@ class ExecutionPlanner:
             params={
                 "task": task,
             },
-            expected_output=("Análisis arquitectónico y estrategia " "de refactorización."),
+            expected_output="Análisis arquitectónico y estrategia de refactorización.",
         )
 
         modify = plan.add_step(
@@ -386,7 +445,7 @@ class ExecutionPlanner:
             params={
                 "task": task,
             },
-            expected_output=("Código refactorizado conforme " "a la estrategia."),
+            expected_output="Código refactorizado conforme a la estrategia.",
         )
 
         modify.depends_on.append(analyze.id)
@@ -398,7 +457,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Analizar la arquitectura del proyecto"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["project"] = True
@@ -406,14 +464,14 @@ class ExecutionPlanner:
         plan.context_requirements["standards"] = True
 
         inspect = plan.add_step(
-            description=("Inspeccionar estructura, archivos " "y componentes del proyecto"),
+            description="Inspeccionar estructura, archivos y componentes del proyecto",
             unit_type="skill",
             unit_name="analyze_project",
             params={
                 "path": ".",
                 "task": task,
             },
-            expected_output=("Snapshot estructurado del proyecto."),
+            expected_output="Snapshot estructurado del proyecto.",
             metadata={
                 "stage": "inspection",
                 "produces_context": True,
@@ -422,15 +480,13 @@ class ExecutionPlanner:
         )
 
         architect = plan.add_step(
-            description=(
-                "Interpretar la arquitectura del proyecto " "y generar un resumen ejecutivo"
-            ),
+            description="Interpretar la arquitectura del proyecto y generar un resumen ejecutivo",
             unit_type="agent",
             unit_name="architect",
             params={
                 "task": task,
             },
-            expected_output=("Análisis arquitectónico ejecutivo " "del proyecto."),
+            expected_output="Análisis arquitectónico ejecutivo del proyecto.",
             metadata={
                 "stage": "architecture_analysis",
                 "consumes_context": True,
@@ -470,15 +526,49 @@ class ExecutionPlanner:
 
         plan.context_requirements["project"] = True
 
-        # write_file modifica el filesystem.
+        # =====================================================
+        # Governance
+        # =====================================================
+
+        # Crear un archivo es una operación de escritura.
+        # El modo safe no implica "sin escritura"; implica que
+        # la operación debe quedar explícitamente declarada.
         plan.governance["allow_write"] = True
 
-        path = intent.get_entity(
-            "path",
-            "archivo.txt",
-        )
+        # =====================================================
+        # Path
+        # =====================================================
+
+        # IMPORTANTE:
+        #
+        # La tarea original es la fuente más específica para
+        # identificar el archivo solicitado por el usuario.
+        #
+        # El IntentResult puede contener entidades inferidas
+        # incorrectamente. Por eso el path explícito encontrado
+        # en la tarea tiene prioridad.
+        path = ExecutionPlanner._extract_file_path(task)
+
+        if not path:
+            path = intent.get_entity(
+                "path",
+                "",
+            )
+
+        if not path or not path.strip():
+            path = "archivo.txt"
+
+        path = path.strip()
+
+        # =====================================================
+        # Content
+        # =====================================================
 
         content = ExecutionPlanner._extract_file_content(task)
+
+        # =====================================================
+        # Execution unit
+        # =====================================================
 
         ExecutionPlanner._set_execution_unit(
             plan,
@@ -488,6 +578,12 @@ class ExecutionPlanner:
                 "path": path,
                 "content": content,
             },
+        )
+
+        logger.info(
+            "File creation plan | path=%s | content_length=%d",
+            path,
+            len(content),
         )
 
     @staticmethod
@@ -539,21 +635,20 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Crear especificación (Spec)"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["engram"] = True
         plan.context_requirements["standards"] = True
 
         spec_step = plan.add_step(
-            description=("Generar especificación detallada " "a partir de la tarea"),
+            description="Generar especificación detallada a partir de la tarea",
             unit_type="agent",
             unit_name="planner",
             params={
                 "task": task,
                 "mode": "spec",
             },
-            expected_output=("Especificación estructurada " "en formato JSON."),
+            expected_output="Especificación estructurada en formato JSON.",
             metadata={
                 "stage": "spec_generation",
             },
@@ -567,7 +662,7 @@ class ExecutionPlanner:
                 "task": task,
                 "mode": "spec",
             },
-            expected_output=("Archivo de especificación creado."),
+            expected_output="Archivo de especificación creado.",
         )
 
         write_spec.depends_on.append(spec_step.id)
@@ -579,7 +674,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Generar un plan de ejecución"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["engram"] = True
@@ -714,30 +808,10 @@ Ejemplo:
                 if not isinstance(params, dict):
                     params = {}
 
-                try:
-                    normalized_unit_type = ExecutionPlan.normalize_unit_type(unit_type)
-                except (TypeError, ValueError) as exc:
-                    logger.warning(
-                        "Paso LLM descartado por unit_type " "inválido: %s",
-                        exc,
-                    )
-                    continue
-
-                if not normalized_unit_type:
-                    logger.warning("Paso LLM descartado: unit_type vacío.")
-                    continue
-
-                if not isinstance(unit_name, str) or not unit_name.strip():
-                    logger.warning("Paso LLM descartado: unit_name vacío.")
-                    continue
-
-                if not isinstance(description, str) or not description.strip():
-                    description = "Paso generado por LLM"
-
                 plan.add_step(
-                    description=description.strip(),
-                    unit_type=normalized_unit_type,
-                    unit_name=unit_name.strip(),
+                    description=description,
+                    unit_type=unit_type,
+                    unit_name=unit_name,
                     params=params,
                 )
 

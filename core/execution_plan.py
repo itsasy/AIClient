@@ -201,6 +201,7 @@ class ExecutionPlan:
         self.objective = self._normalize_optional_text(self.objective)
 
         self._validate_containers()
+        self._normalize_context_requirements()
         self._normalize_governance()
         self._normalize_execution_policy()
 
@@ -245,7 +246,8 @@ class ExecutionPlan:
         if value not in cls.VALID_UNIT_TYPES:
             raise ValueError(
                 f"Tipo de unidad inválido: {value}. "
-                f"Tipos permitidos: {sorted(cls.VALID_UNIT_TYPES)}"
+                "Tipos permitidos: "
+                f"{sorted(cls.VALID_UNIT_TYPES)}"
             )
 
         return value
@@ -266,7 +268,7 @@ class ExecutionPlan:
         if value not in cls.VALID_EXECUTION_MODES:
             raise ValueError(
                 f"Modo de ejecución inválido: {value}. "
-                f"Modos permitidos: "
+                "Modos permitidos: "
                 f"{sorted(cls.VALID_EXECUTION_MODES)}"
             )
 
@@ -285,7 +287,8 @@ class ExecutionPlan:
         if value not in cls.VALID_STATUSES:
             raise ValueError(
                 f"Estado de plan inválido: {value}. "
-                f"Estados permitidos: {sorted(cls.VALID_STATUSES)}"
+                "Estados permitidos: "
+                f"{sorted(cls.VALID_STATUSES)}"
             )
 
         return value
@@ -318,6 +321,24 @@ class ExecutionPlan:
     # =========================================================
     # Context
     # =========================================================
+
+    def _normalize_context_requirements(self) -> None:
+        for provider, required in list(self.context_requirements.items()):
+            if not isinstance(provider, str):
+                raise ValueError("Los nombres de providers de contexto " "deben ser strings.")
+
+            normalized_provider = provider.lower().strip()
+
+            if not normalized_provider:
+                raise ValueError("El nombre del provider de contexto " "no puede estar vacío.")
+
+            if not isinstance(required, bool):
+                raise ValueError(f"context_requirements.{provider} " "debe ser booleano.")
+
+            if normalized_provider != provider:
+                del self.context_requirements[provider]
+
+            self.context_requirements[normalized_provider] = required
 
     def requires_context(
         self,
@@ -365,7 +386,7 @@ class ExecutionPlan:
         if mode not in self.VALID_GOVERNANCE_MODES:
             raise ValueError(
                 f"Modo de governance inválido: {mode}. "
-                f"Modos permitidos: "
+                "Modos permitidos: "
                 f"{sorted(self.VALID_GOVERNANCE_MODES)}"
             )
 
@@ -551,11 +572,6 @@ class ExecutionPlan:
         y no se representa como ExecutionStep.
         """
 
-        if not self.is_single():
-            raise ValueError(
-                "set_execution_unit solo puede utilizarse " "en un ExecutionPlan en modo single."
-            )
-
         normalized_type = self.normalize_unit_type(unit_type)
 
         if normalized_type is None:
@@ -597,15 +613,35 @@ class ExecutionPlan:
         if self.execution_mode == "single":
             raise ValueError("No se pueden agregar steps a un " "ExecutionPlan en modo single.")
 
+        normalized_unit_type = self.normalize_unit_type(unit_type)
+
+        if normalized_unit_type is None:
+            raise ValueError("unit_type no puede ser None.")
+
+        if not unit_name or not unit_name.strip():
+            raise ValueError("unit_name no puede estar vacío.")
+
+        if params is None:
+            params = {}
+
+        if not isinstance(params, dict):
+            raise TypeError("params debe ser un diccionario.")
+
+        if metadata is None:
+            metadata = {}
+
+        if not isinstance(metadata, dict):
+            raise TypeError("metadata debe ser un diccionario.")
+
         step = ExecutionStep(
             description=description,
-            unit_type=self.normalize_unit_type(unit_type),
+            unit_type=normalized_unit_type,
             unit_name=unit_name,
-            params=params or {},
+            params=dict(params),
             expected_output=expected_output,
             retries=retries,
             timeout=timeout,
-            metadata=metadata or {},
+            metadata=dict(metadata),
         )
 
         self.steps.append(step)
@@ -654,6 +690,7 @@ class ExecutionPlan:
         errors: list[str] = []
 
         step_ids = [step.id for step in self.steps]
+
         step_id_set = set(step_ids)
 
         if len(step_ids) != len(step_id_set):
@@ -720,11 +757,10 @@ class ExecutionPlan:
                 errors.append("Modo single no permite steps.")
 
         elif self.execution_mode == "multi_step":
-            if not self.steps:
-                errors.append("Modo multi_step requiere al menos un step.")
-
-            if self.execution_unit_type or self.execution_unit:
-                errors.append("Modo multi_step no debe definir " "execution_unit directamente.")
+            if not self.steps and not self.execution_unit:
+                errors.append(
+                    "Modo multi_step requiere al menos " "un step o una unidad ejecutable."
+                )
 
         errors.extend(self.validate_dependencies())
 
@@ -806,13 +842,87 @@ class ExecutionPlan:
 
         created_at_value = data.get("created_at")
 
-        created_at = (
-            datetime.fromisoformat(created_at_value)
-            if created_at_value
-            else datetime.now(timezone.utc)
+        if created_at_value:
+            try:
+                created_at = datetime.fromisoformat(created_at_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("ExecutionPlan.created_at inválido.") from exc
+        else:
+            created_at = datetime.now(timezone.utc)
+
+        raw_steps = data.get(
+            "steps",
+            [],
         )
 
-        steps = [ExecutionStep.from_dict(step) for step in data.get("steps", [])]
+        if not isinstance(raw_steps, list):
+            raise ValueError("ExecutionPlan.steps debe ser una lista.")
+
+        steps = [ExecutionStep.from_dict(step) for step in raw_steps]
+
+        raw_params = data.get(
+            "params",
+            {},
+        )
+
+        raw_constraints = data.get(
+            "constraints",
+            [],
+        )
+
+        raw_context = data.get(
+            "context_requirements",
+            cls.DEFAULT_CONTEXT_REQUIREMENTS,
+        )
+
+        raw_governance = data.get(
+            "governance",
+            cls.DEFAULT_GOVERNANCE,
+        )
+
+        raw_policy = data.get(
+            "execution_policy",
+            cls.DEFAULT_EXECUTION_POLICY,
+        )
+
+        raw_loaded_context = data.get(
+            "loaded_context",
+            {},
+        )
+
+        raw_execution_context = data.get(
+            "execution_context",
+            {},
+        )
+
+        raw_metadata = data.get(
+            "metadata",
+            {},
+        )
+
+        if not isinstance(raw_params, dict):
+            raise ValueError("ExecutionPlan.params debe ser un diccionario.")
+
+        if not isinstance(raw_constraints, list):
+            raise ValueError("ExecutionPlan.constraints debe ser una lista.")
+
+        if not isinstance(raw_context, dict):
+            raise ValueError("ExecutionPlan.context_requirements debe " "ser un diccionario.")
+
+        if not isinstance(raw_governance, dict):
+            raise ValueError("ExecutionPlan.governance debe ser un diccionario.")
+
+        if not isinstance(raw_policy, dict):
+            raise ValueError("ExecutionPlan.execution_policy debe " "ser un diccionario.")
+
+        if not isinstance(raw_loaded_context, dict):
+            raise ValueError("ExecutionPlan.loaded_context debe " "ser un diccionario.")
+
+        if not isinstance(raw_execution_context, dict):
+            raise ValueError("ExecutionPlan.execution_context debe " "ser un diccionario.")
+
+        if not isinstance(raw_metadata, dict):
+            raise ValueError("ExecutionPlan.metadata debe ser un diccionario.")
 
         return cls(
             id=data.get(
@@ -837,55 +947,15 @@ class ExecutionPlan:
             ),
             execution_unit_type=data.get("execution_unit_type"),
             execution_unit=data.get("execution_unit"),
-            params=dict(
-                data.get(
-                    "params",
-                    {},
-                )
-            ),
-            constraints=list(
-                data.get(
-                    "constraints",
-                    [],
-                )
-            ),
-            context_requirements=dict(
-                data.get(
-                    "context_requirements",
-                    cls.DEFAULT_CONTEXT_REQUIREMENTS,
-                )
-            ),
-            governance=dict(
-                data.get(
-                    "governance",
-                    cls.DEFAULT_GOVERNANCE,
-                )
-            ),
-            execution_policy=dict(
-                data.get(
-                    "execution_policy",
-                    cls.DEFAULT_EXECUTION_POLICY,
-                )
-            ),
+            params=dict(raw_params),
+            constraints=list(raw_constraints),
+            context_requirements=dict(raw_context),
+            governance=dict(raw_governance),
+            execution_policy=dict(raw_policy),
             steps=steps,
-            loaded_context=dict(
-                data.get(
-                    "loaded_context",
-                    {},
-                )
-            ),
-            execution_context=dict(
-                data.get(
-                    "execution_context",
-                    {},
-                )
-            ),
-            metadata=dict(
-                data.get(
-                    "metadata",
-                    {},
-                )
-            ),
+            loaded_context=dict(raw_loaded_context),
+            execution_context=dict(raw_execution_context),
+            metadata=dict(raw_metadata),
         )
 
     # =========================================================
