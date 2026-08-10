@@ -144,7 +144,7 @@ class SelfCritic:
             # Evaluación mediante LLMRouter
             # --------------------------------------------------
 
-            response = LLMRouter.generate(
+            response = LLMRouter().generate(
                 plan=plan,
                 context={
                     "prompt": prompt,

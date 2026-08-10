@@ -143,7 +143,7 @@ class ArchitectAgent(Agent):
             bool(architecture),
         )
 
-        return LLMRouter.generate(
+        return LLMRouter().generate(
             plan=plan,
             context=agent_context,
         )

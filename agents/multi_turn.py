@@ -19,4 +19,4 @@ class MultiTurnAgent(Agent):
         context = context or {}
         history = context.get("memory", "")
         enriched_context = {**context, "conversation_history": history}
-        return LLMRouter.generate(plan=plan, context=enriched_context)
+        return LLMRouter().generate(plan=plan, context=enriched_context)

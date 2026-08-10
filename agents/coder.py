@@ -29,7 +29,7 @@ class CoderAgent(Agent):
                 "Compatibilidad con arquitectura existente",
             ],
         }
-        return LLMRouter.generate(plan=plan, context=context)
+        return LLMRouter().generate(plan=plan, context=context)
 
     def validate_plan(self, plan: ExecutionPlan) -> list[str]:
         errors = []

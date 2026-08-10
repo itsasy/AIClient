@@ -18,4 +18,4 @@ class TaskAgent(Agent):
         context: dict[str, Any] | None = None,
     ) -> str:
         context = context or {}
-        return LLMRouter.generate(plan=plan, context=context)
+        return LLMRouter().generate(plan=plan, context=context)

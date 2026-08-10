@@ -9,6 +9,7 @@ from typing import Any
 from agents.manager import AgentManager
 from core.context.manager import ContextManager
 from core.execution_plan import ExecutionPlan
+from core.analytics.models import ExecutionMetric
 from core.execution_result import ExecutionResult
 from core.execution_step import ExecutionStep
 from core.intent import IntentAnalyzer
@@ -103,7 +104,6 @@ class ExecutionEngine:
         from core.self_critic import SelfCritic
         from core.engram_memory import EngramMemory
         from core.analytics.metrics_store import MetricsStore
-        from core.analytics.models import ExecutionMetric
 
         self.critic = SelfCritic()
         self.learner = ContinuousLearner()
