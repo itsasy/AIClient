@@ -161,18 +161,40 @@ class ExecutionPlanner:
     # =========================================================
 
     @staticmethod
-    def _set_execution_unit(
-        plan: ExecutionPlan,
-        unit_type: str,
-        unit_name: str,
-        params: dict[str, Any] | None = None,
-    ) -> None:
-        plan.execution_unit_type = ExecutionPlan.normalize_unit_type(
-            unit_type,
+    def _extract_file_content(task: str) -> str:
+        """
+        Extrae contenido simple desde una instrucción de creación de archivo.
+
+        Ejemplos:
+            crea un archivo prueba.txt con el contenido hola
+            crea archivo test.md con contenido "# Título"
+        """
+
+        import re
+
+        patterns = (
+            r"con el contenido\s+(.+)$",
+            r"con contenido\s+(.+)$",
+            r"que contenga\s+(.+)$",
+            r"conteniendo\s+(.+)$",
         )
 
-        plan.execution_unit = unit_name
-        plan.params = params or {}
+        for pattern in patterns:
+            match = re.search(
+                pattern,
+                task,
+                re.IGNORECASE,
+            )
+
+            if match:
+                content = match.group(1).strip()
+
+                if len(content) >= 2 and content[0] in {"'", '"'} and content[-1] == content[0]:
+                    content = content[1:-1]
+
+                return content
+
+        return ""
 
     # =========================================================
     # Planning strategies
@@ -399,30 +421,27 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Construye un plan para creación directa de archivos.
-
-        El planner transforma las entidades extraídas por IntentAnalyzer
-        en los parámetros explícitos requeridos por write_file.
-        """
-
         plan.objective = "Crear archivo"
 
         plan.context_requirements["project"] = True
 
-        path = intent.get_entity("path")
-        content = intent.get_entity("content")
+        path = intent.get_entity(
+            "path",
+            "archivo.txt",
+        )
 
-        params: dict[str, Any] = {
-            "path": path,
-            "content": content,
-        }
+        content = ExecutionPlanner._extract_file_content(
+            task,
+        )
 
         ExecutionPlanner._set_execution_unit(
             plan,
             "skill",
             "write_file",
-            params,
+            {
+                "path": path,
+                "content": content,
+            },
         )
 
     @staticmethod
