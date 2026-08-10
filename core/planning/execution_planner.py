@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from core.execution_plan import ExecutionPlan
@@ -56,10 +57,7 @@ class ExecutionPlanner:
         if not task or not task.strip():
             raise ValueError("ExecutionPlanner requiere una tarea.")
 
-        if not isinstance(
-            intent,
-            IntentResult,
-        ):
+        if not isinstance(intent, IntentResult):
             raise TypeError("ExecutionPlanner requiere un IntentResult.")
 
         task = task.strip()
@@ -91,7 +89,10 @@ class ExecutionPlanner:
         # Execution mode
         # =====================================================
 
-        if complexity in {"high", "complex"} or generate_steps_with_llm:
+        # generate_steps_with_llm NO cambia el modo de ejecución.
+        # Solamente habilita generación LLM cuando el plan ya
+        # corresponde a multi_step.
+        if complexity in {"high", "complex"}:
             plan.execution_mode = "multi_step"
         else:
             plan.execution_mode = "single"
@@ -154,6 +155,13 @@ class ExecutionPlanner:
                 step.depends_on,
             )
 
+        if plan.is_single():
+            logger.info(
+                "Plan single | unit=%s:%s",
+                plan.execution_unit_type,
+                plan.execution_unit,
+            )
+
         return plan
 
     # =========================================================
@@ -165,13 +173,7 @@ class ExecutionPlanner:
         """
         Extrae contenido simple desde una instrucción de creación
         de archivo.
-
-        Ejemplos:
-            crea un archivo prueba.txt con el contenido hola
-            crea archivo test.md con contenido "# Título"
         """
-
-        import re
 
         patterns = (
             r"con el contenido\s+(.+)$",
@@ -205,13 +207,19 @@ class ExecutionPlanner:
         params: dict[str, Any] | None = None,
     ) -> None:
         """
-        Añade una única unidad de ejecución al ExecutionPlan.
+        Define una unidad de ejecución.
 
-        Este helper centraliza la creación de steps simples
-        utilizados por las estrategias de planificación.
+        En modo single:
+            la unidad se almacena directamente en ExecutionPlan.
+
+        En modo multi_step:
+            la unidad se representa como un ExecutionStep.
         """
 
-        if unit_type not in {"agent", "skill"}:
+        if unit_type not in {
+            "agent",
+            "skill",
+        }:
             raise ValueError(
                 f"Tipo de unidad inválido: {unit_type!r}. " "Debe ser 'agent' o 'skill'."
             )
@@ -225,8 +233,16 @@ class ExecutionPlanner:
         if not isinstance(params, dict):
             raise TypeError("params debe ser un diccionario.")
 
+        if plan.is_single():
+            plan.set_execution_unit(
+                unit_type=unit_type,
+                unit_name=unit_name,
+                params=params,
+            )
+            return
+
         plan.add_step(
-            description=f"Ejecutar {unit_type}: {unit_name}",
+            description=(f"Ejecutar {unit_type}: {unit_name}"),
             unit_type=unit_type,
             unit_name=unit_name,
             params=params,
@@ -283,9 +299,7 @@ class ExecutionPlanner:
             expected_output=("Estructura inicial y código base " "del proyecto."),
         )
 
-        generate.depends_on.append(
-            analyze.id,
-        )
+        generate.depends_on.append(analyze.id)
 
     @staticmethod
     def _plan_code_generation(
@@ -340,9 +354,7 @@ class ExecutionPlanner:
             expected_output=("Resultado de validaciones."),
         )
 
-        validate.depends_on.append(
-            analyze.id,
-        )
+        validate.depends_on.append(analyze.id)
 
     @staticmethod
     def _plan_refactor(
@@ -377,9 +389,7 @@ class ExecutionPlanner:
             expected_output=("Código refactorizado conforme " "a la estrategia."),
         )
 
-        modify.depends_on.append(
-            analyze.id,
-        )
+        modify.depends_on.append(analyze.id)
 
     @staticmethod
     def _plan_project_analysis(
@@ -428,9 +438,7 @@ class ExecutionPlanner:
             },
         )
 
-        architect.depends_on.append(
-            inspect.id,
-        )
+        architect.depends_on.append(inspect.id)
 
     @staticmethod
     def _plan_documentation(
@@ -462,14 +470,15 @@ class ExecutionPlanner:
 
         plan.context_requirements["project"] = True
 
+        # write_file modifica el filesystem.
+        plan.governance["allow_write"] = True
+
         path = intent.get_entity(
             "path",
             "archivo.txt",
         )
 
-        content = ExecutionPlanner._extract_file_content(
-            task,
-        )
+        content = ExecutionPlanner._extract_file_content(task)
 
         ExecutionPlanner._set_execution_unit(
             plan,
@@ -561,9 +570,7 @@ class ExecutionPlanner:
             expected_output=("Archivo de especificación creado."),
         )
 
-        write_spec.depends_on.append(
-            spec_step.id,
-        )
+        write_spec.depends_on.append(spec_step.id)
 
     @staticmethod
     def _plan_planning(
@@ -674,19 +681,14 @@ Ejemplo:
                 },
             )
 
-            steps = cls._parse_steps_from_response(
-                response,
-            )
+            steps = cls._parse_steps_from_response(response)
 
             if not steps:
                 logger.warning("El LLM no generó pasos válidos.")
                 return
 
             for step_data in steps:
-                if not isinstance(
-                    step_data,
-                    dict,
-                ):
+                if not isinstance(step_data, dict):
                     continue
 
                 description = step_data.get(
@@ -709,16 +711,33 @@ Ejemplo:
                     {},
                 )
 
-                if not isinstance(
-                    params,
-                    dict,
-                ):
+                if not isinstance(params, dict):
                     params = {}
 
+                try:
+                    normalized_unit_type = ExecutionPlan.normalize_unit_type(unit_type)
+                except (TypeError, ValueError) as exc:
+                    logger.warning(
+                        "Paso LLM descartado por unit_type " "inválido: %s",
+                        exc,
+                    )
+                    continue
+
+                if not normalized_unit_type:
+                    logger.warning("Paso LLM descartado: unit_type vacío.")
+                    continue
+
+                if not isinstance(unit_name, str) or not unit_name.strip():
+                    logger.warning("Paso LLM descartado: unit_name vacío.")
+                    continue
+
+                if not isinstance(description, str) or not description.strip():
+                    description = "Paso generado por LLM"
+
                 plan.add_step(
-                    description=description,
-                    unit_type=unit_type,
-                    unit_name=unit_name,
+                    description=description.strip(),
+                    unit_type=normalized_unit_type,
+                    unit_name=unit_name.strip(),
                     params=params,
                 )
 
@@ -737,10 +756,7 @@ Ejemplo:
     def _parse_steps_from_response(
         response: str,
     ) -> list[dict[str, Any]]:
-        if not isinstance(
-            response,
-            str,
-        ):
+        if not isinstance(response, str):
             return []
 
         start = response.find("[")
@@ -753,14 +769,9 @@ Ejemplo:
         json_str = response[start:end]
 
         try:
-            data = json.loads(
-                json_str,
-            )
+            data = json.loads(json_str)
 
-            if not isinstance(
-                data,
-                list,
-            ):
+            if not isinstance(data, list):
                 logger.warning("El JSON no es una lista de pasos.")
                 return []
 
