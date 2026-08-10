@@ -1,862 +1,779 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+import json
+import logging
 from typing import Any
-import uuid
 
-from core.execution_step import ExecutionStep
+from core.execution_plan import ExecutionPlan
+from core.intent import IntentResult
+from llm.router import LLMRouter
+
+logger = logging.getLogger(__name__)
 
 
-@dataclass(slots=True)
-class ExecutionPlan:
+class ExecutionPlanner:
     """
-    Contrato central de ejecución de AIClient.
+    Constructor declarativo de ExecutionPlans.
 
-    ExecutionPlan representa QUÉ debe ejecutarse y bajo qué
-    condiciones.
+    El ExecutionPlanner decide COMO debe ejecutarse una intención,
+    pero nunca ejecuta Agents ni Skills.
 
-    Es la fuente de verdad entre Planning y Runtime.
+    Responsabilidades:
 
-    Flujo:
+        - Traducir una intención conocida a un ExecutionPlan.
+        - Definir las unidades ejecutables.
+        - Definir dependencias entre steps.
+        - Definir el resultado esperado de cada step.
+        - Generar pasos mediante LLM cuando corresponda.
 
-        IntentResult
-            ↓
-        PlanBuilder
-            ↓
-        ExecutionPlan
-            ↓
-        Runtime
-            ↓
-        ExecutionStep
+    No:
 
-    ExecutionPlan no ejecuta agentes ni skills.
+        - ejecuta skills;
+        - ejecuta agents;
+        - gestiona lifecycle de ejecución;
+        - analiza lenguaje natural;
+        - descubre Agents;
+        - descubre Skills.
     """
 
-    VALID_EXECUTION_MODES = frozenset(
-        {
-            "single",
-            "multi_step",
-        }
-    )
-
-    VALID_STATUSES = frozenset(
-        {
-            "pending",
-            "planned",
-            "validated",
-            "running",
-            "completed",
-            "partial",
-            "failed",
-            "cancelled",
-        }
-    )
-
-    VALID_UNIT_TYPES = ExecutionStep.VALID_UNIT_TYPES
-
-    VALID_GOVERNANCE_MODES = frozenset(
-        {
-            "safe",
-            "powerful",
-        }
-    )
-
-    DEFAULT_CONTEXT_REQUIREMENTS = {
-        "project": False,
-        "engram": False,
-        "obsidian": False,
-        "gentleman": False,
-        "standards": False,
-        "documents": False,
-        "memory": False,
-        "spec": False,
-        "swarmforge": False,
-    }
-
-    DEFAULT_GOVERNANCE = {
-        "mode": "safe",
-        "allow_shell": False,
-        "allow_network": False,
-        "allow_write": False,
-        "allow_sudo": False,
-    }
-
-    DEFAULT_EXECUTION_POLICY = {
-        "autonomous": False,
-        "max_retries": 2,
-        "requires_approval": False,
-        "stop_on_error": True,
-        "timeout": 300,
-    }
+    name = "execution_planner"
 
     # =========================================================
-    # Identity
+    # Public API
     # =========================================================
-
-    id: str = field(default_factory=lambda: str(uuid.uuid4()))
-
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-
-    status: str = "pending"
-
-    # =========================================================
-    # Intent
-    # =========================================================
-
-    original_task: str = ""
-
-    intent: str | None = None
-
-    intent_category: str | None = None
-
-    objective: str | None = None
-
-    # =========================================================
-    # Execution
-    # =========================================================
-
-    execution_mode: str = "single"
-
-    execution_unit_type: str | None = None
-
-    execution_unit: str | None = None
-
-    # =========================================================
-    # Parameters
-    # =========================================================
-
-    params: dict[str, Any] = field(default_factory=dict)
-
-    constraints: list[str] = field(default_factory=list)
-
-    # =========================================================
-    # Context requirements
-    # =========================================================
-
-    context_requirements: dict[str, bool] = field(
-        default_factory=lambda: dict(ExecutionPlan.DEFAULT_CONTEXT_REQUIREMENTS)
-    )
-
-    # =========================================================
-    # Governance
-    # =========================================================
-
-    governance: dict[str, Any] = field(
-        default_factory=lambda: dict(ExecutionPlan.DEFAULT_GOVERNANCE)
-    )
-
-    # =========================================================
-    # Execution policy
-    # =========================================================
-
-    execution_policy: dict[str, Any] = field(
-        default_factory=lambda: dict(ExecutionPlan.DEFAULT_EXECUTION_POLICY)
-    )
-
-    # =========================================================
-    # Steps
-    # =========================================================
-
-    steps: list[ExecutionStep] = field(default_factory=list)
-
-    # =========================================================
-    # Runtime context
-    # =========================================================
-
-    loaded_context: dict[str, Any] = field(default_factory=dict)
-
-    execution_context: dict[str, Any] = field(default_factory=dict)
-
-    # =========================================================
-    # Metadata
-    # =========================================================
-
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-    # =========================================================
-    # Lifecycle
-    # =========================================================
-
-    def __post_init__(self) -> None:
-        self.original_task = self._normalize_text(self.original_task)
-
-        self.execution_mode = self.normalize_execution_mode(self.execution_mode)
-
-        self.status = self.normalize_status(self.status)
-
-        if self.execution_unit_type is not None:
-            self.execution_unit_type = self.normalize_unit_type(self.execution_unit_type)
-
-        if self.execution_unit is not None:
-            self.execution_unit = self.execution_unit.strip()
-
-            if not self.execution_unit:
-                self.execution_unit = None
-
-        self.intent = self._normalize_optional_text(self.intent)
-
-        self.intent_category = self._normalize_optional_text(self.intent_category)
-
-        self.objective = self._normalize_optional_text(self.objective)
-
-        self._validate_containers()
-
-        self._normalize_governance()
-
-        self._normalize_execution_policy()
-
-    # =========================================================
-    # Normalization
-    # =========================================================
-
-    @staticmethod
-    def _normalize_text(
-        value: str,
-    ) -> str:
-        if not isinstance(value, str):
-            raise ValueError("El valor debe ser un string.")
-
-        return value.strip()
-
-    @staticmethod
-    def _normalize_optional_text(
-        value: str | None,
-    ) -> str | None:
-        if value is None:
-            return None
-
-        if not isinstance(value, str):
-            raise ValueError("El valor debe ser un string o None.")
-
-        value = value.strip()
-
-        return value or None
 
     @classmethod
-    def normalize_unit_type(
+    def create(
         cls,
-        unit_type: str | None,
-    ) -> str | None:
-        if unit_type is None:
-            return None
+        task: str,
+        intent: IntentResult,
+        generate_steps_with_llm: bool = False,
+    ) -> ExecutionPlan:
+        """
+        Crea un ExecutionPlan a partir de una tarea y un IntentResult.
+        """
 
-        if not isinstance(unit_type, str):
-            raise ValueError("execution_unit_type debe ser un string o None.")
+        if not task or not task.strip():
+            raise ValueError("ExecutionPlanner requiere una tarea.")
 
-        value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
+        if not isinstance(intent, IntentResult):
+            raise TypeError("ExecutionPlanner requiere un IntentResult.")
 
-        if value not in cls.VALID_UNIT_TYPES:
-            raise ValueError(
-                f"Tipo de unidad inválido: {value}. "
-                f"Tipos permitidos: "
-                f"{sorted(cls.VALID_UNIT_TYPES)}"
-            )
+        task = task.strip()
 
-        return value
-
-    @classmethod
-    def normalize_execution_mode(
-        cls,
-        mode: str | None,
-    ) -> str:
-        if mode is None:
-            return "single"
-
-        if not isinstance(mode, str):
-            raise ValueError("execution_mode debe ser un string.")
-
-        value = mode.lower().strip().replace("-", "_").replace(" ", "_")
-
-        if value not in cls.VALID_EXECUTION_MODES:
-            raise ValueError(
-                f"Modo de ejecución inválido: {value}. "
-                f"Modos permitidos: "
-                f"{sorted(cls.VALID_EXECUTION_MODES)}"
-            )
-
-        return value
-
-    @classmethod
-    def normalize_status(
-        cls,
-        status: str,
-    ) -> str:
-        if not isinstance(status, str):
-            raise ValueError("ExecutionPlan.status debe ser un string.")
-
-        value = status.lower().strip()
-
-        if value not in cls.VALID_STATUSES:
-            raise ValueError(
-                f"Estado de plan inválido: {value}. "
-                f"Estados permitidos: "
-                f"{sorted(cls.VALID_STATUSES)}"
-            )
-
-        return value
-
-    def _validate_containers(self) -> None:
-        containers = {
-            "params": self.params,
-            "context_requirements": self.context_requirements,
-            "governance": self.governance,
-            "execution_policy": self.execution_policy,
-            "loaded_context": self.loaded_context,
-            "execution_context": self.execution_context,
-            "metadata": self.metadata,
-        }
-
-        for name, value in containers.items():
-            if not isinstance(value, dict):
-                raise ValueError(f"ExecutionPlan.{name} debe ser un diccionario.")
-
-        if not isinstance(self.constraints, list):
-            raise ValueError("ExecutionPlan.constraints debe ser una lista.")
-
-        if not isinstance(self.steps, list):
-            raise ValueError("ExecutionPlan.steps debe ser una lista.")
-
-    # =========================================================
-    # Context
-    # =========================================================
-
-    def requires_context(
-        self,
-        provider: str,
-    ) -> bool:
-        if not provider:
-            return False
-
-        return bool(
-            self.context_requirements.get(
-                provider.lower().strip(),
-                False,
-            )
+        plan = ExecutionPlan(
+            original_task=task,
         )
 
-    def set_context_requirement(
-        self,
-        provider: str,
-        required: bool,
-    ) -> None:
-        if not provider or not provider.strip():
-            raise ValueError("El provider de contexto no puede estar vacío.")
+        intent_name = intent.intent
+        domain = intent.domain
+        complexity = intent.complexity
 
-        if not isinstance(required, bool):
-            raise ValueError("required debe ser booleano.")
+        plan.intent = intent_name
+        plan.intent_category = domain
 
-        self.context_requirements[provider.lower().strip()] = required
-
-    # =========================================================
-    # Governance
-    # =========================================================
-
-    def _normalize_governance(self) -> None:
-        mode = (
-            str(
-                self.governance.get(
-                    "mode",
-                    "safe",
-                )
-            )
-            .lower()
-            .strip()
+        plan.metadata.update(
+            {
+                "planner": cls.name,
+                "intent": intent_name,
+                "domain": domain,
+                "complexity": complexity,
+                "intent_confidence": intent.confidence,
+                "intent_category": intent.category,
+                "intent_signals": list(intent.signals),
+            }
         )
 
-        if mode not in self.VALID_GOVERNANCE_MODES:
-            raise ValueError(
-                f"Modo de governance inválido: {mode}. "
-                f"Modos permitidos: "
-                f"{sorted(self.VALID_GOVERNANCE_MODES)}"
-            )
+        # =====================================================
+        # Execution mode
+        # =====================================================
 
-        self.governance["mode"] = mode
+        if complexity in {"high", "complex"} or generate_steps_with_llm:
+            plan.execution_mode = "multi_step"
+        else:
+            plan.execution_mode = "single"
 
-        for key in (
-            "allow_shell",
-            "allow_network",
-            "allow_write",
-            "allow_sudo",
+        # =====================================================
+        # Plan strategy
+        # =====================================================
+
+        planner_method = getattr(
+            cls,
+            f"_plan_{intent_name}",
+            cls._plan_default,
+        )
+
+        planner_method(
+            plan,
+            task,
+            intent,
+        )
+
+        # =====================================================
+        # Optional LLM planning
+        # =====================================================
+
+        if (
+            plan.is_multi_step()
+            and not plan.steps
+            and not plan.execution_unit
+            and generate_steps_with_llm
         ):
-            value = self.governance.get(
-                key,
-                False,
+            cls._generate_steps_with_llm(
+                plan,
+                task,
+                intent,
             )
 
-            if not isinstance(value, bool):
-                raise ValueError(f"governance.{key} debe ser booleano.")
+        # =====================================================
+        # Validation
+        # =====================================================
 
-            self.governance[key] = value
+        errors = plan.validate()
 
-    def is_safe_mode(self) -> bool:
-        return (
-            self.governance.get(
-                "mode",
-                "safe",
-            )
-            == "safe"
+        if errors:
+            raise ValueError("ExecutionPlan inválido: " + ", ".join(errors))
+
+        plan.mark_planned()
+
+        logger.info(
+            "ExecutionPlan creado | intent=%s | mode=%s | steps=%d | unit=%s:%s",
+            intent_name,
+            plan.execution_mode,
+            len(plan.steps),
+            plan.execution_unit_type,
+            plan.execution_unit,
         )
 
-    def is_powerful_mode(self) -> bool:
-        return (
-            self.governance.get(
-                "mode",
-                "safe",
+        for index, step in enumerate(
+            plan.steps,
+            start=1,
+        ):
+            logger.info(
+                "Plan step=%d id=%s unit=%s:%s depends_on=%s",
+                index,
+                step.id,
+                step.unit_type,
+                step.unit_name,
+                step.depends_on,
             )
-            == "powerful"
-        )
 
-    def allows_shell(self) -> bool:
-        return bool(
-            self.governance.get(
-                "allow_shell",
-                False,
-            )
-        )
-
-    def allows_network(self) -> bool:
-        return bool(
-            self.governance.get(
-                "allow_network",
-                False,
-            )
-        )
-
-    def allows_write(self) -> bool:
-        return bool(
-            self.governance.get(
-                "allow_write",
-                False,
-            )
-        )
-
-    def allows_sudo(self) -> bool:
-        return bool(
-            self.governance.get(
-                "allow_sudo",
-                False,
-            )
-        )
+        return plan
 
     # =========================================================
-    # Execution policy
+    # Helpers
     # =========================================================
 
-    def _normalize_execution_policy(self) -> None:
-        autonomous = self.execution_policy.get(
-            "autonomous",
-            False,
+    @staticmethod
+    def _extract_file_content(task: str) -> str:
+        """
+        Extrae contenido simple desde una instrucción de creación
+        de archivo.
+
+        Ejemplos:
+
+            crea un archivo prueba.txt con el contenido hola
+            crea un archivo prueba.txt con el contenido 'hola'
+            crea archivo test.md con contenido "# Título"
+        """
+
+        import re
+
+        patterns = (
+            r"con el contenido\s+(.+)$",
+            r"con contenido\s+(.+)$",
+            r"que contenga\s+(.+)$",
+            r"conteniendo\s+(.+)$",
         )
 
-        if not isinstance(autonomous, bool):
-            raise ValueError("execution_policy.autonomous debe ser booleano.")
-
-        self.execution_policy["autonomous"] = autonomous
-
-        max_retries = self.execution_policy.get(
-            "max_retries",
-            2,
-        )
-
-        if not isinstance(max_retries, int) or max_retries < 0:
-            raise ValueError(
-                "execution_policy.max_retries debe ser " "un entero mayor o igual a cero."
+        for pattern in patterns:
+            match = re.search(
+                pattern,
+                task,
+                re.IGNORECASE,
             )
 
-        self.execution_policy["max_retries"] = max_retries
+            if match:
+                content = match.group(1).strip()
 
-        requires_approval = self.execution_policy.get(
-            "requires_approval",
-            False,
-        )
+                if len(content) >= 2 and content[0] in {"'", '"'} and content[-1] == content[0]:
+                    content = content[1:-1]
 
-        if not isinstance(requires_approval, bool):
-            raise ValueError("execution_policy.requires_approval debe " "ser booleano.")
+                return content
 
-        self.execution_policy["requires_approval"] = requires_approval
+        return ""
 
-        stop_on_error = self.execution_policy.get(
-            "stop_on_error",
-            True,
-        )
-
-        if not isinstance(stop_on_error, bool):
-            raise ValueError("execution_policy.stop_on_error debe ser booleano.")
-
-        self.execution_policy["stop_on_error"] = stop_on_error
-
-        timeout = self.execution_policy.get(
-            "timeout",
-            300,
-        )
-
-        if not isinstance(timeout, int) or timeout <= 0:
-            raise ValueError("execution_policy.timeout debe ser " "un entero mayor que cero.")
-
-        self.execution_policy["timeout"] = timeout
-
-    def is_autonomous(self) -> bool:
-        return bool(
-            self.execution_policy.get(
-                "autonomous",
-                False,
-            )
-        )
-
-    def get_max_retries(self) -> int:
-        return int(
-            self.execution_policy.get(
-                "max_retries",
-                2,
-            )
-        )
-
-    def requires_approval(self) -> bool:
-        return bool(
-            self.execution_policy.get(
-                "requires_approval",
-                False,
-            )
-        )
-
-    def should_stop_on_error(self) -> bool:
-        return bool(
-            self.execution_policy.get(
-                "stop_on_error",
-                True,
-            )
-        )
-
-    def get_timeout(self) -> int:
-        return int(
-            self.execution_policy.get(
-                "timeout",
-                300,
-            )
-        )
-
-    # =========================================================
-    # Steps
-    # =========================================================
-
-    def add_step(
-        self,
-        description: str,
+    @staticmethod
+    def _set_execution_unit(
+        plan: ExecutionPlan,
         unit_type: str,
         unit_name: str,
         params: dict[str, Any] | None = None,
-        expected_output: str | None = None,
-        retries: int = 0,
-        timeout: int = 120,
-        metadata: dict[str, Any] | None = None,
-    ) -> ExecutionStep:
-        step = ExecutionStep(
-            description=description,
-            unit_type=self.normalize_unit_type(unit_type),
-            unit_name=unit_name,
-            params=params or {},
-            expected_output=expected_output,
-            retries=retries,
-            timeout=timeout,
-            metadata=metadata or {},
+    ) -> None:
+        """
+        Configura la unidad ejecutable de un ExecutionPlan
+        de modo single.
+
+        En modo single, ExecutionPlan NO utiliza steps.
+        La unidad se representa mediante:
+
+            execution_unit_type
+            execution_unit
+            params
+        """
+
+        if unit_type not in {"agent", "skill"}:
+            raise ValueError(
+                f"Tipo de unidad inválido: {unit_type!r}. " "Debe ser 'agent' o 'skill'."
+            )
+
+        if not unit_name or not unit_name.strip():
+            raise ValueError("unit_name no puede estar vacío.")
+
+        if params is None:
+            params = {}
+
+        if not isinstance(params, dict):
+            raise TypeError("params debe ser un diccionario.")
+
+        plan.execution_mode = "single"
+        plan.execution_unit_type = unit_type
+        plan.execution_unit = unit_name.strip()
+        plan.params = dict(params)
+
+    # =========================================================
+    # Planning strategies
+    # =========================================================
+
+    @staticmethod
+    def _plan_project_creation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Crear un nuevo proyecto de software"
+
+        plan.execution_mode = "multi_step"
+
+        framework = intent.get_entity(
+            "framework",
+            "unknown",
         )
 
-        self.steps.append(step)
+        name = intent.get_entity(
+            "name",
+            "mi_proyecto",
+        )
 
-        return step
+        plan.context_requirements["project"] = False
+        plan.context_requirements["gentleman"] = True
 
-    def remove_step(
-        self,
-        step_id: str,
-    ) -> bool:
-        for index, step in enumerate(self.steps):
-            if step.id == step_id:
-                self.steps.pop(index)
+        analyze = plan.add_step(
+            description=(f"Analizar requisitos para proyecto {framework}"),
+            unit_type="agent",
+            unit_name="architect",
+            params={
+                "task": task,
+                "framework": framework,
+            },
+            expected_output=("Decisiones arquitectónicas " "y requisitos estructurados."),
+        )
 
-                for remaining in self.steps:
-                    remaining.remove_dependency(step_id)
+        generate = plan.add_step(
+            description=(f"Generar estructura inicial para {framework}"),
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+                "framework": framework,
+                "project_name": name,
+            },
+            expected_output=("Estructura inicial y código base " "del proyecto."),
+        )
 
-                return True
+        generate.depends_on.append(
+            analyze.id,
+        )
 
-        return False
+    @staticmethod
+    def _plan_code_generation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Generar código"
 
-    def get_step(
-        self,
-        step_id: str,
-    ) -> ExecutionStep | None:
-        for step in self.steps:
-            if step.id == step_id:
-                return step
+        plan.context_requirements["gentleman"] = True
+        plan.context_requirements["standards"] = True
 
-        return None
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "coder",
+            {
+                "task": task,
+            },
+        )
 
-    def has_steps(self) -> bool:
-        return bool(self.steps)
+    @staticmethod
+    def _plan_debug(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Analizar y resolver problema técnico"
 
-    def is_multi_step(self) -> bool:
-        return self.execution_mode == "multi_step"
+        plan.execution_mode = "multi_step"
+
+        plan.context_requirements["project"] = True
+        plan.context_requirements["engram"] = True
+
+        analyze = plan.add_step(
+            description="Analizar problema",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+            },
+            expected_output=("Diagnóstico técnico del problema."),
+        )
+
+        validate = plan.add_step(
+            description="Ejecutar validaciones",
+            unit_type="skill",
+            unit_name="sandbox",
+            params={
+                "task": task,
+            },
+            expected_output=("Resultado de validaciones."),
+        )
+
+        validate.depends_on.append(
+            analyze.id,
+        )
+
+    @staticmethod
+    def _plan_refactor(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Refactorizar código existente"
+
+        plan.execution_mode = "multi_step"
+
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = True
+
+        analyze = plan.add_step(
+            description="Analizar arquitectura actual",
+            unit_type="agent",
+            unit_name="architect",
+            params={
+                "task": task,
+            },
+            expected_output=("Análisis arquitectónico y estrategia " "de refactorización."),
+        )
+
+        modify = plan.add_step(
+            description="Aplicar cambios",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": task,
+            },
+            expected_output=("Código refactorizado conforme " "a la estrategia."),
+        )
+
+        modify.depends_on.append(
+            analyze.id,
+        )
+
+    @staticmethod
+    def _plan_project_analysis(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Analizar la arquitectura del proyecto"
+
+        plan.execution_mode = "multi_step"
+
+        plan.context_requirements["project"] = True
+        plan.context_requirements["engram"] = True
+        plan.context_requirements["standards"] = True
+
+        inspect = plan.add_step(
+            description=("Inspeccionar estructura, archivos " "y componentes del proyecto"),
+            unit_type="skill",
+            unit_name="analyze_project",
+            params={
+                "path": ".",
+                "task": task,
+            },
+            expected_output=("Snapshot estructurado del proyecto."),
+            metadata={
+                "stage": "inspection",
+                "produces_context": True,
+                "context_key": "project_analysis",
+            },
+        )
+
+        architect = plan.add_step(
+            description=(
+                "Interpretar la arquitectura del proyecto " "y generar un resumen ejecutivo"
+            ),
+            unit_type="agent",
+            unit_name="architect",
+            params={
+                "task": task,
+            },
+            expected_output=("Análisis arquitectónico ejecutivo " "del proyecto."),
+            metadata={
+                "stage": "architecture_analysis",
+                "consumes_context": True,
+                "context_source": "project_analysis",
+            },
+        )
+
+        architect.depends_on.append(
+            inspect.id,
+        )
+
+    @staticmethod
+    def _plan_documentation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Crear documentación"
+
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = True
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "writer",
+            {
+                "task": task,
+            },
+        )
+
+    @staticmethod
+    def _plan_file_creation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Crear archivo"
+
+        plan.context_requirements["project"] = True
+
+        path = intent.get_entity(
+            "path",
+            "archivo.txt",
+        )
+
+        content = ExecutionPlanner._extract_file_content(
+            task,
+        )
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "write_file",
+            {
+                "path": path,
+                "content": content,
+            },
+        )
+
+    @staticmethod
+    def _plan_command_execution(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Ejecutar comando"
+
+        plan.context_requirements["project"] = True
+        plan.governance["allow_shell"] = True
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "shell",
+            {
+                "task": task,
+            },
+        )
+
+    @staticmethod
+    def _plan_docker(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Operación Docker"
+
+        plan.context_requirements["project"] = True
+
+        plan.governance["allow_shell"] = True
+        plan.governance["allow_network"] = True
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "sandbox",
+            {
+                "task": task,
+            },
+        )
+
+    @staticmethod
+    def _plan_spec(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Crear especificación (Spec)"
+
+        plan.execution_mode = "multi_step"
+
+        plan.context_requirements["engram"] = True
+        plan.context_requirements["standards"] = True
+
+        spec_step = plan.add_step(
+            description=("Generar especificación detallada " "a partir de la tarea"),
+            unit_type="agent",
+            unit_name="planner",
+            params={
+                "task": task,
+                "mode": "spec",
+            },
+            expected_output=("Especificación estructurada " "en formato JSON."),
+            metadata={
+                "stage": "spec_generation",
+            },
+        )
+
+        write_spec = plan.add_step(
+            description="Guardar especificación en disco",
+            unit_type="skill",
+            unit_name="write_file",
+            params={
+                "task": task,
+                "mode": "spec",
+            },
+            expected_output=("Archivo de especificación creado."),
+        )
+
+        write_spec.depends_on.append(
+            spec_step.id,
+        )
+
+    @staticmethod
+    def _plan_planning(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Generar un plan de ejecución"
+
+        plan.execution_mode = "multi_step"
+
+        plan.context_requirements["engram"] = True
+        plan.context_requirements["standards"] = True
+
+        ExecutionPlanner._generate_steps_with_llm(
+            plan,
+            task,
+            intent,
+        )
+
+    @staticmethod
+    def _plan_default(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        if not plan.intent:
+            plan.intent = "conversation"
+
+        plan.objective = task
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "task_agent",
+            {
+                "task": task,
+            },
+        )
 
     # =========================================================
-    # Dependency graph
+    # LLM planning
     # =========================================================
-
-    def validate_dependencies(self) -> list[str]:
-        errors: list[str] = []
-
-        step_ids = [step.id for step in self.steps]
-        step_id_set = set(step_ids)
-
-        if len(step_ids) != len(step_id_set):
-            errors.append("ExecutionPlan contiene IDs de steps duplicados.")
-
-        for step in self.steps:
-            for dependency in step.depends_on:
-                if dependency == step.id:
-                    errors.append(f"Step {step.id} depende de sí mismo.")
-                    continue
-
-                if dependency not in step_id_set:
-                    errors.append(f"Step {step.id} depende de " f"{dependency}, que no existe.")
-
-        return errors
-
-    def has_dependency_cycle(self) -> bool:
-        graph = {step.id: list(step.depends_on) for step in self.steps}
-
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(node: str) -> bool:
-            if node in visiting:
-                return True
-
-            if node in visited:
-                return False
-
-            visiting.add(node)
-
-            for dependency in graph.get(node, []):
-                if dependency in graph and visit(dependency):
-                    return True
-
-            visiting.remove(node)
-            visited.add(node)
-
-            return False
-
-        return any(visit(step_id) for step_id in graph)
-
-    # =========================================================
-    # Validation
-    # =========================================================
-
-    def validate(self) -> list[str]:
-        errors: list[str] = []
-
-        if not self.original_task:
-            errors.append("ExecutionPlan requiere original_task.")
-
-        if not self.intent:
-            errors.append("ExecutionPlan requiere intent.")
-
-        if self.execution_mode == "single":
-            if not self.execution_unit_type:
-                errors.append("Modo single requiere execution_unit_type.")
-
-            if not self.execution_unit:
-                errors.append("Modo single requiere execution_unit.")
-
-            if self.steps:
-                errors.append("Modo single no permite steps.")
-
-        elif self.execution_mode == "multi_step":
-            if not self.steps and not self.execution_unit:
-                errors.append(
-                    "Modo multi_step requiere al menos " "un step o una unidad ejecutable."
-                )
-
-        errors.extend(self.validate_dependencies())
-
-        if self.has_dependency_cycle():
-            errors.append("ExecutionPlan contiene un ciclo de dependencias.")
-
-        return errors
-
-    def is_valid(self) -> bool:
-        return not self.validate()
-
-    # =========================================================
-    # Status
-    # =========================================================
-
-    def mark_planned(self) -> None:
-        self.status = "planned"
-
-    def mark_validated(self) -> None:
-        self.status = "validated"
-
-    def mark_running(self) -> None:
-        self.status = "running"
-
-    def mark_completed(self) -> None:
-        self.status = "completed"
-
-    def mark_partial(self) -> None:
-        self.status = "partial"
-
-    def mark_failed(self) -> None:
-        self.status = "failed"
-
-    def mark_cancelled(self) -> None:
-        self.status = "cancelled"
-
-    # =========================================================
-    # Serialization
-    # =========================================================
-
-    def to_dict(
-        self,
-        include_runtime: bool = True,
-        include_step_results: bool = True,
-    ) -> dict[str, Any]:
-        data: dict[str, Any] = {
-            "id": self.id,
-            "created_at": self.created_at.isoformat(),
-            "status": self.status,
-            "original_task": self.original_task,
-            "intent": self.intent,
-            "intent_category": self.intent_category,
-            "objective": self.objective,
-            "execution_mode": self.execution_mode,
-            "execution_unit_type": self.execution_unit_type,
-            "execution_unit": self.execution_unit,
-            "params": dict(self.params),
-            "constraints": list(self.constraints),
-            "context_requirements": dict(self.context_requirements),
-            "governance": dict(self.governance),
-            "execution_policy": dict(self.execution_policy),
-            "metadata": dict(self.metadata),
-            "steps": [step.to_dict(include_result=include_step_results) for step in self.steps],
-        }
-
-        if include_runtime:
-            data["loaded_context"] = dict(self.loaded_context)
-            data["execution_context"] = dict(self.execution_context)
-
-        return data
 
     @classmethod
-    def from_dict(
+    def _generate_steps_with_llm(
         cls,
-        data: dict[str, Any],
-    ) -> ExecutionPlan:
-        if not isinstance(data, dict):
-            raise ValueError("ExecutionPlan.from_dict requiere un diccionario.")
-
-        created_at_value = data.get("created_at")
-
-        created_at = (
-            datetime.fromisoformat(created_at_value)
-            if created_at_value
-            else datetime.now(timezone.utc)
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        logger.info(
+            "Generando pasos con LLM para tarea: %s",
+            task[:100],
         )
 
-        steps = [
-            ExecutionStep.from_dict(step)
-            for step in data.get(
-                "steps",
-                [],
-            )
-        ]
+        prompt = f"""
+Eres un planificador de software.
 
-        return cls(
-            id=data.get(
-                "id",
-                str(uuid.uuid4()),
-            ),
-            created_at=created_at,
-            status=data.get(
-                "status",
-                "pending",
-            ),
-            original_task=data.get(
-                "original_task",
-                "",
-            ),
-            intent=data.get("intent"),
-            intent_category=data.get("intent_category"),
-            objective=data.get("objective"),
-            execution_mode=data.get(
-                "execution_mode",
-                "single",
-            ),
-            execution_unit_type=data.get("execution_unit_type"),
-            execution_unit=data.get("execution_unit"),
-            params=dict(
-                data.get(
+Genera un plan de ejecución para la siguiente tarea.
+
+Tarea:
+{task}
+
+Intención:
+{intent.intent}
+
+Dominio:
+{intent.domain}
+
+Devuelve SOLO un JSON con una lista de pasos.
+
+Cada paso debe tener:
+
+- "description": descripción clara
+- "unit_type": "agent" o "skill"
+- "unit_name": nombre del agente o skill
+- "params": objeto con parámetros opcionales
+
+Ejemplo:
+
+[
+{{
+    "description": "Analizar requisitos",
+    "unit_type": "agent",
+    "unit_name": "architect",
+    "params": {{
+        "task": "..."
+    }}
+}},
+{{
+    "description": "Generar código",
+    "unit_type": "agent",
+    "unit_name": "coder",
+    "params": {{
+        "task": "..."
+    }}
+}}
+]
+"""
+
+        try:
+            response = LLMRouter().generate(
+                plan=plan,
+                context={
+                    "instruction": prompt,
+                    "task": task,
+                },
+            )
+
+            steps = cls._parse_steps_from_response(
+                response,
+            )
+
+            if not steps:
+                logger.warning("El LLM no generó pasos válidos.")
+                return
+
+            for step_data in steps:
+                if not isinstance(
+                    step_data,
+                    dict,
+                ):
+                    continue
+
+                description = step_data.get(
+                    "description",
+                    "Paso sin descripción",
+                )
+
+                unit_type = step_data.get(
+                    "unit_type",
+                    "agent",
+                )
+
+                unit_name = step_data.get(
+                    "unit_name",
+                    "task_agent",
+                )
+
+                params = step_data.get(
                     "params",
                     {},
                 )
-            ),
-            constraints=list(
-                data.get(
-                    "constraints",
-                    [],
-                )
-            ),
-            context_requirements=dict(
-                data.get(
-                    "context_requirements",
-                    cls.DEFAULT_CONTEXT_REQUIREMENTS,
-                )
-            ),
-            governance=dict(
-                data.get(
-                    "governance",
-                    cls.DEFAULT_GOVERNANCE,
-                )
-            ),
-            execution_policy=dict(
-                data.get(
-                    "execution_policy",
-                    cls.DEFAULT_EXECUTION_POLICY,
-                )
-            ),
-            steps=steps,
-            loaded_context=dict(
-                data.get(
-                    "loaded_context",
-                    {},
-                )
-            ),
-            execution_context=dict(
-                data.get(
-                    "execution_context",
-                    {},
-                )
-            ),
-            metadata=dict(
-                data.get(
-                    "metadata",
-                    {},
-                )
-            ),
-        )
 
-    # =========================================================
-    # Representation
-    # =========================================================
+                if not isinstance(
+                    params,
+                    dict,
+                ):
+                    params = {}
 
-    def __repr__(self) -> str:
-        return (
-            "<ExecutionPlan("
-            f"id={self.id}, "
-            f"status={self.status}, "
-            f"intent={self.intent}, "
-            f"mode={self.execution_mode}, "
-            f"unit={self.execution_unit_type}:"
-            f"{self.execution_unit}, "
-            f"steps={len(self.steps)}"
-            ")>"
-        )
+                plan.add_step(
+                    description=description,
+                    unit_type=unit_type,
+                    unit_name=unit_name,
+                    params=params,
+                )
+
+            logger.info(
+                "Pasos generados con LLM: %d",
+                len(plan.steps),
+            )
+
+        except Exception as exc:
+            logger.exception(
+                "Error generando pasos con LLM: %s",
+                exc,
+            )
+
+    @staticmethod
+    def _parse_steps_from_response(
+        response: str,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(
+            response,
+            str,
+        ):
+            return []
+
+        start = response.find("[")
+        end = response.rfind("]") + 1
+
+        if start == -1 or end <= start:
+            logger.warning("No se encontró JSON en la respuesta del LLM.")
+            return []
+
+        json_str = response[start:end]
+
+        try:
+            data = json.loads(
+                json_str,
+            )
+
+            if not isinstance(
+                data,
+                list,
+            ):
+                logger.warning("El JSON no es una lista de pasos.")
+                return []
+
+            return [item for item in data if isinstance(item, dict)]
+
+        except json.JSONDecodeError:
+            logger.warning("Error parseando JSON de la respuesta del LLM.")
+            return []
