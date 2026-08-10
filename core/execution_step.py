@@ -8,17 +8,24 @@ from typing import Any
 @dataclass(slots=True)
 class ExecutionStep:
     """
-    Unidad individual de trabajo dentro de un ExecutionPlan.
+    Unidad atómica de trabajo dentro de un ExecutionPlan.
 
-    Una unidad ejecutable se identifica mediante:
+    ExecutionStep describe QUÉ unidad ejecutable debe invocarse.
+    No ejecuta agentes ni skills.
 
-        unit_type
-        unit_name
+    Una unidad se identifica mediante:
 
-    unit_type permitido:
+        unit_type + unit_name
 
-        agent
-        skill
+    Ejemplo:
+
+        unit_type="agent"
+        unit_name="coder"
+
+    o:
+
+        unit_type="skill"
+        unit_name="write_file"
     """
 
     VALID_UNIT_TYPES = frozenset(
@@ -63,44 +70,162 @@ class ExecutionStep:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        self.description = self._normalize_required(
+            self.description,
+            "description",
+        )
 
-        self.description = self.description.strip()
+        self.unit_type = self._normalize_unit_type(
+            self.unit_type,
+        )
 
-        self.unit_type = self.unit_type.lower().strip()
+        self.unit_name = self._normalize_required(
+            self.unit_name,
+            "unit_name",
+        )
 
-        self.unit_name = self.unit_name.strip()
+        self.expected_output = self._normalize_optional(
+            self.expected_output,
+        )
 
-        if not self.description:
-            raise ValueError("ExecutionStep requiere una descripción.")
+        if not isinstance(self.params, dict):
+            raise ValueError("ExecutionStep.params debe ser un diccionario.")
 
-        if self.unit_type not in self.VALID_UNIT_TYPES:
+        if not isinstance(self.metadata, dict):
+            raise ValueError("ExecutionStep.metadata debe ser un diccionario.")
+
+        self.depends_on = self._normalize_dependencies(
+            self.depends_on,
+        )
+
+        self.retries = self._validate_non_negative_int(
+            self.retries,
+            "retries",
+        )
+
+        self.timeout = self._validate_positive_int(
+            self.timeout,
+            "timeout",
+        )
+
+        self.status = self._normalize_status(
+            self.status,
+        )
+
+    # =========================================================
+    # Normalization
+    # =========================================================
+
+    @staticmethod
+    def _normalize_required(
+        value: str,
+        field_name: str,
+    ) -> str:
+        if not isinstance(value, str):
+            raise ValueError(f"ExecutionStep.{field_name} debe ser un string.")
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError(f"ExecutionStep.{field_name} no puede estar vacío.")
+
+        return value
+
+    @staticmethod
+    def _normalize_optional(
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValueError("ExecutionStep.expected_output debe ser string o None.")
+
+        value = value.strip()
+
+        return value or None
+
+    @classmethod
+    def _normalize_unit_type(
+        cls,
+        value: str,
+    ) -> str:
+        if not isinstance(value, str):
+            raise ValueError("ExecutionStep.unit_type debe ser un string.")
+
+        normalized = value.lower().strip().replace("-", "_").replace(" ", "_")
+
+        if normalized not in cls.VALID_UNIT_TYPES:
             raise ValueError(
-                f"Tipo de unidad inválido: {self.unit_type}. "
-                f"Tipos permitidos: "
-                f"{sorted(self.VALID_UNIT_TYPES)}"
+                f"Tipo de unidad inválido: {normalized}. "
+                f"Tipos permitidos: {sorted(cls.VALID_UNIT_TYPES)}"
             )
 
-        if not self.unit_name:
-            raise ValueError("ExecutionStep requiere un unit_name válido.")
+        return normalized
 
-        if self.retries < 0:
-            raise ValueError("ExecutionStep.retries no puede ser negativo.")
+    @classmethod
+    def _normalize_status(
+        cls,
+        value: str,
+    ) -> str:
+        if not isinstance(value, str):
+            raise ValueError("ExecutionStep.status debe ser un string.")
 
-        if self.timeout <= 0:
-            raise ValueError("ExecutionStep.timeout debe ser mayor que cero.")
+        normalized = value.lower().strip()
 
-        if self.status not in self.VALID_STATUSES:
+        if normalized not in cls.VALID_STATUSES:
             raise ValueError(
-                f"Estado de step inválido: {self.status}. "
-                f"Estados permitidos: "
-                f"{sorted(self.VALID_STATUSES)}"
+                f"Estado de step inválido: {normalized}. "
+                f"Estados permitidos: {sorted(cls.VALID_STATUSES)}"
             )
 
-        self.depends_on = [
-            dependency.strip()
-            for dependency in self.depends_on
-            if dependency and dependency.strip()
-        ]
+        return normalized
+
+    @staticmethod
+    def _normalize_dependencies(
+        dependencies: list[str],
+    ) -> list[str]:
+        if not isinstance(dependencies, list):
+            raise ValueError("ExecutionStep.depends_on debe ser una lista.")
+
+        normalized: list[str] = []
+
+        for dependency in dependencies:
+            if not isinstance(dependency, str):
+                raise ValueError("Cada dependencia debe ser un string.")
+
+            dependency = dependency.strip()
+
+            if dependency and dependency not in normalized:
+                normalized.append(dependency)
+
+        return normalized
+
+    @staticmethod
+    def _validate_non_negative_int(
+        value: int,
+        field_name: str,
+    ) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"ExecutionStep.{field_name} debe ser un entero.")
+
+        if value < 0:
+            raise ValueError(f"ExecutionStep.{field_name} no puede ser negativo.")
+
+        return value
+
+    @staticmethod
+    def _validate_positive_int(
+        value: int,
+        field_name: str,
+    ) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f"ExecutionStep.{field_name} debe ser un entero.")
+
+        if value <= 0:
+            raise ValueError(f"ExecutionStep.{field_name} debe ser mayor que cero.")
+
+        return value
 
     # =========================================================
     # State
@@ -108,7 +233,6 @@ class ExecutionStep:
 
     @property
     def is_terminal(self) -> bool:
-
         return self.status in {
             "completed",
             "failed",
@@ -117,21 +241,29 @@ class ExecutionStep:
 
     @property
     def is_success(self) -> bool:
-
         return self.status == "completed"
 
     @property
     def is_failed(self) -> bool:
-
         return self.status == "failed"
 
     @property
     def is_skipped(self) -> bool:
-
         return self.status == "skipped"
 
-    def mark_running(self) -> None:
+    @property
+    def is_pending(self) -> bool:
+        return self.status == "pending"
 
+    @property
+    def is_running(self) -> bool:
+        return self.status == "running"
+
+    # =========================================================
+    # Lifecycle
+    # =========================================================
+
+    def mark_running(self) -> None:
         self.status = "running"
         self.error = None
 
@@ -139,7 +271,6 @@ class ExecutionStep:
         self,
         result: Any = None,
     ) -> None:
-
         self.status = "completed"
         self.result = result
         self.error = None
@@ -148,15 +279,13 @@ class ExecutionStep:
         self,
         error: str,
     ) -> None:
-
         self.status = "failed"
-        self.error = error
+        self.error = str(error)
 
     def mark_skipped(
         self,
         reason: str | None = None,
     ) -> None:
-
         self.status = "skipped"
         self.result = None
         self.error = None
@@ -164,12 +293,38 @@ class ExecutionStep:
         if reason:
             self.metadata["skip_reason"] = reason
 
+    def reset(self) -> None:
+        self.status = "pending"
+        self.result = None
+        self.error = None
+
+    # =========================================================
+    # Dependencies
+    # =========================================================
+
+    def add_dependency(
+        self,
+        step_id: str,
+    ) -> None:
+        if not step_id or not step_id.strip():
+            raise ValueError("El ID de dependencia no puede estar vacío.")
+
+        step_id = step_id.strip()
+
+        if step_id == self.id:
+            raise ValueError("ExecutionStep no puede depender de sí mismo.")
+
+        if step_id not in self.depends_on:
+            self.depends_on.append(step_id)
+
+    def has_dependencies(self) -> bool:
+        return bool(self.depends_on)
+
     # =========================================================
     # Serialization
     # =========================================================
 
     def to_dict(self) -> dict[str, Any]:
-
         return {
             "id": self.id,
             "description": self.description,
@@ -185,3 +340,36 @@ class ExecutionStep:
             "error": self.error,
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+    ) -> ExecutionStep:
+        if not isinstance(data, dict):
+            raise ValueError("ExecutionStep.from_dict requiere un diccionario.")
+
+        return cls(
+            id=data.get("id", str(uuid.uuid4())),
+            description=data.get("description", ""),
+            unit_type=data.get("unit_type", ""),
+            unit_name=data.get("unit_name", ""),
+            params=data.get("params", {}),
+            depends_on=data.get("depends_on", []),
+            expected_output=data.get("expected_output"),
+            retries=data.get("retries", 0),
+            timeout=data.get("timeout", 120),
+            status=data.get("status", "pending"),
+            result=data.get("result"),
+            error=data.get("error"),
+            metadata=data.get("metadata", {}),
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ExecutionStep("
+            f"id={self.id}, "
+            f"unit={self.unit_type}:{self.unit_name}, "
+            f"status={self.status}, "
+            f"dependencies={len(self.depends_on)})>"
+        )

@@ -1,8 +1,8 @@
 import logging
 from typing import Any
 
-from core.engram_memory import EngramMemory
 from core.context.base import BaseContextProvider
+from core.engram_memory import EngramMemory
 from core.execution_plan import ExecutionPlan
 
 logger = logging.getLogger(__name__)
@@ -12,22 +12,18 @@ class EngramProvider(BaseContextProvider):
 
     key = "engram"
 
-    def __init__(self):
-
+    def __init__(self) -> None:
         self.engram = EngramMemory()
 
     def load(
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
+
         if not self.engram.is_available():
-
-            logger.debug(
-                "Engram no disponible.",
-            )
-
-            return
+            logger.debug("Engram no disponible.")
+            return {}
 
         memory = self.engram.get_context(
             query=plan.original_task,
@@ -35,6 +31,9 @@ class EngramProvider(BaseContextProvider):
         )
 
         if not memory:
-            return
+            return {}
 
-        context[self.key] = {"memory": memory, "skills": []}
+        return {
+            "memory": memory,
+            "skills": [],
+        }

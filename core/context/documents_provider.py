@@ -1,24 +1,28 @@
-from core.document_ingestor import DocumentIngestor
+from typing import Any
+
 from core.context.base import BaseContextProvider
+from core.execution_plan import ExecutionPlan
+from core.project_inspector import ProjectInspector
 
 
-class DocumentsProvider(BaseContextProvider):
+class ProjectProvider(BaseContextProvider):
 
-    key = "documents"
+    key = "project"
+    name = "Project Context"
+    description = "Inspección estructural del proyecto objetivo."
 
-    def __init__(self):
-
-        self.ingestor = DocumentIngestor()
+    def __init__(self) -> None:
+        self.inspector = ProjectInspector()
 
     def load(
         self,
-        plan,
-        context,
-    ) -> None:
+        plan: ExecutionPlan,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
 
-        documents = self.ingestor.list_ingested()
+        snapshot = self.inspector.inspect_snapshot()
 
-        if not documents:
-            return
-
-        context[self.key] = documents
+        return {
+            "snapshot": snapshot,
+            "architecture": snapshot.to_architecture_context(),
+        }

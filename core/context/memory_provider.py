@@ -1,25 +1,28 @@
 from typing import Any
-from core.memory import ConversationMemory
+
 from core.context.base import BaseContextProvider
 from core.execution_plan import ExecutionPlan
+from core.memory import ConversationMemory
 
 
 class MemoryProvider(BaseContextProvider):
 
     key = "memory"
 
-    def __init__(self):
-
+    def __init__(self) -> None:
         self.memory = ConversationMemory()
 
     def load(
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
-    ) -> None:
+    ) -> dict[str, Any]:
+
         memory = self.memory.get_context()
 
         if not memory:
-            return
+            return {}
 
-        context[self.key] = memory
+        return {
+            "history": memory,
+        }

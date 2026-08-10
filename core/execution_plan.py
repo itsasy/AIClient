@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+import uuid
 
 from core.execution_step import ExecutionStep
 
@@ -13,10 +13,24 @@ class ExecutionPlan:
     """
     Contrato central de ejecución de AIClient.
 
-    ExecutionPlan es la fuente de verdad de una ejecución.
+    ExecutionPlan representa QUÉ debe ejecutarse y bajo qué
+    condiciones.
 
-    El plan es construido por Planning y consumido por Runtime.
-    Runtime no debe reinterpretar la intención original.
+    Es la fuente de verdad entre Planning y Runtime.
+
+    Flujo:
+
+        IntentResult
+            ↓
+        PlanBuilder
+            ↓
+        ExecutionPlan
+            ↓
+        Runtime
+            ↓
+        ExecutionStep
+
+    ExecutionPlan no ejecuta agentes ni skills.
     """
 
     VALID_EXECUTION_MODES = frozenset(
@@ -48,8 +62,36 @@ class ExecutionPlan:
         }
     )
 
+    DEFAULT_CONTEXT_REQUIREMENTS = {
+        "project": False,
+        "engram": False,
+        "obsidian": False,
+        "gentleman": False,
+        "standards": False,
+        "documents": False,
+        "memory": False,
+        "spec": False,
+        "swarmforge": False,
+    }
+
+    DEFAULT_GOVERNANCE = {
+        "mode": "safe",
+        "allow_shell": False,
+        "allow_network": False,
+        "allow_write": False,
+        "allow_sudo": False,
+    }
+
+    DEFAULT_EXECUTION_POLICY = {
+        "autonomous": False,
+        "max_retries": 2,
+        "requires_approval": False,
+        "stop_on_error": True,
+        "timeout": 300,
+    }
+
     # =========================================================
-    # Identidad
+    # Identity
     # =========================================================
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -59,7 +101,7 @@ class ExecutionPlan:
     status: str = "pending"
 
     # =========================================================
-    # Intención
+    # Intent
     # =========================================================
 
     original_task: str = ""
@@ -71,7 +113,7 @@ class ExecutionPlan:
     objective: str | None = None
 
     # =========================================================
-    # Ejecución
+    # Execution
     # =========================================================
 
     execution_mode: str = "single"
@@ -81,7 +123,7 @@ class ExecutionPlan:
     execution_unit: str | None = None
 
     # =========================================================
-    # Parámetros
+    # Parameters
     # =========================================================
 
     params: dict[str, Any] = field(default_factory=dict)
@@ -93,15 +135,7 @@ class ExecutionPlan:
     # =========================================================
 
     context_requirements: dict[str, bool] = field(
-        default_factory=lambda: {
-            "project": False,
-            "engram": False,
-            "obsidian": False,
-            "gentleman": False,
-            "standards": False,
-            "documents": False,
-            "memory": False,
-        }
+        default_factory=lambda: dict(ExecutionPlan.DEFAULT_CONTEXT_REQUIREMENTS)
     )
 
     # =========================================================
@@ -109,13 +143,7 @@ class ExecutionPlan:
     # =========================================================
 
     governance: dict[str, Any] = field(
-        default_factory=lambda: {
-            "mode": "safe",
-            "allow_shell": False,
-            "allow_network": False,
-            "allow_write": False,
-            "allow_sudo": False,
-        }
+        default_factory=lambda: dict(ExecutionPlan.DEFAULT_GOVERNANCE)
     )
 
     # =========================================================
@@ -123,13 +151,7 @@ class ExecutionPlan:
     # =========================================================
 
     execution_policy: dict[str, Any] = field(
-        default_factory=lambda: {
-            "autonomous": False,
-            "max_retries": 2,
-            "requires_approval": False,
-            "stop_on_error": True,
-            "timeout": 300,
-        }
+        default_factory=lambda: dict(ExecutionPlan.DEFAULT_EXECUTION_POLICY)
     )
 
     # =========================================================
@@ -153,24 +175,82 @@ class ExecutionPlan:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     # =========================================================
+    # Lifecycle
+    # =========================================================
+
+    def __post_init__(self) -> None:
+        self.original_task = self._normalize_text(self.original_task)
+
+        self.execution_mode = self.normalize_execution_mode(self.execution_mode)
+
+        self.status = self.normalize_status(self.status)
+
+        if self.execution_unit_type is not None:
+            self.execution_unit_type = self.normalize_unit_type(self.execution_unit_type)
+
+        if self.execution_unit is not None:
+            self.execution_unit = self.execution_unit.strip()
+
+            if not self.execution_unit:
+                self.execution_unit = None
+
+        self.intent = self._normalize_optional_text(self.intent)
+
+        self.intent_category = self._normalize_optional_text(self.intent_category)
+
+        self.objective = self._normalize_optional_text(self.objective)
+
+        self._validate_containers()
+
+        self._normalize_governance()
+
+        self._normalize_execution_policy()
+
+    # =========================================================
     # Normalization
     # =========================================================
+
+    @staticmethod
+    def _normalize_text(
+        value: str,
+    ) -> str:
+        if not isinstance(value, str):
+            raise ValueError("El valor debe ser un string.")
+
+        return value.strip()
+
+    @staticmethod
+    def _normalize_optional_text(
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+
+        if not isinstance(value, str):
+            raise ValueError("El valor debe ser un string o None.")
+
+        value = value.strip()
+
+        return value or None
 
     @classmethod
     def normalize_unit_type(
         cls,
         unit_type: str | None,
     ) -> str | None:
-
         if unit_type is None:
             return None
+
+        if not isinstance(unit_type, str):
+            raise ValueError("execution_unit_type debe ser un string o None.")
 
         value = unit_type.lower().strip().replace("-", "_").replace(" ", "_")
 
         if value not in cls.VALID_UNIT_TYPES:
             raise ValueError(
                 f"Tipo de unidad inválido: {value}. "
-                f"Tipos permitidos: {sorted(cls.VALID_UNIT_TYPES)}"
+                f"Tipos permitidos: "
+                f"{sorted(cls.VALID_UNIT_TYPES)}"
             )
 
         return value
@@ -180,80 +260,62 @@ class ExecutionPlan:
         cls,
         mode: str | None,
     ) -> str:
-
         if mode is None:
             return "single"
+
+        if not isinstance(mode, str):
+            raise ValueError("execution_mode debe ser un string.")
 
         value = mode.lower().strip().replace("-", "_").replace(" ", "_")
 
         if value not in cls.VALID_EXECUTION_MODES:
             raise ValueError(
                 f"Modo de ejecución inválido: {value}. "
-                f"Modos permitidos: {sorted(cls.VALID_EXECUTION_MODES)}"
+                f"Modos permitidos: "
+                f"{sorted(cls.VALID_EXECUTION_MODES)}"
             )
 
         return value
 
-    # =========================================================
-    # Lifecycle
-    # =========================================================
+    @classmethod
+    def normalize_status(
+        cls,
+        status: str,
+    ) -> str:
+        if not isinstance(status, str):
+            raise ValueError("ExecutionPlan.status debe ser un string.")
 
-    def __post_init__(self) -> None:
+        value = status.lower().strip()
 
-        self.original_task = self.original_task.strip()
-
-        self.execution_mode = self.normalize_execution_mode(self.execution_mode)
-
-        if self.execution_unit_type is not None:
-            self.execution_unit_type = self.normalize_unit_type(self.execution_unit_type)
-
-        if self.execution_unit is not None:
-            self.execution_unit = self.execution_unit.strip()
-
-        if self.execution_unit_type is not None:
-            if not self.execution_unit:
-                raise ValueError(
-                    "execution_unit es obligatorio cuando " "execution_unit_type está definido."
-                )
-
-        if self.status not in self.VALID_STATUSES:
+        if value not in cls.VALID_STATUSES:
             raise ValueError(
-                f"Estado de plan inválido: {self.status}. "
-                f"Estados permitidos: {sorted(self.VALID_STATUSES)}"
+                f"Estado de plan inválido: {value}. "
+                f"Estados permitidos: "
+                f"{sorted(cls.VALID_STATUSES)}"
             )
 
-        governance_mode = self.governance.get(
-            "mode",
-            "safe",
-        )
+        return value
 
-        governance_mode = str(governance_mode).lower().strip()
+    def _validate_containers(self) -> None:
+        containers = {
+            "params": self.params,
+            "context_requirements": self.context_requirements,
+            "governance": self.governance,
+            "execution_policy": self.execution_policy,
+            "loaded_context": self.loaded_context,
+            "execution_context": self.execution_context,
+            "metadata": self.metadata,
+        }
 
-        if governance_mode not in self.VALID_GOVERNANCE_MODES:
-            raise ValueError(
-                f"Modo de governance inválido: {governance_mode}. "
-                f"Modos permitidos: {sorted(self.VALID_GOVERNANCE_MODES)}"
-            )
+        for name, value in containers.items():
+            if not isinstance(value, dict):
+                raise ValueError(f"ExecutionPlan.{name} debe ser un diccionario.")
 
-        self.governance["mode"] = governance_mode
+        if not isinstance(self.constraints, list):
+            raise ValueError("ExecutionPlan.constraints debe ser una lista.")
 
-        max_retries = self.execution_policy.get(
-            "max_retries",
-            2,
-        )
-
-        if not isinstance(max_retries, int) or max_retries < 0:
-            raise ValueError(
-                "execution_policy.max_retries debe ser " "un entero mayor o igual a cero."
-            )
-
-        timeout = self.execution_policy.get(
-            "timeout",
-            300,
-        )
-
-        if not isinstance(timeout, int) or timeout <= 0:
-            raise ValueError("execution_policy.timeout debe ser " "un entero mayor que cero.")
+        if not isinstance(self.steps, list):
+            raise ValueError("ExecutionPlan.steps debe ser una lista.")
 
     # =========================================================
     # Context
@@ -263,10 +325,14 @@ class ExecutionPlan:
         self,
         provider: str,
     ) -> bool:
+        if not provider:
+            return False
 
-        return self.context_requirements.get(
-            provider,
-            False,
+        return bool(
+            self.context_requirements.get(
+                provider.lower().strip(),
+                False,
+            )
         )
 
     def set_context_requirement(
@@ -274,12 +340,54 @@ class ExecutionPlan:
         provider: str,
         required: bool,
     ) -> None:
+        if not provider or not provider.strip():
+            raise ValueError("El provider de contexto no puede estar vacío.")
 
-        self.context_requirements[provider] = required
+        if not isinstance(required, bool):
+            raise ValueError("required debe ser booleano.")
+
+        self.context_requirements[provider.lower().strip()] = required
 
     # =========================================================
     # Governance
     # =========================================================
+
+    def _normalize_governance(self) -> None:
+        mode = (
+            str(
+                self.governance.get(
+                    "mode",
+                    "safe",
+                )
+            )
+            .lower()
+            .strip()
+        )
+
+        if mode not in self.VALID_GOVERNANCE_MODES:
+            raise ValueError(
+                f"Modo de governance inválido: {mode}. "
+                f"Modos permitidos: "
+                f"{sorted(self.VALID_GOVERNANCE_MODES)}"
+            )
+
+        self.governance["mode"] = mode
+
+        for key in (
+            "allow_shell",
+            "allow_network",
+            "allow_write",
+            "allow_sudo",
+        ):
+            value = self.governance.get(
+                key,
+                False,
+            )
+
+            if not isinstance(value, bool):
+                raise ValueError(f"governance.{key} debe ser booleano.")
+
+            self.governance[key] = value
 
     def is_safe_mode(self) -> bool:
         return (
@@ -300,61 +408,132 @@ class ExecutionPlan:
         )
 
     def allows_shell(self) -> bool:
-        return self.governance.get(
-            "allow_shell",
-            False,
+        return bool(
+            self.governance.get(
+                "allow_shell",
+                False,
+            )
         )
 
     def allows_network(self) -> bool:
-        return self.governance.get(
-            "allow_network",
-            False,
+        return bool(
+            self.governance.get(
+                "allow_network",
+                False,
+            )
         )
 
     def allows_write(self) -> bool:
-        return self.governance.get(
-            "allow_write",
-            False,
+        return bool(
+            self.governance.get(
+                "allow_write",
+                False,
+            )
         )
 
     def allows_sudo(self) -> bool:
-        return self.governance.get(
-            "allow_sudo",
-            False,
+        return bool(
+            self.governance.get(
+                "allow_sudo",
+                False,
+            )
         )
 
     # =========================================================
     # Execution policy
     # =========================================================
 
-    def is_autonomous(self) -> bool:
-        return self.execution_policy.get(
+    def _normalize_execution_policy(self) -> None:
+        autonomous = self.execution_policy.get(
             "autonomous",
             False,
         )
 
-    def get_max_retries(self) -> int:
-        return self.execution_policy.get(
+        if not isinstance(autonomous, bool):
+            raise ValueError("execution_policy.autonomous debe ser booleano.")
+
+        self.execution_policy["autonomous"] = autonomous
+
+        max_retries = self.execution_policy.get(
             "max_retries",
             2,
         )
 
-    def requires_approval(self) -> bool:
-        return self.execution_policy.get(
+        if not isinstance(max_retries, int) or max_retries < 0:
+            raise ValueError(
+                "execution_policy.max_retries debe ser " "un entero mayor o igual a cero."
+            )
+
+        self.execution_policy["max_retries"] = max_retries
+
+        requires_approval = self.execution_policy.get(
             "requires_approval",
             False,
         )
 
-    def should_stop_on_error(self) -> bool:
-        return self.execution_policy.get(
+        if not isinstance(requires_approval, bool):
+            raise ValueError("execution_policy.requires_approval debe " "ser booleano.")
+
+        self.execution_policy["requires_approval"] = requires_approval
+
+        stop_on_error = self.execution_policy.get(
             "stop_on_error",
             True,
         )
 
-    def get_timeout(self) -> int:
-        return self.execution_policy.get(
+        if not isinstance(stop_on_error, bool):
+            raise ValueError("execution_policy.stop_on_error debe ser booleano.")
+
+        self.execution_policy["stop_on_error"] = stop_on_error
+
+        timeout = self.execution_policy.get(
             "timeout",
             300,
+        )
+
+        if not isinstance(timeout, int) or timeout <= 0:
+            raise ValueError("execution_policy.timeout debe ser " "un entero mayor que cero.")
+
+        self.execution_policy["timeout"] = timeout
+
+    def is_autonomous(self) -> bool:
+        return bool(
+            self.execution_policy.get(
+                "autonomous",
+                False,
+            )
+        )
+
+    def get_max_retries(self) -> int:
+        return int(
+            self.execution_policy.get(
+                "max_retries",
+                2,
+            )
+        )
+
+    def requires_approval(self) -> bool:
+        return bool(
+            self.execution_policy.get(
+                "requires_approval",
+                False,
+            )
+        )
+
+    def should_stop_on_error(self) -> bool:
+        return bool(
+            self.execution_policy.get(
+                "stop_on_error",
+                True,
+            )
+        )
+
+    def get_timeout(self) -> int:
+        return int(
+            self.execution_policy.get(
+                "timeout",
+                300,
+            )
         )
 
     # =========================================================
@@ -372,7 +551,6 @@ class ExecutionPlan:
         timeout: int = 120,
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionStep:
-
         step = ExecutionStep(
             description=description,
             unit_type=self.normalize_unit_type(unit_type),
@@ -388,6 +566,31 @@ class ExecutionPlan:
 
         return step
 
+    def remove_step(
+        self,
+        step_id: str,
+    ) -> bool:
+        for index, step in enumerate(self.steps):
+            if step.id == step_id:
+                self.steps.pop(index)
+
+                for remaining in self.steps:
+                    remaining.remove_dependency(step_id)
+
+                return True
+
+        return False
+
+    def get_step(
+        self,
+        step_id: str,
+    ) -> ExecutionStep | None:
+        for step in self.steps:
+            if step.id == step_id:
+                return step
+
+        return None
+
     def has_steps(self) -> bool:
         return bool(self.steps)
 
@@ -395,11 +598,60 @@ class ExecutionPlan:
         return self.execution_mode == "multi_step"
 
     # =========================================================
+    # Dependency graph
+    # =========================================================
+
+    def validate_dependencies(self) -> list[str]:
+        errors: list[str] = []
+
+        step_ids = [step.id for step in self.steps]
+        step_id_set = set(step_ids)
+
+        if len(step_ids) != len(step_id_set):
+            errors.append("ExecutionPlan contiene IDs de steps duplicados.")
+
+        for step in self.steps:
+            for dependency in step.depends_on:
+                if dependency == step.id:
+                    errors.append(f"Step {step.id} depende de sí mismo.")
+                    continue
+
+                if dependency not in step_id_set:
+                    errors.append(f"Step {step.id} depende de " f"{dependency}, que no existe.")
+
+        return errors
+
+    def has_dependency_cycle(self) -> bool:
+        graph = {step.id: list(step.depends_on) for step in self.steps}
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> bool:
+            if node in visiting:
+                return True
+
+            if node in visited:
+                return False
+
+            visiting.add(node)
+
+            for dependency in graph.get(node, []):
+                if dependency in graph and visit(dependency):
+                    return True
+
+            visiting.remove(node)
+            visited.add(node)
+
+            return False
+
+        return any(visit(step_id) for step_id in graph)
+
+    # =========================================================
     # Validation
     # =========================================================
 
     def validate(self) -> list[str]:
-
         errors: list[str] = []
 
         if not self.original_task:
@@ -409,7 +661,6 @@ class ExecutionPlan:
             errors.append("ExecutionPlan requiere intent.")
 
         if self.execution_mode == "single":
-
             if not self.execution_unit_type:
                 errors.append("Modo single requiere execution_unit_type.")
 
@@ -420,20 +671,15 @@ class ExecutionPlan:
                 errors.append("Modo single no permite steps.")
 
         elif self.execution_mode == "multi_step":
-
             if not self.steps and not self.execution_unit:
                 errors.append(
                     "Modo multi_step requiere al menos " "un step o una unidad ejecutable."
                 )
 
-        step_ids = {step.id for step in self.steps}
+        errors.extend(self.validate_dependencies())
 
-        for step in self.steps:
-
-            for dependency in step.depends_on:
-
-                if dependency not in step_ids:
-                    errors.append(f"Step {step.id} depende de " f"{dependency}, que no existe.")
+        if self.has_dependency_cycle():
+            errors.append("ExecutionPlan contiene un ciclo de dependencias.")
 
         return errors
 
@@ -469,9 +715,12 @@ class ExecutionPlan:
     # Serialization
     # =========================================================
 
-    def to_dict(self) -> dict[str, Any]:
-
-        return {
+    def to_dict(
+        self,
+        include_runtime: bool = True,
+        include_step_results: bool = True,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "id": self.id,
             "created_at": self.created_at.isoformat(),
             "status": self.status,
@@ -487,20 +736,127 @@ class ExecutionPlan:
             "context_requirements": dict(self.context_requirements),
             "governance": dict(self.governance),
             "execution_policy": dict(self.execution_policy),
-            "loaded_context": dict(self.loaded_context),
-            "execution_context": dict(self.execution_context),
             "metadata": dict(self.metadata),
-            "steps": [step.to_dict() for step in self.steps],
+            "steps": [step.to_dict(include_result=include_step_results) for step in self.steps],
         }
 
-    def __repr__(self) -> str:
+        if include_runtime:
+            data["loaded_context"] = dict(self.loaded_context)
+            data["execution_context"] = dict(self.execution_context)
 
+        return data
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+    ) -> ExecutionPlan:
+        if not isinstance(data, dict):
+            raise ValueError("ExecutionPlan.from_dict requiere un diccionario.")
+
+        created_at_value = data.get("created_at")
+
+        created_at = (
+            datetime.fromisoformat(created_at_value)
+            if created_at_value
+            else datetime.now(timezone.utc)
+        )
+
+        steps = [
+            ExecutionStep.from_dict(step)
+            for step in data.get(
+                "steps",
+                [],
+            )
+        ]
+
+        return cls(
+            id=data.get(
+                "id",
+                str(uuid.uuid4()),
+            ),
+            created_at=created_at,
+            status=data.get(
+                "status",
+                "pending",
+            ),
+            original_task=data.get(
+                "original_task",
+                "",
+            ),
+            intent=data.get("intent"),
+            intent_category=data.get("intent_category"),
+            objective=data.get("objective"),
+            execution_mode=data.get(
+                "execution_mode",
+                "single",
+            ),
+            execution_unit_type=data.get("execution_unit_type"),
+            execution_unit=data.get("execution_unit"),
+            params=dict(
+                data.get(
+                    "params",
+                    {},
+                )
+            ),
+            constraints=list(
+                data.get(
+                    "constraints",
+                    [],
+                )
+            ),
+            context_requirements=dict(
+                data.get(
+                    "context_requirements",
+                    cls.DEFAULT_CONTEXT_REQUIREMENTS,
+                )
+            ),
+            governance=dict(
+                data.get(
+                    "governance",
+                    cls.DEFAULT_GOVERNANCE,
+                )
+            ),
+            execution_policy=dict(
+                data.get(
+                    "execution_policy",
+                    cls.DEFAULT_EXECUTION_POLICY,
+                )
+            ),
+            steps=steps,
+            loaded_context=dict(
+                data.get(
+                    "loaded_context",
+                    {},
+                )
+            ),
+            execution_context=dict(
+                data.get(
+                    "execution_context",
+                    {},
+                )
+            ),
+            metadata=dict(
+                data.get(
+                    "metadata",
+                    {},
+                )
+            ),
+        )
+
+    # =========================================================
+    # Representation
+    # =========================================================
+
+    def __repr__(self) -> str:
         return (
-            f"<ExecutionPlan("
+            "<ExecutionPlan("
             f"id={self.id}, "
             f"status={self.status}, "
             f"intent={self.intent}, "
+            f"mode={self.execution_mode}, "
             f"unit={self.execution_unit_type}:"
             f"{self.execution_unit}, "
-            f"steps={len(self.steps)})>"
+            f"steps={len(self.steps)}"
+            ")>"
         )

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-
 from typing import Any, ClassVar
 
 from core.execution_plan import ExecutionPlan
@@ -11,44 +10,30 @@ class BaseContextProvider(ABC):
     """
     Contrato base para proveedores de contexto.
 
-    Cada provider debe:
+    Un provider:
+        - Tiene una key única.
+        - Carga información contextual.
+        - Devuelve exclusivamente sus propios datos.
 
-    - Tener una key única.
-    - Cargar información dentro del contexto.
-    - Ser resoluble mediante ContextRegistry.
-
-    No:
-
-    - Decide cuándo se ejecuta.
-    - Modifica ExecutionPlan.
-    - Ejecuta agentes o skills.
+    Un provider NO:
+        - Modifica ExecutionPlan.
+        - Ejecuta Agents.
+        - Ejecuta Skills.
+        - Construye prompts.
+        - Modifica directamente el contexto acumulado.
     """
 
     key: ClassVar[str] = ""
-
     name: ClassVar[str] = ""
-
     description: ClassVar[str] = ""
 
-    def __init_subclass__(
-        cls,
-        **kwargs,
-    ) -> None:
-
+    def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
 
-        if not getattr(
-            cls,
-            "key",
-            None,
-        ):
-
+        if not getattr(cls, "key", None):
             raise TypeError(f"{cls.__name__} debe definir key")
 
-    def metadata(
-        self,
-    ) -> dict[str, Any]:
-
+    def metadata(self) -> dict[str, Any]:
         return {
             "key": self.key,
             "name": self.name or self.key,
@@ -62,17 +47,7 @@ class BaseContextProvider(ABC):
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Carga información contextual.
-
-        Args:
-            plan:
-                ExecutionPlan actual.
-
-            context:
-                Contexto acumulado hasta este provider.
-
-        Returns:
-            Datos aportados por el provider.
+        Devuelve los datos contextuales producidos por el provider.
         """
 
         raise NotImplementedError

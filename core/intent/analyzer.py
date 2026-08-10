@@ -15,16 +15,16 @@ class IntentAnalyzer:
     Responsabilidades:
 
     - Recibir una consulta.
-    - Ejecutar detección de intención.
-    - Garantizar siempre un IntentResult válido.
+    - Ejecutar detectores.
+    - Garantizar siempre un IntentResult.
 
     No:
 
-    - Construye ExecutionPlans.
-    - Ejecuta acciones.
-    - Selecciona agentes.
-    - Selecciona skills.
-    - Gestiona contexto.
+    - construye ExecutionPlans;
+    - ejecuta acciones;
+    - selecciona agentes;
+    - selecciona skills;
+    - gestiona contexto.
     """
 
     name = "intent_analyzer"
@@ -33,38 +33,38 @@ class IntentAnalyzer:
         self,
         detector: type[IntentDetectors] = IntentDetectors,
     ) -> None:
-
         self.detector = detector
-
-    # ======================================================
-    # Public API
-    # ======================================================
 
     def analyze(
         self,
         query: str,
     ) -> IntentResult:
 
-        if not query or not query.strip():
+        normalized_query = query.strip() if isinstance(query, str) else ""
 
+        if not normalized_query:
             return IntentResult(
                 intent="conversation",
                 domain="conversation",
+                category="general",
+                complexity="low",
                 confidence=0.0,
+                entities={},
                 signals=[
                     "empty_query",
                 ],
+                original_query="",
             )
 
         result = self.detector.detect(
-            query,
+            normalized_query,
         )
 
-        if result:
-
+        if result is not None:
             logger.debug(
-                "Intent detectado intent=%s confidence=%s",
+                "Intent detectado intent=%s domain=%s " "confidence=%.2f",
                 result.intent,
+                result.domain,
                 result.confidence,
             )
 
@@ -72,18 +72,20 @@ class IntentAnalyzer:
 
         logger.debug(
             "Intent fallback conversation query=%s",
-            query[:100],
+            normalized_query[:100],
         )
 
         return IntentResult(
             intent="conversation",
             domain="conversation",
             category="general",
+            complexity="low",
             confidence=0.0,
             entities={
-                "task": query,
+                "task": normalized_query,
             },
             signals=[
                 "fallback",
             ],
+            original_query=normalized_query,
         )
