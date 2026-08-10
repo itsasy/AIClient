@@ -16,27 +16,8 @@ class ExecutionPlanner:
     """
     Constructor declarativo de ExecutionPlans.
 
-    El ExecutionPlanner decide CÓMO debe ejecutarse una intención,
-    pero nunca ejecuta Agents ni Skills.
-
-    Responsabilidades:
-        - Traducir una intención a un ExecutionPlan.
-        - Definir las unidades ejecutables.
-        - Definir dependencias entre steps.
-        - Definir parámetros de ejecución.
-        - Definir el contexto requerido.
-        - Definir governance.
-        - Generar pasos mediante LLM solo cuando la intención
-          no tiene estrategia declarativa.
-
-    No:
-        - ejecuta skills;
-        - ejecuta agents;
-        - gestiona lifecycle de ejecución;
-        - analiza lenguaje natural (eso es IntentAnalyzer);
-        - descubre Agents o Skills;
-        - inventa contenido de archivos;
-        - materializa resultados entre steps (eso es ExecutionEngine).
+    Decide CÓMO ejecutarse una intención.
+    Nunca ejecuta Agents ni Skills.
     """
 
     name = "execution_planner"
@@ -46,7 +27,6 @@ class ExecutionPlanner:
         "skill",
     }
 
-    # Unidades conocidas (no inventar otras en planes LLM)
     KNOWN_AGENTS = {
         "architect",
         "coder",
@@ -78,11 +58,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult | dict[str, Any] | None = None,
     ) -> ExecutionPlan:
-        """
-        Construye un ExecutionPlan a partir de una tarea e intención.
-
-        El planner no ejecuta nada.
-        """
         if not task or not task.strip():
             raise ValueError("ExecutionPlanner requiere una tarea.")
 
@@ -110,7 +85,6 @@ class ExecutionPlanner:
             }
         )
 
-        # Por defecto single; las estrategias multi_step lo cambian
         if complexity in {"high", "complex", "very_high"}:
             plan.execution_mode = "multi_step"
         else:
@@ -162,12 +136,6 @@ class ExecutionPlanner:
     def _normalize_intent(
         intent: IntentResult | dict[str, Any] | None,
     ) -> IntentResult:
-        """
-        Normaliza el input del planner a IntentResult.
-
-        IntentResult NO tiene objective ni constraints.
-        Esos campos viven en ExecutionPlan.
-        """
         if isinstance(intent, IntentResult):
             return intent
 
@@ -327,12 +295,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Conversación pura (goals.md Test 1):
-            - sin project / Obsidian / Engram
-            - single step
-            - multi_turn
-        """
         plan.objective = task
         plan.execution_mode = "single"
         ExecutionPlanner._clear_context_requirements(plan)
@@ -353,12 +315,15 @@ class ExecutionPlanner:
         """
         Crear archivo (goals.md Test 3).
 
-        - Contenido explícito en la tarea → write_file directo (single).
-        - Sin contenido → coder produce code_artifact,
-          write_file lo materializa vía dependency results (multi_step).
+        - Contenido explícito → write_file directo (single).
+        - Sin contenido → coder → write_file (multi_step).
+        - Contexto ligero: no cargar snapshot de proyecto.
         """
         plan.objective = "Crear archivo"
-        plan.context_requirements["project"] = True
+
+        plan.context_requirements["project"] = False
+        plan.context_requirements["standards"] = True
+        plan.context_requirements["gentleman"] = False
         plan.governance["allow_write"] = True
 
         path = ExecutionPlanner._extract_file_path(task)
@@ -370,7 +335,6 @@ class ExecutionPlanner:
 
         content = ExecutionPlanner._extract_file_content(task)
 
-        # Caso trivial: contenido ya viene en el mensaje del usuario
         if content:
             plan.execution_mode = "single"
             ExecutionPlanner._set_execution_unit(
@@ -386,7 +350,6 @@ class ExecutionPlanner:
             )
             return
 
-        # Caso general: Agent razona → Skill escribe
         plan.execution_mode = "multi_step"
 
         coder_step = plan.add_step(
@@ -405,7 +368,6 @@ class ExecutionPlanner:
             description=f"Escribir archivo {path}",
             unit_type="skill",
             unit_name="write_file",
-            # path/content llegan por materialización en ExecutionEngine
             params={},
             expected_output="Archivo creado en disco.",
             metadata={
@@ -423,11 +385,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Generación de código sin escritura inmediata.
-        Si más adelante se necesita persistir, el Engine / un plan
-        posterior puede añadir write_file.
-        """
         plan.objective = "Generar código"
         plan.context_requirements["gentleman"] = True
         plan.context_requirements["standards"] = True
@@ -445,11 +402,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Analizar proyecto (goals.md Test 2).
-
-        Skill recolecta evidencia → Agent razona.
-        """
         plan.objective = "Analizar la arquitectura del proyecto"
         plan.execution_mode = "multi_step"
         plan.context_requirements["project"] = True
@@ -489,10 +441,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Auditoría arquitectónica:
-        Skill de evidencia → ArchitectAgent.
-        """
         plan.objective = "Auditar arquitectura del proyecto"
         plan.execution_mode = "multi_step"
         plan.context_requirements["project"] = True
@@ -606,10 +554,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Crear proyecto (goals.md Test 4).
-        Architect decide → Coder estructura → create_project materializa.
-        """
         plan.objective = "Crear un nuevo proyecto de software"
         plan.execution_mode = "multi_step"
 
@@ -711,10 +655,6 @@ class ExecutionPlanner:
         )
         modify.depends_on.append(analyze.id)
 
-        # La escritura queda opcional: si el Engine/materialización
-        # detecta code_artifact y hay steps write_file posteriores,
-        # se aplican. Por ahora el plan termina en propuesta.
-
     @staticmethod
     def _plan_documentation(
         plan: ExecutionPlan,
@@ -773,10 +713,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        /spec y equivalentes.
-        task_agent produce el texto → write_file lo persiste.
-        """
         plan.objective = "Crear especificación (Spec)"
         plan.execution_mode = "multi_step"
         plan.context_requirements["engram"] = True
@@ -788,7 +724,7 @@ class ExecutionPlanner:
             unit_type="agent",
             unit_name="task_agent",
             params={"task": task, "mode": "spec"},
-            expected_output="Especificación estructurada (texto o code_artifact).",
+            expected_output="Especificación estructurada.",
             metadata={"stage": "spec_generation"},
         )
 
@@ -796,8 +732,6 @@ class ExecutionPlanner:
             description="Guardar especificación en disco",
             unit_type="skill",
             unit_name="write_file",
-            # path/content deben salir del artifact o de params
-            # que el Agent deje listos; materialización en Engine
             params={},
             expected_output="Archivo de especificación creado.",
         )
@@ -810,10 +744,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Intent genérico de planificación compleja.
-        Solo aquí se permite LLM para descomponer steps.
-        """
         plan.objective = "Generar un plan de ejecución"
         plan.execution_mode = "multi_step"
         plan.context_requirements["engram"] = True
@@ -821,7 +751,7 @@ class ExecutionPlanner:
         cls._generate_steps_with_llm(plan, task, intent)
 
     # =========================================================
-    # LLM planning (solo fallback controlado)
+    # LLM planning (fallback controlado)
     # =========================================================
 
     @classmethod
@@ -864,7 +794,7 @@ Cada paso:
 - "unit_type": "agent" | "skill"
 - "unit_name": string
 - "params": objeto (puede ir vacío)
-- "depends_on_index": lista de índices (0-based) de pasos previos de los que depende
+- "depends_on_index": lista de índices (0-based) de pasos previos
 
 Ejemplo:
 [
@@ -948,7 +878,6 @@ Ejemplo:
                 )
                 created_steps.append((step, step_data.get("depends_on_index", [])))
 
-            # Resolver depends_on por índice
             for step, dep_indexes in created_steps:
                 if not isinstance(dep_indexes, list):
                     continue
