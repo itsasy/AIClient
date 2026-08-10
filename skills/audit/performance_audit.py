@@ -57,15 +57,27 @@ Genera un informe estructurado.
                 original_task="Auditoría de rendimiento",
                 intent="performance_audit",
             )
-            response = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+
+            snapshot = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+
+            files = [
+                {
+                    "path": getattr(f, "path", str(f)),
+                    "lines": getattr(f, "lines", 0),
+                }
+                for f in (snapshot.files or [])[:50]
+            ]
+
+            evidence = {
+                "type": "performance_evidence",
+                "summary": snapshot.summary() if hasattr(snapshot, "summary") else "",
+                "files": files,
+                "file_count": len(files),
+            }
 
             return {
                 "ok": True,
-                "result": {
-                    "type": "performance_audit",
-                    "report": response,
-                    "summary": "Auditoría de rendimiento completada.",
-                },
+                "result": evidence,
                 "error": None,
             }
         except Exception as e:

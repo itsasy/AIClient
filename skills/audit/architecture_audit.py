@@ -6,7 +6,6 @@ from typing import Any
 from core.execution_plan import ExecutionPlan
 from core.execution_step import ExecutionStep
 from core.project_inspector import ProjectInspector
-from llm.router import LLMRouter
 from skills.base import Skill
 
 logger = logging.getLogger(__name__)
@@ -14,15 +13,26 @@ logger = logging.getLogger(__name__)
 
 class ArchitectureAuditSkill(Skill):
     """
-    Audita la arquitectura del proyecto (patrones, acoplamiento, etc.).
+    Recolecta evidencia estructural del proyecto para auditoría arquitectónica.
+
+    Contrato (goals.md):
+        - NO llama al LLM.
+        - NO razona.
+        - Solo inspecciona y devuelve datos estructurados.
+        - El razonamiento lo realiza un Agent (p. ej. ArchitectAgent).
     """
 
     name = "architecture_audit"
-    description = "Audita la arquitectura del proyecto."
-    version = "2.0"
-    capabilities = ("architecture_audit",)
+    description = (
+        "Recolecta evidencia de arquitectura del proyecto " "(estructura, archivos, dependencias)."
+    )
+    version = "2.1"
+    capabilities = (
+        "architecture_audit",
+        "evidence_collection",
+    )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.inspector = ProjectInspector()
 
     def execute(
@@ -34,42 +44,28 @@ class ArchitectureAuditSkill(Skill):
         try:
             snapshot = self.inspector.inspect_snapshot()
 
-            prompt = f"""
-Eres un arquitecto de software.
+            files = [
+                {
+                    "path": getattr(f, "path", str(f)),
+                    "lines": getattr(f, "lines", 0),
+                }
+                for f in (snapshot.files or [])[:50]
+            ]
 
-Audita la arquitectura del siguiente proyecto:
-
-{snapshot.summary()}
-
-Archivos relevantes:
-{self._format_files(snapshot.files[:20])}
-
-Analiza:
-1. Separación de responsabilidades.
-2. Patrones de diseño utilizados.
-3. Acoplamiento y cohesión.
-4. Modularidad y escalabilidad.
-5. Deuda técnica arquitectónica.
-6. Recomendaciones para mejorar la arquitectura.
-
-Genera un informe estructurado.
-"""
-
-            temp_plan = ExecutionPlan(
-                original_task="Auditoría de arquitectura",
-                intent="architecture_audit",
-            )
-            response = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+            evidence = {
+                "type": "architecture_evidence",
+                "summary": snapshot.summary() if hasattr(snapshot, "summary") else "",
+                "files": files,
+                "file_count": len(files),
+                "root": getattr(snapshot, "root", None),
+            }
 
             return {
                 "ok": True,
-                "result": {
-                    "type": "architecture_audit",
-                    "report": response,
-                    "summary": "Auditoría de arquitectura completada.",
-                },
+                "result": evidence,
                 "error": None,
             }
+
         except Exception as e:
             logger.exception("Error en ArchitectureAuditSkill")
             return {
@@ -77,9 +73,3 @@ Genera un informe estructurado.
                 "result": None,
                 "error": str(e),
             }
-
-    def _format_files(self, files: list) -> str:
-        lines = []
-        for f in files[:20]:
-            lines.append(f"- {f.path} ({f.lines} líneas)")
-        return "\n".join(lines) if lines else "No se encontraron archivos."

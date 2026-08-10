@@ -65,15 +65,27 @@ Genera un informe estructurado con:
                 original_task="Auditoría de seguridad",
                 intent="security_audit",
             )
-            response = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+
+            snapshot = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+
+            files = [
+                {
+                    "path": getattr(f, "path", str(f)),
+                    "lines": getattr(f, "lines", 0),
+                }
+                for f in (snapshot.files or [])[:50]
+            ]
+
+            evidence = {
+                "type": "security_evidence",
+                "summary": snapshot.summary() if hasattr(snapshot, "summary") else "",
+                "files": files,
+                "file_count": len(files),
+            }
 
             return {
                 "ok": True,
-                "result": {
-                    "type": "security_audit",
-                    "report": response,
-                    "summary": "Auditoría de seguridad completada.",
-                },
+                "result": evidence,
                 "error": None,
             }
         except Exception as e:

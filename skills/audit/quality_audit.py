@@ -6,7 +6,6 @@ from typing import Any
 from core.execution_plan import ExecutionPlan
 from core.execution_step import ExecutionStep
 from core.project_inspector import ProjectInspector
-from llm.router import LLMRouter
 from skills.base import Skill
 
 logger = logging.getLogger(__name__)
@@ -14,15 +13,19 @@ logger = logging.getLogger(__name__)
 
 class QualityAuditSkill(Skill):
     """
-    Audita la calidad del código (complejidad, duplicación, cobertura, etc.).
+    Recolecta evidencia de calidad de código.
+    NO razona. NO llama al LLM.
     """
 
     name = "quality_audit"
-    description = "Audita la calidad del código del proyecto."
-    version = "2.0"
-    capabilities = ("quality_audit",)
+    description = "Recolecta evidencia de calidad del código del proyecto."
+    version = "2.1"
+    capabilities = (
+        "quality_audit",
+        "evidence_collection",
+    )
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.inspector = ProjectInspector()
 
     def execute(
@@ -34,42 +37,27 @@ class QualityAuditSkill(Skill):
         try:
             snapshot = self.inspector.inspect_snapshot()
 
-            prompt = f"""
-Eres un experto en calidad de software.
+            files = [
+                {
+                    "path": getattr(f, "path", str(f)),
+                    "lines": getattr(f, "lines", 0),
+                }
+                for f in (snapshot.files or [])[:50]
+            ]
 
-Audita la calidad del código del siguiente proyecto:
-
-{snapshot.summary()}
-
-Archivos relevantes:
-{self._format_files(snapshot.files[:20])}
-
-Analiza:
-1. Complejidad ciclomática y mantenibilidad.
-2. Duplicación de código.
-3. Cobertura de pruebas (si existe).
-4. Cumplimiento de estándares (Clean Code, SOLID, etc.).
-5. Deuda técnica.
-6. Recomendaciones para mejorar la calidad.
-
-Genera un informe estructurado.
-"""
-
-            temp_plan = ExecutionPlan(
-                original_task="Auditoría de calidad",
-                intent="quality_audit",
-            )
-            response = LLMRouter().generate(temp_plan, context={"instruction": prompt})
+            evidence = {
+                "type": "quality_evidence",
+                "summary": snapshot.summary() if hasattr(snapshot, "summary") else "",
+                "files": files,
+                "file_count": len(files),
+            }
 
             return {
                 "ok": True,
-                "result": {
-                    "type": "quality_audit",
-                    "report": response,
-                    "summary": "Auditoría de calidad completada.",
-                },
+                "result": evidence,
                 "error": None,
             }
+
         except Exception as e:
             logger.exception("Error en QualityAuditSkill")
             return {
@@ -77,9 +65,3 @@ Genera un informe estructurado.
                 "result": None,
                 "error": str(e),
             }
-
-    def _format_files(self, files: list) -> str:
-        lines = []
-        for f in files[:20]:
-            lines.append(f"- {f.path} ({f.lines} líneas)")
-        return "\n".join(lines) if lines else "No se encontraron archivos."
