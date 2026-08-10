@@ -34,9 +34,9 @@ class TaskAgent(Agent):
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> str:
-        context = context or {}
+        context = dict(context or {})
 
-        return LLMRouter.generate(
+        return LLMRouter().generate(
             plan=plan,
             context=context,
         )

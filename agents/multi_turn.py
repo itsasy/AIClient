@@ -33,19 +33,16 @@ class MultiTurnAgent(Agent):
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> str:
-        context = context or {}
+        context = dict(context or {})
 
-        history = context.get(
-            "memory",
-            "",
-        )
+        history = context.get("memory", "")
 
         enriched_context = {
             **context,
             "conversation_history": history,
         }
 
-        return LLMRouter.generate(
+        return LLMRouter().generate(
             plan=plan,
             context=enriched_context,
         )
