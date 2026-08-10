@@ -39,7 +39,7 @@ class SkillLoader:
         "skills.audit.performance_audit",
         "skills.audit.quality_audit",
         "skills.audit.architecture_audit",
-
+        "skills.system.shell",
     )
 
     def __init__(

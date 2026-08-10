@@ -23,7 +23,7 @@ class WriteFileSkill(Skill):
 
     name = "write_file"
     description = "Escribe contenido en un archivo del sistema."
-    version = "2.0"
+    version = "2.1"
     capabilities = ("file_write",)
 
     def execute(
@@ -32,18 +32,6 @@ class WriteFileSkill(Skill):
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """
-        Escribe el contenido en la ruta especificada.
-
-        Args:
-            plan: ExecutionPlan actual (contiene governance y contexto).
-            step: Paso actual (contiene params con "path" y "content").
-            context: Contexto adicional (no usado aquí).
-
-        Returns:
-            dict con "ok", "result" y "error".
-        """
-        # 1. Obtener parámetros
         params = step.params or {}
         path = params.get("path")
         content = params.get("content")
@@ -62,8 +50,8 @@ class WriteFileSkill(Skill):
                 "error": "No se proporcionó contenido para escribir.",
             }
 
-        # 2. Validar seguridad de la ruta
-        ok, error = SecurityPolicy.check_path(path, plan)
+        # Seguridad de ruta (governance + path traversal)
+        ok, error = SecurityPolicy.check_path(str(path), plan)
         if not ok:
             return {
                 "ok": False,
@@ -71,7 +59,6 @@ class WriteFileSkill(Skill):
                 "error": error,
             }
 
-        # 3. Validar política de escritura
         if not plan.allows_write():
             return {
                 "ok": False,
@@ -79,21 +66,32 @@ class WriteFileSkill(Skill):
                 "error": "Política de escritura no permitida en este plan.",
             }
 
-        # 4. Normalizar ruta y escribir
         try:
             normalized_path = PathPolicy.normalize(path)
 
-            # Crear directorios si no existen
-            normalized_path.parent.mkdir(parents=True, exist_ok=True)
+            # Doble check post-normalize
+            if not PathPolicy.is_within_project(normalized_path):
+                return {
+                    "ok": False,
+                    "result": None,
+                    "error": (f"Path traversal bloqueado: '{path}' " f"→ '{normalized_path}'"),
+                }
 
-            # Escribir contenido
-            normalized_path.write_text(content, encoding="utf-8")
+            normalized_path.parent.mkdir(parents=True, exist_ok=True)
+            normalized_path.write_text(str(content), encoding="utf-8")
+
+            # Preferir path relativo al proyecto en el resultado
+            try:
+                rel = str(normalized_path.relative_to(PathPolicy.project_root()))
+            except ValueError:
+                rel = str(normalized_path)
 
             return {
                 "ok": True,
                 "result": {
-                    "path": str(normalized_path),
-                    "size": len(content),
+                    "path": rel,
+                    "absolute_path": str(normalized_path),
+                    "size": len(str(content)),
                 },
                 "error": None,
             }
