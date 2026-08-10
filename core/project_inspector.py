@@ -14,13 +14,19 @@ logger = logging.getLogger(__name__)
 
 class ProjectInspector:
     """
-    Inspector responsable de construir snapshots del proyecto.
+    Inspector responsable de construir snapshots estructurados del proyecto.
 
-    Características:
-    - Escaneo controlado.
-    - Cache incremental.
-    - Exclusión de carpetas pesadas.
-    - Snapshot preparado para LLM.
+    Responsabilidades:
+    - Inspeccionar el proyecto objetivo.
+    - Mantener un cache incremental.
+    - Excluir directorios pesados o irrelevantes.
+    - Limitar la cantidad de archivos inspeccionados.
+    - Generar ProjectSnapshot compatible con el modelo actual.
+
+    No:
+    - Ejecuta código.
+    - Decide qué contexto necesita una tarea.
+    - Construye prompts.
     """
 
     MAX_FILE_CHARS = 3000
@@ -84,20 +90,41 @@ class ProjectInspector:
         "tests",
     )
 
+    # ==========================================================
+    # Public API
+    # ==========================================================
+
     def inspect(self) -> str:
+        """
+        Compatibilidad con componentes que todavía esperan
+        una representación textual.
+        """
         return self.inspect_snapshot().to_prompt()
 
     def inspect_snapshot(self) -> ProjectSnapshot:
+        """
+        Construye o recupera el snapshot del proyecto objetivo.
+        """
 
         root = Config.TARGET_PROJECT_ROOT
+
+        if not root.exists():
+            logger.warning(
+                "Target project root no existe: %s",
+                root,
+            )
 
         current_hash = self._compute_project_hash(root)
 
         cached = self._load_cache()
 
-        if cached and cached.get("hash") == current_hash:
+        if cached and cached.get("hash") == current_hash and cached.get("snapshot"):
             logger.info("Usando snapshot cacheado")
-            return ProjectSnapshot.from_dict(cached["snapshot"])
+
+            try:
+                return ProjectSnapshot.from_dict(cached["snapshot"])
+            except Exception:
+                logger.exception("No se pudo cargar snapshot desde cache. " "Se reconstruirá.")
 
         logger.info("Construyendo nuevo snapshot")
 
@@ -110,19 +137,34 @@ class ProjectInspector:
 
         return snapshot
 
+    # ==========================================================
+    # Snapshot
+    # ==========================================================
+
     def _build_snapshot(
         self,
         root: Path,
     ) -> ProjectSnapshot:
+        """
+        Construye un ProjectSnapshot usando la API actual.
 
-        snapshot = ProjectSnapshot(root=root.name)
+        ProjectSnapshot actualmente recibe:
+            project_name
+            root_path
+        """
+
+        snapshot = ProjectSnapshot(
+            project_name=root.name,
+            root_path=str(root),
+        )
+
+        if not root.exists():
+            return snapshot
 
         files = self._collect_all_files(root)
 
         for path in files[: self.MAX_SOURCE_FILES]:
-
             try:
-
                 content = path.read_text(
                     encoding="utf-8",
                     errors="ignore",
@@ -141,85 +183,123 @@ class ProjectInspector:
 
         return snapshot
 
+    # ==========================================================
+    # File collection
+    # ==========================================================
+
     def _collect_all_files(
         self,
         root: Path,
     ) -> list[Path]:
+        """
+        Obtiene archivos relevantes del proyecto.
+        """
 
-        result = []
+        result: list[Path] = []
+        seen: set[Path] = set()
 
-        seen = set()
+        # ------------------------------------------------------
+        # Archivos prioritarios
+        # ------------------------------------------------------
 
         for filename in self.PRIORITY_FILES:
-
             path = root / filename
 
-            if path.exists():
-
+            if path.exists() and path.is_file():
                 result.append(path)
                 seen.add(path)
 
-        for directory_name in self.SOURCE_DIRS:
+        # ------------------------------------------------------
+        # Directorios fuente
+        # ------------------------------------------------------
 
+        for directory_name in self.SOURCE_DIRS:
             directory = root / directory_name
 
-            if not directory.exists():
+            if not directory.exists() or not directory.is_dir():
                 continue
 
             for path in self._walk_controlled(
                 directory,
                 root,
             ):
+                if path in seen:
+                    continue
 
-                if path not in seen and path.suffix.lower() in self.INCLUDED_EXTENSIONS:
-                    result.append(path)
-                    seen.add(path)
+                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
+                    continue
 
-        return sorted(result)
+                result.append(path)
+                seen.add(path)
+
+        return result
 
     def _walk_controlled(
         self,
         directory: Path,
         root: Path,
     ) -> list[Path]:
+        """
+        Recorre un directorio evitando carpetas excluidas.
+        """
 
-        files = []
+        files: list[Path] = []
 
         for current, dirs, filenames in os.walk(directory):
 
-            dirs[:] = [d for d in dirs if d not in self.EXCLUDED_DIRS]
+            dirs[:] = [
+                directory_name
+                for directory_name in dirs
+                if directory_name not in self.EXCLUDED_DIRS
+            ]
 
             for filename in filenames:
 
                 path = Path(current) / filename
 
-                relative = path.relative_to(root)
+                try:
+                    relative = path.relative_to(root)
+                except ValueError:
+                    continue
 
                 if any(part in self.EXCLUDED_DIRS for part in relative.parts):
+                    continue
+
+                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
                     continue
 
                 files.append(path)
 
         return files
 
+    # ==========================================================
+    # Hash / Cache
+    # ==========================================================
+
     def _compute_project_hash(
         self,
         root: Path,
     ) -> str:
+        """
+        Calcula un hash ligero basado en rutas,
+        tamaño y fecha de modificación.
+        """
 
         hasher = hashlib.sha256()
+
+        if not root.exists():
+            return hasher.hexdigest()
 
         for path in self._collect_all_files(root):
 
             try:
-
                 stat = path.stat()
 
-                hasher.update(str(path.relative_to(root)).encode())
+                hasher.update(str(path.relative_to(root)).encode("utf-8"))
 
-                hasher.update(str(stat.st_size).encode())
+                hasher.update(str(stat.st_size).encode("utf-8"))
 
-                hasher.update(str(stat.st_mtime_ns).encode())
+                hasher.update(str(stat.st_mtime_ns).encode("utf-8"))
 
             except OSError:
                 continue
@@ -227,25 +307,21 @@ class ProjectInspector:
         return hasher.hexdigest()
 
     def _load_cache(self):
-
         if not self.CACHE_FILE.exists():
             return None
 
         try:
-
             return json.loads(self.CACHE_FILE.read_text(encoding="utf-8"))
 
         except Exception:
-
-            logger.warning("Cache corrupta")
-
+            logger.warning("Cache de proyecto corrupta. " "Se reconstruirá.")
             return None
 
     def _save_cache(
         self,
         hash_value: str,
         snapshot: ProjectSnapshot,
-    ):
+    ) -> None:
 
         data = {
             "root": str(Config.TARGET_PROJECT_ROOT),
@@ -254,7 +330,6 @@ class ProjectInspector:
         }
 
         try:
-
             self.CACHE_FILE.write_text(
                 json.dumps(
                     data,
@@ -265,5 +340,4 @@ class ProjectInspector:
             )
 
         except OSError:
-
-            logger.exception("No se pudo guardar cache")
+            logger.exception("No se pudo guardar cache del proyecto")

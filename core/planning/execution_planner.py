@@ -399,17 +399,30 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
+        """
+        Construye un plan para creación directa de archivos.
+
+        El planner transforma las entidades extraídas por IntentAnalyzer
+        en los parámetros explícitos requeridos por write_file.
+        """
+
         plan.objective = "Crear archivo"
 
         plan.context_requirements["project"] = True
+
+        path = intent.get_entity("path")
+        content = intent.get_entity("content")
+
+        params: dict[str, Any] = {
+            "path": path,
+            "content": content,
+        }
 
         ExecutionPlanner._set_execution_unit(
             plan,
             "skill",
             "write_file",
-            {
-                "task": task,
-            },
+            params,
         )
 
     @staticmethod

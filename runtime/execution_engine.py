@@ -329,22 +329,48 @@ class ExecutionEngine:
         context: dict[str, Any],
     ) -> ExecutionResult:
 
-        if not plan.execution_unit_type or not plan.execution_unit:
-            return self._fail(plan, "Plan sin unidad de ejecución.")
+        if not plan.execution_unit_type:
+            return ExecutionResult.fail(
+                plan_id=plan.id,
+                error="Plan sin execution_unit_type.",
+                executor=self.name,
+            )
+
+        if not plan.execution_unit:
+            return ExecutionResult.fail(
+                plan_id=plan.id,
+                error="Plan sin execution_unit.",
+                executor=self.name,
+            )
 
         step = ExecutionStep(
-            description=(plan.objective or plan.original_task),
+            description=plan.objective or plan.original_task,
             unit_type=plan.execution_unit_type,
             unit_name=plan.execution_unit,
-            params=dict(plan.params),
+            params=dict(plan.params or {}),
+        )
+
+        step_context = self._build_step_context(
+            plan,
+            context,
+            step,
         )
 
         step.mark_running()
 
-        step_context = self._build_step_context(plan, context, step)
-        result = self.dispatcher.dispatch(plan, step, step_context)
+        result = self.dispatcher.dispatch(
+            plan,
+            step,
+            step_context,
+        )
 
-        self._store_step_result(plan, context, step, result)
+        self._store_step_result(
+            plan,
+            context,
+            step,
+            result,
+        )
+
         return result
 
     # ==========================================================
