@@ -1,18 +1,16 @@
 from typing import Any
 
 from core.context.base import BaseContextProvider
+from core.document_ingestor import DocumentIngestor
 from core.execution_plan import ExecutionPlan
-from core.project_inspector import ProjectInspector
 
 
-class ProjectProvider(BaseContextProvider):
+class DocumentsProvider(BaseContextProvider):
 
-    key = "project"
-    name = "Project Context"
-    description = "Inspección estructural del proyecto objetivo."
+    key = "documents"
 
     def __init__(self) -> None:
-        self.inspector = ProjectInspector()
+        self.ingestor = DocumentIngestor()
 
     def load(
         self,
@@ -20,9 +18,11 @@ class ProjectProvider(BaseContextProvider):
         context: dict[str, Any],
     ) -> dict[str, Any]:
 
-        snapshot = self.inspector.inspect_snapshot()
+        documents = self.ingestor.list_ingested()
+
+        if not documents:
+            return {}
 
         return {
-            "snapshot": snapshot,
-            "architecture": snapshot.to_architecture_context(),
+            "documents": documents,
         }
