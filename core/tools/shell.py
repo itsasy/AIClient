@@ -1,77 +1,127 @@
 from __future__ import annotations
 
 import subprocess
+import time
+
 from typing import Any
 
-from core.execution_plan import ExecutionPlan
-from core.execution_step import ExecutionStep
-from core.tools.security_policy import SecurityPolicy
-from skills.base import Skill
+from core.config import Config
+
+from core.tools.base import Tool
 
 
-class ShellSkill(Skill):
-    """
-    Ejecuta comandos shell bajo SecurityPolicy.
-    No decide si el comando es buena idea: solo aplica política.
-    """
+class ShellTool(Tool):
 
     name = "shell"
-    description = "Ejecuta un comando shell con restricciones de seguridad."
+
+    description = "Ejecuta comandos shell con restricciones de seguridad."
+
     version = "2.0"
-    capabilities = ("shell", "command_execution")
+
+    capabilities = (
+        "command_execution",
+        "filesystem_access",
+        "project_operations",
+    )
+
+    SAFE_PREFIXES: tuple[str, ...] = (
+        "git status",
+        "git log",
+        "git branch",
+        "git diff",
+        "ls",
+        "tree",
+        "pwd",
+        "echo ",
+        "cat ",
+        "find ",
+        "grep ",
+        "composer install",
+        "composer require",
+        "npm install",
+        "npm run",
+        "yarn install",
+        "php artisan",
+        "laravel new",
+        "docker compose",
+        "docker run",
+        "docker exec",
+        "npx ",
+    )
 
     def execute(
         self,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-        context: dict[str, Any] | None = None,
+        command: str,
+        timeout: int | None = None,
+        **kwargs,
     ) -> dict[str, Any]:
-        params = step.params or {}
-        command = params.get("command") or params.get("cmd") or params.get("task") or ""
-        command = str(command).strip()
 
-        if not command:
+        command = command.strip()
+
+        normalized = command.lower()
+
+        if Config.POWER_MODE == "safe" and normalized.startswith("sudo"):
+
             return {
                 "ok": False,
-                "result": None,
-                "error": "No se proporcionó comando.",
+                "result": {
+                    "command": command,
+                },
+                "error": "Comando sudo bloqueado en modo seguro.",
             }
 
-        ok, err = SecurityPolicy.check_command(command, plan)
-        if not ok:
+        if not any(
+            normalized.startswith(
+                prefix.lower(),
+            )
+            for prefix in self.SAFE_PREFIXES
+        ):
+
             return {
                 "ok": False,
-                "result": {"command": command, "blocked": True},
-                "error": err,
+                "result": {
+                    "command": command,
+                },
+                "error": (f"Comando bloqueado por seguridad: {command}"),
             }
 
         try:
-            completed = subprocess.run(
+
+            start = time.time()
+
+            process = subprocess.run(
                 command,
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=int(params.get("timeout", 60)),
+                timeout=(timeout if timeout is not None else Config.SHELL_TIMEOUT),
+                cwd=Config.TARGET_PROJECT_ROOT,
             )
+
+            duration = round(
+                time.time() - start,
+                3,
+            )
+
+            output = process.stdout.strip() or process.stderr.strip()
+
             return {
-                "ok": completed.returncode == 0,
+                "ok": process.returncode == 0,
                 "result": {
                     "command": command,
-                    "returncode": completed.returncode,
-                    "stdout": completed.stdout,
-                    "stderr": completed.stderr,
+                    "output": output[:1500],
+                    "returncode": process.returncode,
+                    "duration": duration,
                 },
-                "error": None if completed.returncode == 0 else completed.stderr,
+                "error": (None if process.returncode == 0 else output),
             }
-        except subprocess.TimeoutExpired:
+
+        except Exception as exc:
+
             return {
                 "ok": False,
-                "result": {"command": command},
-                "error": "Timeout ejecutando comando.",
-            }
-        except Exception as e:
-            return {
-                "ok": False,
-                "result": {"command": command},
-                "error": str(e),
+                "result": {
+                    "command": command,
+                },
+                "error": str(exc),
             }
