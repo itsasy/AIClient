@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from core.execution_plan import ExecutionPlan
 from core.intent import IntentResult
-from planning.execution_planner import ExecutionPlanner
+from .execution_planner import ExecutionPlanner
 
 
 class PlanBuilder:
