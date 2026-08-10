@@ -57,6 +57,11 @@ class AgentManager:
 
         self.loaded_defaults = True
 
+        logger.info(
+            "Agents por defecto cargados=%s",
+            loaded,
+        )
+
         return loaded
 
     def load_module(

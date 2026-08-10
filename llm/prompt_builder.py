@@ -2,11 +2,25 @@ from __future__ import annotations
 
 import json
 import logging
+from enum import Enum
 from typing import Any
 
 from core.execution_plan import ExecutionPlan
 
 logger = logging.getLogger(__name__)
+
+
+class PromptType(str, Enum):
+    """
+    Tipo semántico del prompt construido.
+
+    El PromptBuilder sigue siendo responsable únicamente
+    de construir el prompt. No selecciona proveedores ni
+    ejecuta operaciones.
+    """
+
+    DEFAULT = "default"
+    CRITIQUE = "critique"
 
 
 class PromptBuilder:
@@ -18,6 +32,7 @@ class PromptBuilder:
         - Normalizar y limitar el contexto.
         - Separar instrucciones, tarea, plan y evidencia.
         - Preservar la distinción entre hechos e inferencias.
+        - Construir variantes semánticas del prompt.
 
     No:
         - Selecciona proveedores.
@@ -53,6 +68,46 @@ Reglas obligatorias:
 10. Responde en español salvo que la tarea solicite explícitamente otro idioma.
 """.strip()
 
+    CRITIQUE_INSTRUCTIONS = """
+## Modo de evaluación
+
+Debes evaluar el resultado de la ejecución respecto de la tarea,
+el ExecutionPlan y la evidencia disponible.
+
+Determina:
+
+1. si la tarea fue completada correctamente;
+2. qué problemas concretos existen;
+3. qué correcciones serían necesarias;
+4. una puntuación de 0 a 10;
+5. una justificación breve.
+
+Debes devolver EXCLUSIVAMENTE un objeto JSON válido.
+
+El JSON debe tener exactamente esta estructura:
+
+{
+  "pass": true,
+  "score": 10,
+  "issues": [],
+  "corrections": [],
+  "reason": "Explicación breve."
+}
+
+Reglas:
+
+- "pass" debe ser booleano.
+- "score" debe ser un entero entre 0 y 10.
+- "issues" debe ser una lista de strings.
+- "corrections" debe ser una lista de strings.
+- "reason" debe ser un string.
+- No incluy Markdown.
+- No incluy bloques ```json.
+- No incluy texto antes ni después del JSON.
+- No inventes errores que no puedan justificarse con la evidencia.
+- Si la evidencia no permite determinar algo, indícalo en "reason".
+""".strip()
+
     CONTEXT_PRIORITY = (
         "agent_role",
         "analysis_requirements",
@@ -75,11 +130,15 @@ Reglas obligatorias:
         max_context_chars: int | None = None,
     ) -> None:
         self.max_context_chars = (
-            max_context_chars if max_context_chars is not None else self.MAX_CONTEXT_CHARS
+            max_context_chars
+            if max_context_chars is not None
+            else self.MAX_CONTEXT_CHARS
         )
 
         if self.max_context_chars <= 0:
-            raise ValueError("max_context_chars debe ser mayor que cero.")
+            raise ValueError(
+                "max_context_chars debe ser mayor que cero."
+            )
 
     # ==========================================================
     # Public API
@@ -89,19 +148,34 @@ Reglas obligatorias:
         self,
         plan: ExecutionPlan,
         context: dict[str, Any] | None = None,
+        prompt_type: PromptType = PromptType.DEFAULT,
     ) -> str:
         """
         Construye el prompt final para el proveedor LLM.
+
+        prompt_type determina la intención semántica del prompt,
+        pero no modifica el ExecutionPlan ni selecciona proveedores.
         """
 
         if plan is None:
-            raise ValueError("plan no puede ser None.")
+            raise ValueError(
+                "plan no puede ser None."
+            )
+
+        if not isinstance(prompt_type, PromptType):
+            try:
+                prompt_type = PromptType(prompt_type)
+            except ValueError as exc:
+                raise ValueError(
+                    f"prompt_type inválido: {prompt_type!r}"
+                ) from exc
 
         raw_context = dict(context or {})
 
         logger.info(
-            "Construyendo prompt | plan=%s | context=%s",
+            "Construyendo prompt | plan=%s | type=%s | context=%s",
             plan.id,
+            prompt_type.value,
             list(raw_context.keys()),
         )
 
@@ -112,6 +186,7 @@ Reglas obligatorias:
         prompt = self._compose(
             plan=plan,
             context=prepared_context,
+            prompt_type=prompt_type,
         )
 
         if len(prompt) > self.max_context_chars:
@@ -126,8 +201,9 @@ Reglas obligatorias:
             )
 
         logger.info(
-            "Prompt construido | plan=%s | chars=%s",
+            "Prompt construido | plan=%s | type=%s | chars=%s",
             plan.id,
+            prompt_type.value,
             len(prompt),
         )
 
@@ -141,10 +217,6 @@ Reglas obligatorias:
         self,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Selecciona y normaliza únicamente las partes de contexto
-        que tienen significado para el LLM.
-        """
 
         prepared: dict[str, Any] = {}
 
@@ -159,22 +231,16 @@ Reglas obligatorias:
                 continue
 
             if key == "architecture":
-                value = self._sanitize_architecture(
-                    value,
-                )
+                value = self._sanitize_architecture(value)
 
             elif key == "execution":
-                value = self._sanitize_execution(
-                    value,
-                )
+                value = self._sanitize_execution(value)
 
             elif key in {
                 "retry_issues",
                 "retry_corrections",
             }:
-                value = self._sanitize_list(
-                    value,
-                )
+                value = self._sanitize_list(value)
 
             prepared[key] = value
 
@@ -188,12 +254,6 @@ Reglas obligatorias:
         self,
         architecture: Any,
     ) -> Any:
-        """
-        Reduce información innecesaria del análisis arquitectónico.
-
-        Especialmente evita introducir contenido fuente completo
-        cuando el contexto ya contiene metadatos suficientes.
-        """
 
         if not isinstance(
             architecture,
@@ -201,13 +261,9 @@ Reglas obligatorias:
         ):
             return architecture
 
-        result = dict(
-            architecture,
-        )
+        result = dict(architecture)
 
-        files = result.get(
-            "files",
-        )
+        files = result.get("files")
 
         if isinstance(
             files,
@@ -236,14 +292,10 @@ Reglas obligatorias:
                     if key in file_data
                 }
 
-                clean_files.append(
-                    clean_file,
-                )
+                clean_files.append(clean_file)
 
             result["files"] = clean_files
 
-        # El contenido fuente completo no pertenece
-        # automáticamente al resumen arquitectónico.
         result.pop(
             "content",
             None,
@@ -260,7 +312,8 @@ Reglas obligatorias:
         execution: Any,
     ) -> Any:
         """
-        Expone únicamente información relevante de la ejecución actual.
+        Expone la información necesaria para comprender
+        la ejecución actual y evaluar su resultado.
         """
 
         if not isinstance(
@@ -275,9 +328,14 @@ Reglas obligatorias:
             "current_step",
             "dependencies",
             "steps",
+            "result",
         }
 
-        return {key: execution.get(key) for key in allowed_keys if key in execution}
+        return {
+            key: execution.get(key)
+            for key in allowed_keys
+            if key in execution
+        }
 
     # ==========================================================
     # Generic sanitization
@@ -287,9 +345,6 @@ Reglas obligatorias:
     def _sanitize_list(
         value: Any,
     ) -> list[str]:
-        """
-        Normaliza listas de issues/corrections.
-        """
 
         if value is None:
             return []
@@ -306,7 +361,11 @@ Reglas obligatorias:
         ):
             return [str(value)]
 
-        return [str(item) for item in value if item is not None]
+        return [
+            str(item)
+            for item in value
+            if item is not None
+        ]
 
     # ==========================================================
     # Serialization
@@ -316,9 +375,6 @@ Reglas obligatorias:
     def _serialize(
         value: Any,
     ) -> str:
-        """
-        Serializa contexto de forma estable.
-        """
 
         try:
             return json.dumps(
@@ -330,12 +386,10 @@ Reglas obligatorias:
 
         except Exception:
             logger.exception(
-                "Error serializando contexto.",
+                "Error serializando contexto."
             )
 
-            return str(
-                value,
-            )
+            return str(value)
 
     # ==========================================================
     # Plan representation
@@ -345,10 +399,6 @@ Reglas obligatorias:
         self,
         plan: ExecutionPlan,
     ) -> str:
-        """
-        Convierte el ExecutionPlan en una representación
-        explícita y controlada para el LLM.
-        """
 
         plan_data = {
             "plan_id": plan.id,
@@ -370,17 +420,17 @@ Reglas obligatorias:
                     "unit_type": step.unit_type,
                     "unit_name": step.unit_name,
                     "depends_on": list(
-                        step.depends_on,
+                        step.depends_on
                     ),
                     "params": dict(
-                        step.params,
+                        step.params
                     ),
                 }
                 for step in plan.steps
             ]
 
         return self._serialize(
-            plan_data,
+            plan_data
         )
 
     # ==========================================================
@@ -391,21 +441,24 @@ Reglas obligatorias:
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
+        prompt_type: PromptType,
     ) -> str:
-        """
-        Compone el prompt final en secciones previsibles.
-        """
 
         sections: list[str] = [
             self.SYSTEM_INSTRUCTIONS,
         ]
+
+        if prompt_type is PromptType.CRITIQUE:
+            sections.append(
+                self.CRITIQUE_INSTRUCTIONS
+            )
 
         # ------------------------------------------------------
         # Agent role
         # ------------------------------------------------------
 
         agent_role = context.get(
-            "agent_role",
+            "agent_role"
         )
 
         if agent_role:
@@ -434,9 +487,7 @@ Reglas obligatorias:
         sections.append(
             self._section(
                 "ExecutionPlan",
-                self._build_plan_section(
-                    plan,
-                ),
+                self._build_plan_section(plan),
             )
         )
 
@@ -445,7 +496,7 @@ Reglas obligatorias:
         # ------------------------------------------------------
 
         analysis_requirements = context.get(
-            "analysis_requirements",
+            "analysis_requirements"
         )
 
         if analysis_requirements:
@@ -453,13 +504,13 @@ Reglas obligatorias:
                 self._section(
                     "Requisitos de análisis",
                     self._serialize(
-                        analysis_requirements,
+                        analysis_requirements
                     ),
                 )
             )
 
         requested_output = context.get(
-            "requested_output",
+            "requested_output"
         )
 
         if requested_output:
@@ -467,7 +518,7 @@ Reglas obligatorias:
                 self._section(
                     "Formato de salida solicitado",
                     self._serialize(
-                        requested_output,
+                        requested_output
                     ),
                 )
             )
@@ -480,9 +531,7 @@ Reglas obligatorias:
             sections.append(
                 self._section(
                     "Contexto y evidencia disponible",
-                    self._serialize(
-                        context,
-                    ),
+                    self._serialize(context),
                 )
             )
 
@@ -491,11 +540,11 @@ Reglas obligatorias:
         # ------------------------------------------------------
 
         retry_issues = context.get(
-            "retry_issues",
+            "retry_issues"
         )
 
         retry_corrections = context.get(
-            "retry_corrections",
+            "retry_corrections"
         )
 
         if retry_issues or retry_corrections:
@@ -509,7 +558,7 @@ Reglas obligatorias:
                 self._section(
                     "Correcciones de una ejecución anterior",
                     self._serialize(
-                        retry_payload,
+                        retry_payload
                     ),
                 )
             )
@@ -518,9 +567,27 @@ Reglas obligatorias:
         # Final instructions
         # ------------------------------------------------------
 
-        sections.append("""
-## Instrucciones finales
+        if prompt_type is PromptType.CRITIQUE:
+            sections.append(
+                self._section(
+                    "Instrucciones finales",
+                    """
+Evalúa exclusivamente el resultado disponible.
 
+No ejecutes nuevamente la tarea.
+No propongas cambios basados en información inexistente.
+No confundas una limitación de evidencia con un error de ejecución.
+
+Devuelve únicamente el JSON definido en "Modo de evaluación".
+""".strip(),
+                )
+            )
+
+        else:
+            sections.append(
+                self._section(
+                    "Instrucciones finales",
+                    """
 Realiza la tarea utilizando únicamente la información disponible.
 
 Cuando debas analizar una implementación:
@@ -534,9 +601,15 @@ Cuando debas analizar una implementación:
    señalados sin introducir cambios no justificados.
 
 La respuesta debe ser concreta, técnica y específica para el proyecto.
-""".strip())
+""".strip(),
+                )
+            )
 
-        return "\n\n".join(section.strip() for section in sections if section and section.strip())
+        return "\n\n".join(
+            section.strip()
+            for section in sections
+            if section and section.strip()
+        )
 
     # ==========================================================
     # Section helper
@@ -547,6 +620,7 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         title: str,
         content: str,
     ) -> str:
+
         return f"""
 ## {title}
 
@@ -561,12 +635,6 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         self,
         prompt: str,
     ) -> str:
-        """
-        Reduce el prompt sin dejar un JSON parcialmente truncado.
-
-        La estrategia elimina primero el bloque de contexto/evidencia,
-        preservando instrucciones y ExecutionPlan.
-        """
 
         limit = self.max_context_chars
 
@@ -579,18 +647,14 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
             "No inferir información ausente."
         )
 
-        # Buscar la sección de contexto.
         marker = "## Contexto y evidencia disponible"
 
-        context_index = prompt.find(
-            marker,
-        )
+        context_index = prompt.find(marker)
 
         if context_index != -1:
 
             before = prompt[:context_index]
 
-            # Conservar las instrucciones finales si existen.
             final_marker = "\n## Instrucciones finales"
 
             final_index = prompt.find(
@@ -598,25 +662,46 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
                 context_index,
             )
 
-            after = prompt[final_index:] if final_index != -1 else ""
+            after = (
+                prompt[final_index:]
+                if final_index != -1
+                else ""
+            )
 
-            available = limit - len(before) - len(after) - len(notice)
+            available = (
+                limit
+                - len(before)
+                - len(after)
+                - len(notice)
+            )
 
             if available > 0:
 
-                context_content = prompt[context_index + len(marker) :]
-
-                context_content = context_content.strip()
+                context_content = prompt[
+                    context_index + len(marker):
+                ].strip()
 
                 if len(context_content) > available:
-                    context_content = context_content[:available] + "\n[CONTEXTO REDUCIDO]"
+                    context_content = (
+                        context_content[:available]
+                        + "\n[CONTEXTO REDUCIDO]"
+                    )
 
-                result = before + marker + "\n\n" + context_content + after + notice
+                result = (
+                    before
+                    + marker
+                    + "\n\n"
+                    + context_content
+                    + after
+                    + notice
+                )
 
                 return result[:limit]
 
-        # Fallback seguro.
-        return prompt[: max(0, limit - len(notice))] + notice
+        return (
+            prompt[: max(0, limit - len(notice))]
+            + notice
+        )
 
     # ==========================================================
     # Inspection
