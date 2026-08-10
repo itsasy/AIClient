@@ -15,6 +15,7 @@ class IntentAnalyzer:
     Responsabilidades:
 
     - Recibir una consulta.
+    - Normalizar la entrada inicial.
     - Ejecutar detectores.
     - Garantizar siempre un IntentResult.
 
@@ -24,7 +25,8 @@ class IntentAnalyzer:
     - ejecuta acciones;
     - selecciona agentes;
     - selecciona skills;
-    - gestiona contexto.
+    - gestiona contexto;
+    - gestiona lifecycle de ejecución.
     """
 
     name = "intent_analyzer"
@@ -35,26 +37,22 @@ class IntentAnalyzer:
     ) -> None:
         self.detector = detector
 
+    # =========================================================
+    # Public API
+    # =========================================================
+
     def analyze(
         self,
         query: str,
     ) -> IntentResult:
+        """
+        Analiza una consulta y devuelve siempre un IntentResult válido.
+        """
 
         normalized_query = query.strip() if isinstance(query, str) else ""
 
         if not normalized_query:
-            return IntentResult(
-                intent="conversation",
-                domain="conversation",
-                category="general",
-                complexity="low",
-                confidence=0.0,
-                entities={},
-                signals=[
-                    "empty_query",
-                ],
-                original_query="",
-            )
+            return self._empty_result()
 
         result = self.detector.detect(
             normalized_query,
@@ -62,7 +60,7 @@ class IntentAnalyzer:
 
         if result is not None:
             logger.debug(
-                "Intent detectado intent=%s domain=%s " "confidence=%.2f",
+                "Intent detectado | intent=%s | domain=%s | confidence=%.2f",
                 result.intent,
                 result.domain,
                 result.confidence,
@@ -71,9 +69,45 @@ class IntentAnalyzer:
             return result
 
         logger.debug(
-            "Intent fallback conversation query=%s",
+            "Intent fallback conversation | query=%s",
             normalized_query[:100],
         )
+
+        return self._fallback_result(
+            normalized_query,
+        )
+
+    # =========================================================
+    # Fallbacks
+    # =========================================================
+
+    @staticmethod
+    def _empty_result() -> IntentResult:
+        """
+        Resultado seguro para una entrada vacía.
+        """
+
+        return IntentResult(
+            intent="conversation",
+            domain="conversation",
+            category="general",
+            complexity="low",
+            confidence=0.0,
+            entities={},
+            signals=[
+                "empty_query",
+            ],
+            original_query="",
+        )
+
+    @staticmethod
+    def _fallback_result(
+        query: str,
+    ) -> IntentResult:
+        """
+        Resultado seguro cuando ningún detector reconoce
+        la intención.
+        """
 
         return IntentResult(
             intent="conversation",
@@ -82,10 +116,10 @@ class IntentAnalyzer:
             complexity="low",
             confidence=0.0,
             entities={
-                "task": normalized_query,
+                "task": query,
             },
             signals=[
                 "fallback",
             ],
-            original_query=normalized_query,
+            original_query=query,
         )

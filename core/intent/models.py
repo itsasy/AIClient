@@ -32,7 +32,7 @@ class IntentResult:
           ↓
         ExecutionPlan
           ↓
-        Runtime
+        ExecutionEngine
     """
 
     VALID_COMPLEXITIES = frozenset(
@@ -45,22 +45,28 @@ class IntentResult:
     )
 
     intent: str
-
     domain: str
-
     category: str = "general"
-
     complexity: str = "normal"
-
     confidence: float = 0.0
 
-    entities: dict[str, Any] = field(default_factory=dict)
+    entities: dict[str, Any] = field(
+        default_factory=dict,
+    )
 
-    signals: list[str] = field(default_factory=list)
+    signals: list[str] = field(
+        default_factory=list,
+    )
 
     original_query: str = ""
 
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(
+        default_factory=dict,
+    )
+
+    # =========================================================
+    # Lifecycle
+    # =========================================================
 
     def __post_init__(self) -> None:
         self.intent = self._normalize_required(
@@ -87,19 +93,33 @@ class IntentResult:
             self.confidence,
         )
 
-        if not isinstance(self.entities, dict):
+        if not isinstance(
+            self.entities,
+            dict,
+        ):
             raise ValueError("IntentResult.entities debe ser un diccionario.")
 
-        if not isinstance(self.signals, list):
+        if not isinstance(
+            self.signals,
+            list,
+        ):
             raise ValueError("IntentResult.signals debe ser una lista.")
 
         self.signals = [str(signal).strip() for signal in self.signals if str(signal).strip()]
 
-        if not isinstance(self.metadata, dict):
+        if not isinstance(
+            self.metadata,
+            dict,
+        ):
             raise ValueError("IntentResult.metadata debe ser un diccionario.")
 
         self.original_query = (
-            self.original_query.strip() if isinstance(self.original_query, str) else ""
+            self.original_query.strip()
+            if isinstance(
+                self.original_query,
+                str,
+            )
+            else ""
         )
 
     # =========================================================
@@ -111,7 +131,10 @@ class IntentResult:
         value: str,
         field_name: str,
     ) -> str:
-        if not isinstance(value, str):
+        if not isinstance(
+            value,
+            str,
+        ):
             raise ValueError(f"IntentResult.{field_name} debe ser un string.")
 
         value = value.strip().lower()
@@ -130,19 +153,28 @@ class IntentResult:
         if value is None:
             return default
 
-        if not isinstance(value, str):
+        if not isinstance(
+            value,
+            str,
+        ):
             raise ValueError(f"IntentResult.{field_name} debe ser un string.")
 
         value = value.strip().lower()
 
-        return value.replace("-", "_").replace(" ", "_") if value else default
+        if not value:
+            return default
+
+        return value.replace("-", "_").replace(" ", "_")
 
     @classmethod
     def _normalize_complexity(
         cls,
         value: str,
     ) -> str:
-        if not isinstance(value, str):
+        if not isinstance(
+            value,
+            str,
+        ):
             raise ValueError("IntentResult.complexity debe ser un string.")
 
         value = value.lower().strip().replace("-", "_").replace(" ", "_")
@@ -160,12 +192,18 @@ class IntentResult:
     def _normalize_confidence(
         value: float,
     ) -> float:
-        if isinstance(value, bool):
+        if isinstance(
+            value,
+            bool,
+        ):
             raise ValueError("IntentResult.confidence debe ser numérico.")
 
         try:
             value = float(value)
-        except (TypeError, ValueError) as exc:
+        except (
+            TypeError,
+            ValueError,
+        ) as exc:
             raise ValueError("IntentResult.confidence debe ser numérico.") from exc
 
         if not 0.0 <= value <= 1.0:
@@ -226,19 +264,49 @@ class IntentResult:
         cls,
         data: dict[str, Any],
     ) -> IntentResult:
-        if not isinstance(data, dict):
+        if not isinstance(
+            data,
+            dict,
+        ):
             raise ValueError("IntentResult.from_dict requiere un diccionario.")
 
         return cls(
-            intent=data.get("intent", "conversation"),
-            domain=data.get("domain", "conversation"),
-            category=data.get("category", "general"),
-            complexity=data.get("complexity", "normal"),
-            confidence=data.get("confidence", 0.0),
-            entities=data.get("entities", {}),
-            signals=data.get("signals", []),
-            original_query=data.get("original_query", ""),
-            metadata=data.get("metadata", {}),
+            intent=data.get(
+                "intent",
+                "conversation",
+            ),
+            domain=data.get(
+                "domain",
+                "conversation",
+            ),
+            category=data.get(
+                "category",
+                "general",
+            ),
+            complexity=data.get(
+                "complexity",
+                "normal",
+            ),
+            confidence=data.get(
+                "confidence",
+                0.0,
+            ),
+            entities=data.get(
+                "entities",
+                {},
+            ),
+            signals=data.get(
+                "signals",
+                [],
+            ),
+            original_query=data.get(
+                "original_query",
+                "",
+            ),
+            metadata=data.get(
+                "metadata",
+                {},
+            ),
         )
 
     def __repr__(self) -> str:
