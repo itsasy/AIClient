@@ -293,6 +293,25 @@ class ExecutionStep:
         if reason:
             self.metadata["skip_reason"] = reason
 
+    def apply_result(
+        self,
+        result: Any,
+        success: bool,
+        error: str | None = None,
+    ) -> None:
+        """
+        Aplica el resultado de una ejecución al lifecycle del step.
+
+        El ExecutionStep mantiene la responsabilidad de administrar
+        su propio estado.
+        """
+
+        if success:
+            self.mark_completed(result)
+            return
+
+        self.mark_failed(error or "La ejecución del step falló.")
+
     def reset(self) -> None:
         self.status = "pending"
         self.result = None
@@ -317,6 +336,16 @@ class ExecutionStep:
         if step_id not in self.depends_on:
             self.depends_on.append(step_id)
 
+    def remove_dependency(
+        self,
+        step_id: str,
+    ) -> bool:
+        if step_id in self.depends_on:
+            self.depends_on.remove(step_id)
+            return True
+
+        return False
+
     def has_dependencies(self) -> bool:
         return bool(self.depends_on)
 
@@ -324,8 +353,11 @@ class ExecutionStep:
     # Serialization
     # =========================================================
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
+    def to_dict(
+        self,
+        include_result: bool = True,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {
             "id": self.id,
             "description": self.description,
             "unit_type": self.unit_type,
@@ -336,10 +368,14 @@ class ExecutionStep:
             "retries": self.retries,
             "timeout": self.timeout,
             "status": self.status,
-            "result": self.result,
             "error": self.error,
             "metadata": dict(self.metadata),
         }
+
+        if include_result:
+            data["result"] = self.result
+
+        return data
 
     @classmethod
     def from_dict(
@@ -350,19 +386,49 @@ class ExecutionStep:
             raise ValueError("ExecutionStep.from_dict requiere un diccionario.")
 
         return cls(
-            id=data.get("id", str(uuid.uuid4())),
-            description=data.get("description", ""),
-            unit_type=data.get("unit_type", ""),
-            unit_name=data.get("unit_name", ""),
-            params=data.get("params", {}),
-            depends_on=data.get("depends_on", []),
+            id=data.get(
+                "id",
+                str(uuid.uuid4()),
+            ),
+            description=data.get(
+                "description",
+                "",
+            ),
+            unit_type=data.get(
+                "unit_type",
+                "",
+            ),
+            unit_name=data.get(
+                "unit_name",
+                "",
+            ),
+            params=data.get(
+                "params",
+                {},
+            ),
+            depends_on=data.get(
+                "depends_on",
+                [],
+            ),
             expected_output=data.get("expected_output"),
-            retries=data.get("retries", 0),
-            timeout=data.get("timeout", 120),
-            status=data.get("status", "pending"),
+            retries=data.get(
+                "retries",
+                0,
+            ),
+            timeout=data.get(
+                "timeout",
+                120,
+            ),
+            status=data.get(
+                "status",
+                "pending",
+            ),
             result=data.get("result"),
             error=data.get("error"),
-            metadata=data.get("metadata", {}),
+            metadata=data.get(
+                "metadata",
+                {},
+            ),
         )
 
     def __repr__(self) -> str:

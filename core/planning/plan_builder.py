@@ -1,28 +1,36 @@
 from __future__ import annotations
 
+from typing import Any
+
 from core.execution_plan import ExecutionPlan
 from core.intent import IntentResult
-from .execution_planner import ExecutionPlanner
+from core.planning.execution_planner import ExecutionPlanner
 
 
 class PlanBuilder:
     """
     Construye ExecutionPlans a partir de IntentResult.
 
+    PlanBuilder actúa como frontera entre la interpretación semántica
+    y la planificación ejecutable.
+
     Responsabilidades:
 
-    - Recibir un IntentResult válido.
-    - Delegar la construcción al ExecutionPlanner.
-    - Enriquecer el plan con información del IntentResult.
-    - Validar el ExecutionPlan resultante.
+        - Recibir un IntentResult válido.
+        - Delegar la construcción del ExecutionPlan al ExecutionPlanner.
+        - Preservar metadata relevante de la intención.
+        - Validar el ExecutionPlan resultante.
 
     No:
 
-    - analiza lenguaje natural;
-    - ejecuta agentes;
-    - ejecuta skills;
-    - gestiona contexto;
-    - gestiona lifecycle de ejecución.
+        - Analiza lenguaje natural.
+        - Selecciona Agents.
+        - Selecciona Skills.
+        - Ejecuta Agents.
+        - Ejecuta Skills.
+        - Gestiona contexto.
+        - Ejecuta herramientas.
+        - Gestiona lifecycle de ejecución.
     """
 
     name = "plan_builder"
@@ -42,25 +50,42 @@ class PlanBuilder:
         intent: IntentResult,
         original_task: str,
     ) -> ExecutionPlan:
-        if not isinstance(
-            intent,
-            IntentResult,
-        ):
-            raise TypeError("PlanBuilder requiere un IntentResult.")
+        """
+        Construye y valida un ExecutionPlan.
 
-        if not original_task or not original_task.strip():
+        Flujo:
+
+            IntentResult
+                ↓
+            ExecutionPlanner
+                ↓
+            ExecutionPlan
+                ↓
+            Validation
+        """
+
+        if not isinstance(intent, IntentResult):
+            raise TypeError("PlanBuilder requiere una instancia válida de IntentResult.")
+
+        if not isinstance(original_task, str):
+            raise TypeError("PlanBuilder.original_task debe ser un string.")
+
+        original_task = original_task.strip()
+
+        if not original_task:
             raise ValueError("PlanBuilder requiere una tarea original.")
 
-        task = original_task.strip()
+        intent_data = intent.to_dict()
 
         plan = self.planner.create(
-            task=task,
-            intent=intent,
+            task=original_task,
+            intent=intent_data,
         )
 
-        self._enrich_plan(
-            plan,
-            intent,
+        self._attach_metadata(
+            plan=plan,
+            intent=intent,
+            original_task=original_task,
         )
 
         errors = plan.validate()
@@ -70,56 +95,108 @@ class PlanBuilder:
 
         return plan
 
-    def build_from_dict(
-        self,
-        intent_data: dict,
-        original_task: str,
-    ) -> ExecutionPlan:
-        """
-        Adaptador de compatibilidad.
-
-        La API principal sigue siendo build(IntentResult, ...).
-        """
-
-        if not isinstance(
-            intent_data,
-            dict,
-        ):
-            raise TypeError("intent_data debe ser un diccionario.")
-
-        intent = IntentResult.from_dict(
-            {
-                **intent_data,
-                "original_query": original_task,
-            }
-        )
-
-        return self.build(
-            intent,
-            original_task,
-        )
-
     # =========================================================
-    # Enrichment
+    # Metadata
     # =========================================================
 
-    def _enrich_plan(
-        self,
+    @classmethod
+    def _attach_metadata(
+        cls,
         plan: ExecutionPlan,
         intent: IntentResult,
+        original_task: str,
     ) -> None:
         """
-        Agrega información semántica del IntentResult al plan.
+        Adjunta información de trazabilidad al ExecutionPlan.
 
-        El plan conserva su propio contrato de ejecución.
+        La metadata no modifica la semántica ni la estrategia
+        de ejecución del plan.
         """
+
+        intent_data = intent.to_dict()
 
         plan.metadata.update(
             {
-                "builder": self.name,
-                "intent_result": intent.to_dict(),
+                "builder": cls.name,
+                "intent_result": intent_data,
                 "intent_confidence": intent.confidence,
                 "intent_category": intent.category,
+                "intent_domain": intent.domain,
+                "intent_complexity": intent.complexity,
                 "intent_signals": list(intent.signals),
+                "original_task": original_task,
             }
+        )
+
+        # Preservar metadata producida por IntentAnalyzer,
+        # sin sobrescribir información existente del plan.
+        if intent.metadata:
+            plan.metadata.setdefault(
+                "intent_metadata",
+                {},
+            )
+
+            if isinstance(plan.metadata["intent_metadata"], dict):
+                plan.metadata["intent_metadata"].update(intent.metadata)
+
+    # =========================================================
+    # Convenience
+    # =========================================================
+
+    def build_from_dict(
+        self,
+        intent_data: dict[str, Any],
+        original_task: str,
+    ) -> ExecutionPlan:
+        """
+        Construye un ExecutionPlan a partir de un diccionario
+        serializado de intención.
+
+        Útil para integraciones externas, tests y persistencia.
+        """
+
+        if not isinstance(intent_data, dict):
+            raise TypeError("intent_data debe ser un diccionario.")
+
+        if not isinstance(original_task, str):
+            raise TypeError("original_task debe ser un string.")
+
+        intent = IntentResult(
+            intent=intent_data.get(
+                "intent",
+                "conversation",
+            ),
+            domain=intent_data.get(
+                "domain",
+                "general",
+            ),
+            category=intent_data.get(
+                "category",
+                "general",
+            ),
+            complexity=intent_data.get(
+                "complexity",
+                "normal",
+            ),
+            confidence=intent_data.get(
+                "confidence",
+                0.0,
+            ),
+            entities=intent_data.get(
+                "entities",
+                {},
+            ),
+            signals=intent_data.get(
+                "signals",
+                [],
+            ),
+            metadata=intent_data.get(
+                "metadata",
+                {},
+            ),
+        )
+
+        return self.build(
+            intent=intent,
+            original_task=original_task,
         )
