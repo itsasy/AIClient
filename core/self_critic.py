@@ -37,6 +37,14 @@ class SelfCritic:
     MAX_SCORE = 10
     PASS_SCORE = 5
 
+    REQUIRED_FIELDS = {
+        "pass",
+        "score",
+        "issues",
+        "corrections",
+        "reason",
+    }
+
     def __init__(
         self,
         prompt_builder: PromptBuilder | None = None,
@@ -55,7 +63,7 @@ class SelfCritic:
         """
         Evalúa el resultado de una ejecución.
 
-        El SelfCritic no modifica el resultado original ni el plan.
+        SelfCritic no modifica el resultado original ni el plan.
         Devuelve únicamente un contrato de evaluación normalizado.
         """
 
@@ -68,7 +76,11 @@ class SelfCritic:
         logger.info(
             "Evaluando ejecución | plan=%s | status=%s",
             plan.id,
-            getattr(result, "status", None),
+            getattr(
+                result,
+                "status",
+                None,
+            ),
         )
 
         # ------------------------------------------------------
@@ -140,7 +152,10 @@ class SelfCritic:
                 },
             )
 
-            if not isinstance(response, str):
+            if not isinstance(
+                response,
+                str,
+            ):
                 logger.warning(
                     "SelfCritic recibió respuesta no textual | " "plan=%s | type=%s",
                     plan.id,
@@ -184,13 +199,6 @@ class SelfCritic:
     ) -> dict[str, Any]:
         """
         Construye la evidencia que necesita el crítico.
-
-        El resultado de ejecución es obligatorio porque constituye
-        el objeto principal que SelfCritic debe evaluar.
-
-        También se reutiliza el contexto cargado durante la
-        ejecución para permitir evaluar el resultado respecto
-        de la evidencia original.
         """
 
         context: dict[str, Any] = {
@@ -249,6 +257,11 @@ class SelfCritic:
                 reason=("La respuesta del LLM no contiene " "JSON válido."),
             )
 
+        if not self._has_valid_contract(data):
+            return self._evaluation_unavailable(
+                reason=("La respuesta JSON del LLM " "no cumple el contrato de evaluación."),
+            )
+
         return self._normalize_evaluation(data)
 
     def _extract_json(
@@ -288,6 +301,7 @@ class SelfCritic:
         # ------------------------------------------------------
 
         start = text.find("{")
+
         end = text.rfind("}")
 
         if start == -1 or end == -1 or end <= start:
@@ -310,6 +324,84 @@ class SelfCritic:
         return None
 
     # ==========================================================
+    # Contract validation
+    # ==========================================================
+
+    def _has_valid_contract(
+        self,
+        data: dict[str, Any],
+    ) -> bool:
+        """
+        Verifica que la respuesta del LLM contenga
+        todos los campos requeridos y con tipos compatibles.
+        """
+
+        if not self.REQUIRED_FIELDS.issubset(data.keys()):
+            return False
+
+        if not isinstance(
+            data.get("pass"),
+            bool,
+        ):
+            return False
+
+        if not self._is_valid_score(data.get("score")):
+            return False
+
+        if not self._is_valid_string_list(data.get("issues")):
+            return False
+
+        if not self._is_valid_string_list(data.get("corrections")):
+            return False
+
+        if not isinstance(
+            data.get("reason"),
+            str,
+        ):
+            return False
+
+        return True
+
+    @classmethod
+    def _is_valid_score(
+        cls,
+        value: Any,
+    ) -> bool:
+        """
+        Valida que score sea un entero entre 0 y 10.
+        """
+
+        return (
+            isinstance(
+                value,
+                int,
+            )
+            and not isinstance(
+                value,
+                bool,
+            )
+            and cls.MIN_SCORE <= value <= cls.MAX_SCORE
+        )
+
+    @staticmethod
+    def _is_valid_string_list(
+        value: Any,
+    ) -> bool:
+        if not isinstance(
+            value,
+            list,
+        ):
+            return False
+
+        return all(
+            isinstance(
+                item,
+                str,
+            )
+            for item in value
+        )
+
+    # ==========================================================
     # Validation / normalization
     # ==========================================================
 
@@ -320,58 +412,25 @@ class SelfCritic:
         """
         Normaliza la respuesta del LLM al contrato estable
         utilizado por ExecutionEngine y RetryPolicy.
+
+        La puntuación es la fuente determinística del estado
+        final de aprobación.
         """
 
-        raw_pass = data.get("pass")
+        score = self._normalize_score(data.get("score"))
 
-        raw_score = data.get("score")
+        passed = score >= self.PASS_SCORE
 
-        raw_issues = data.get("issues")
+        issues = self._normalize_string_list(data.get("issues"))
 
-        raw_corrections = data.get("corrections")
+        corrections = self._normalize_string_list(data.get("corrections"))
 
-        raw_reason = data.get("reason")
-
-        # ------------------------------------------------------
-        # Score
-        # ------------------------------------------------------
-
-        score = self._normalize_score(raw_score)
-
-        # ------------------------------------------------------
-        # Pass
-        # ------------------------------------------------------
-
-        if isinstance(
-            raw_pass,
-            bool,
-        ):
-            passed = raw_pass
-        else:
-            passed = score >= self.PASS_SCORE
-
-        # Si el LLM no proporciona "pass", la puntuación
-        # determina el estado de aprobación.
-        if raw_pass is None:
-            passed = score >= self.PASS_SCORE
-
-        # ------------------------------------------------------
-        # Lists
-        # ------------------------------------------------------
-
-        issues = self._normalize_string_list(raw_issues)
-
-        corrections = self._normalize_string_list(raw_corrections)
-
-        # ------------------------------------------------------
-        # Reason
-        # ------------------------------------------------------
-
-        reason = str(raw_reason).strip() if raw_reason is not None else ""
-
-        # ------------------------------------------------------
-        # Contract
-        # ------------------------------------------------------
+        reason = str(
+            data.get(
+                "reason",
+                "",
+            )
+        ).strip()
 
         return {
             "status": "completed",
@@ -394,7 +453,10 @@ class SelfCritic:
         try:
             score = int(value)
 
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError,
+        ):
             score = cls.DEFAULT_SCORE
 
         return max(
@@ -474,7 +536,8 @@ class SelfCritic:
         Convierte una ejecución fallida en una evaluación
         determinísticamente fallida.
 
-        No se solicita otro LLM para explicar un fallo de ejecución.
+        No se solicita otro LLM para explicar un fallo
+        de ejecución.
         """
 
         error = result.error or "Ejecución fallida."
@@ -495,8 +558,8 @@ class SelfCritic:
         """
         Representa una evaluación que no pudo completarse.
 
-        No se transforma en pass=True porque la ausencia de crítica
-        no equivale a una evaluación satisfactoria.
+        La ausencia de crítica no equivale a una evaluación
+        satisfactoria.
         """
 
         return {

@@ -14,9 +14,8 @@ class PromptType(str, Enum):
     """
     Tipo semántico del prompt construido.
 
-    El PromptBuilder sigue siendo responsable únicamente
-    de construir el prompt. No selecciona proveedores ni
-    ejecuta operaciones.
+    PromptBuilder construye el prompt, pero no selecciona
+    proveedores ni ejecuta operaciones.
     """
 
     DEFAULT = "default"
@@ -38,7 +37,7 @@ class PromptBuilder:
         - Selecciona proveedores.
         - Ejecuta herramientas.
         - Decide planificación.
-        - Ejecuta agentes o skills.
+        - Ejecuta Agents o Skills.
         - Modifica el ExecutionPlan.
     """
 
@@ -125,20 +124,25 @@ Reglas:
         "additional_instructions",
     )
 
+    SPECIALIZED_CONTEXT_KEYS = {
+        "agent_role",
+        "analysis_requirements",
+        "requested_output",
+        "retry_issues",
+        "retry_corrections",
+        "execution",
+    }
+
     def __init__(
         self,
         max_context_chars: int | None = None,
     ) -> None:
         self.max_context_chars = (
-            max_context_chars
-            if max_context_chars is not None
-            else self.MAX_CONTEXT_CHARS
+            max_context_chars if max_context_chars is not None else self.MAX_CONTEXT_CHARS
         )
 
         if self.max_context_chars <= 0:
-            raise ValueError(
-                "max_context_chars debe ser mayor que cero."
-            )
+            raise ValueError("max_context_chars debe ser mayor que cero.")
 
     # ==========================================================
     # Public API
@@ -158,17 +162,13 @@ Reglas:
         """
 
         if plan is None:
-            raise ValueError(
-                "plan no puede ser None."
-            )
+            raise ValueError("plan no puede ser None.")
 
         if not isinstance(prompt_type, PromptType):
             try:
                 prompt_type = PromptType(prompt_type)
-            except ValueError as exc:
-                raise ValueError(
-                    f"prompt_type inválido: {prompt_type!r}"
-                ) from exc
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"prompt_type inválido: {prompt_type!r}") from exc
 
         raw_context = dict(context or {})
 
@@ -217,11 +217,21 @@ Reglas:
         self,
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        """
+        Normaliza el contexto respetando la prioridad declarada.
+
+        Las claves conocidas aparecen primero. Las claves adicionales
+        también se conservan para evitar pérdida silenciosa de evidencia.
+        """
 
         prepared: dict[str, Any] = {}
+        processed_keys: set[str] = set()
+
+        # ------------------------------------------------------
+        # Contexto prioritario
+        # ------------------------------------------------------
 
         for key in self.CONTEXT_PRIORITY:
-
             if key not in context:
                 continue
 
@@ -230,21 +240,50 @@ Reglas:
             if value is None:
                 continue
 
-            if key == "architecture":
-                value = self._sanitize_architecture(value)
-
-            elif key == "execution":
-                value = self._sanitize_execution(value)
-
-            elif key in {
-                "retry_issues",
-                "retry_corrections",
-            }:
-                value = self._sanitize_list(value)
+            value = self._sanitize_context_value(
+                key,
+                value,
+            )
 
             prepared[key] = value
+            processed_keys.add(key)
+
+        # ------------------------------------------------------
+        # Contexto adicional
+        # ------------------------------------------------------
+
+        for key, value in context.items():
+            if key in processed_keys:
+                continue
+
+            if value is None:
+                continue
+
+            prepared[key] = self._sanitize_context_value(
+                key,
+                value,
+            )
 
         return prepared
+
+    def _sanitize_context_value(
+        self,
+        key: str,
+        value: Any,
+    ) -> Any:
+        if key == "architecture":
+            return self._sanitize_architecture(value)
+
+        if key == "execution":
+            return self._sanitize_execution(value)
+
+        if key in {
+            "retry_issues",
+            "retry_corrections",
+        }:
+            return self._sanitize_list(value)
+
+        return value
 
     # ==========================================================
     # Architecture sanitization
@@ -254,7 +293,6 @@ Reglas:
         self,
         architecture: Any,
     ) -> Any:
-
         if not isinstance(
             architecture,
             dict,
@@ -272,7 +310,6 @@ Reglas:
             clean_files = []
 
             for file_data in files:
-
                 if not isinstance(
                     file_data,
                     dict,
@@ -331,11 +368,7 @@ Reglas:
             "result",
         }
 
-        return {
-            key: execution.get(key)
-            for key in allowed_keys
-            if key in execution
-        }
+        return {key: execution.get(key) for key in allowed_keys if key in execution}
 
     # ==========================================================
     # Generic sanitization
@@ -345,7 +378,6 @@ Reglas:
     def _sanitize_list(
         value: Any,
     ) -> list[str]:
-
         if value is None:
             return []
 
@@ -361,11 +393,7 @@ Reglas:
         ):
             return [str(value)]
 
-        return [
-            str(item)
-            for item in value
-            if item is not None
-        ]
+        return [str(item) for item in value if item is not None]
 
     # ==========================================================
     # Serialization
@@ -375,7 +403,6 @@ Reglas:
     def _serialize(
         value: Any,
     ) -> str:
-
         try:
             return json.dumps(
                 value,
@@ -385,9 +412,7 @@ Reglas:
             )
 
         except Exception:
-            logger.exception(
-                "Error serializando contexto."
-            )
+            logger.exception("Error serializando contexto.")
 
             return str(value)
 
@@ -399,7 +424,6 @@ Reglas:
         self,
         plan: ExecutionPlan,
     ) -> str:
-
         plan_data = {
             "plan_id": plan.id,
             "original_task": plan.original_task,
@@ -419,19 +443,13 @@ Reglas:
                     "description": step.description,
                     "unit_type": step.unit_type,
                     "unit_name": step.unit_name,
-                    "depends_on": list(
-                        step.depends_on
-                    ),
-                    "params": dict(
-                        step.params
-                    ),
+                    "depends_on": list(step.depends_on),
+                    "params": dict(step.params),
                 }
                 for step in plan.steps
             ]
 
-        return self._serialize(
-            plan_data
-        )
+        return self._serialize(plan_data)
 
     # ==========================================================
     # Prompt composition
@@ -449,17 +467,13 @@ Reglas:
         ]
 
         if prompt_type is PromptType.CRITIQUE:
-            sections.append(
-                self.CRITIQUE_INSTRUCTIONS
-            )
+            sections.append(self.CRITIQUE_INSTRUCTIONS)
 
         # ------------------------------------------------------
         # Agent role
         # ------------------------------------------------------
 
-        agent_role = context.get(
-            "agent_role"
-        )
+        agent_role = context.get("agent_role")
 
         if agent_role:
             sections.append(
@@ -495,43 +509,39 @@ Reglas:
         # Requirements
         # ------------------------------------------------------
 
-        analysis_requirements = context.get(
-            "analysis_requirements"
-        )
+        analysis_requirements = context.get("analysis_requirements")
 
         if analysis_requirements:
             sections.append(
                 self._section(
                     "Requisitos de análisis",
-                    self._serialize(
-                        analysis_requirements
-                    ),
+                    self._serialize(analysis_requirements),
                 )
             )
 
-        requested_output = context.get(
-            "requested_output"
-        )
+        requested_output = context.get("requested_output")
 
         if requested_output:
             sections.append(
                 self._section(
                     "Formato de salida solicitado",
-                    self._serialize(
-                        requested_output
-                    ),
+                    self._serialize(requested_output),
                 )
             )
 
         # ------------------------------------------------------
-        # Evidence / context
+        # General evidence
         # ------------------------------------------------------
 
-        if context:
+        general_context = {
+            key: value for key, value in context.items() if key not in self.SPECIALIZED_CONTEXT_KEYS
+        }
+
+        if general_context:
             sections.append(
                 self._section(
                     "Contexto y evidencia disponible",
-                    self._serialize(context),
+                    self._serialize(general_context),
                 )
             )
 
@@ -539,16 +549,11 @@ Reglas:
         # Retry information
         # ------------------------------------------------------
 
-        retry_issues = context.get(
-            "retry_issues"
-        )
+        retry_issues = context.get("retry_issues")
 
-        retry_corrections = context.get(
-            "retry_corrections"
-        )
+        retry_corrections = context.get("retry_corrections")
 
         if retry_issues or retry_corrections:
-
             retry_payload = {
                 "issues": retry_issues or [],
                 "corrections": retry_corrections or [],
@@ -557,9 +562,35 @@ Reglas:
             sections.append(
                 self._section(
                     "Correcciones de una ejecución anterior",
-                    self._serialize(
-                        retry_payload
-                    ),
+                    self._serialize(retry_payload),
+                )
+            )
+
+        # ------------------------------------------------------
+        # Execution evidence
+        # ------------------------------------------------------
+
+        execution = context.get("execution")
+
+        if execution:
+            sections.append(
+                self._section(
+                    "Evidencia de ejecución",
+                    self._serialize(execution),
+                )
+            )
+
+        # ------------------------------------------------------
+        # Additional instructions
+        # ------------------------------------------------------
+
+        additional_instructions = context.get("additional_instructions")
+
+        if additional_instructions:
+            sections.append(
+                self._section(
+                    "Instrucciones adicionales",
+                    str(additional_instructions),
                 )
             )
 
@@ -605,11 +636,7 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
                 )
             )
 
-        return "\n\n".join(
-            section.strip()
-            for section in sections
-            if section and section.strip()
-        )
+        return "\n\n".join(section.strip() for section in sections if section and section.strip())
 
     # ==========================================================
     # Section helper
@@ -620,7 +647,6 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         title: str,
         content: str,
     ) -> str:
-
         return f"""
 ## {title}
 
@@ -635,7 +661,6 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         self,
         prompt: str,
     ) -> str:
-
         limit = self.max_context_chars
 
         if len(prompt) <= limit:
@@ -652,7 +677,6 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         context_index = prompt.find(marker)
 
         if context_index != -1:
-
             before = prompt[:context_index]
 
             final_marker = "\n## Instrucciones finales"
@@ -662,44 +686,27 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
                 context_index,
             )
 
-            after = (
-                prompt[final_index:]
-                if final_index != -1
-                else ""
-            )
+            after = prompt[final_index:] if final_index != -1 else ""
 
-            available = (
-                limit
-                - len(before)
-                - len(after)
-                - len(notice)
-            )
+            available = limit - len(before) - len(after) - len(notice)
 
             if available > 0:
-
-                context_content = prompt[
-                    context_index + len(marker):
-                ].strip()
+                context_content = prompt[context_index + len(marker) :].strip()
 
                 if len(context_content) > available:
-                    context_content = (
-                        context_content[:available]
-                        + "\n[CONTEXTO REDUCIDO]"
-                    )
+                    context_content = context_content[:available] + "\n[CONTEXTO REDUCIDO]"
 
-                result = (
-                    before
-                    + marker
-                    + "\n\n"
-                    + context_content
-                    + after
-                    + notice
-                )
+                result = before + marker + "\n\n" + context_content + after + notice
 
                 return result[:limit]
 
         return (
-            prompt[: max(0, limit - len(notice))]
+            prompt[
+                : max(
+                    0,
+                    limit - len(notice),
+                )
+            ]
             + notice
         )
 
