@@ -26,15 +26,17 @@ class ExecutionPlanner:
         - Definir parámetros de ejecución.
         - Definir el contexto requerido.
         - Definir governance.
-        - Generar pasos mediante LLM cuando corresponda.
+        - Generar pasos mediante LLM solo cuando la intención
+          no tiene estrategia declarativa.
 
     No:
         - ejecuta skills;
         - ejecuta agents;
         - gestiona lifecycle de ejecución;
-        - analiza lenguaje natural;
-        - descubre Agents;
-        - descubre Skills.
+        - analiza lenguaje natural (eso es IntentAnalyzer);
+        - descubre Agents o Skills;
+        - inventa contenido de archivos;
+        - materializa resultados entre steps (eso es ExecutionEngine).
     """
 
     name = "execution_planner"
@@ -42,6 +44,28 @@ class ExecutionPlanner:
     SUPPORTED_UNIT_TYPES = {
         "agent",
         "skill",
+    }
+
+    # Unidades conocidas (no inventar otras en planes LLM)
+    KNOWN_AGENTS = {
+        "architect",
+        "coder",
+        "multi_turn",
+        "task_agent",
+    }
+
+    KNOWN_SKILLS = {
+        "analyze_project",
+        "architecture_audit",
+        "quality_audit",
+        "security_audit",
+        "performance_audit",
+        "write_file",
+        "create_project",
+        "sandbox",
+        "shell",
+        "readme",
+        "ingest",
     }
 
     # =========================================================
@@ -86,7 +110,8 @@ class ExecutionPlanner:
             }
         )
 
-        if complexity in {"high", "complex"}:
+        # Por defecto single; las estrategias multi_step lo cambian
+        if complexity in {"high", "complex", "very_high"}:
             plan.execution_mode = "multi_step"
         else:
             plan.execution_mode = "single"
@@ -191,7 +216,8 @@ class ExecutionPlanner:
             r"\barchivo\s+[\"']([^\"']+)[\"']",
             r"\bel\s+archivo\s+([^\s\"']+)",
             r"\barchivo\s+([^\s\"']+)",
-            r"\b(?:crea|crear|genera|generar|escribe|escribir)\s+(?:un\s+|una\s+)?([^\s\"']+\.[a-zA-Z0-9]+)",
+            r"\b(?:crea|crear|genera|generar|escribe|escribir)\s+"
+            r"(?:un\s+|una\s+)?([^\s\"']+\.[a-zA-Z0-9]+)",
             r"\b([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\b",
         )
 
@@ -286,9 +312,293 @@ class ExecutionPlanner:
             expected_output=f"Resultado de {unit_type}: {unit_name}",
         )
 
+    @staticmethod
+    def _clear_context_requirements(plan: ExecutionPlan) -> None:
+        for key in plan.context_requirements:
+            plan.context_requirements[key] = False
+
     # =========================================================
     # Planning strategies
     # =========================================================
+
+    @staticmethod
+    def _plan_conversation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        """
+        Conversación pura (goals.md Test 1):
+            - sin project / Obsidian / Engram
+            - single step
+            - multi_turn
+        """
+        plan.objective = task
+        plan.execution_mode = "single"
+        ExecutionPlanner._clear_context_requirements(plan)
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "multi_turn",
+            {"task": task},
+        )
+
+    @staticmethod
+    def _plan_file_creation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        """
+        Crear archivo (goals.md Test 3).
+
+        - Contenido explícito en la tarea → write_file directo (single).
+        - Sin contenido → coder produce code_artifact,
+          write_file lo materializa vía dependency results (multi_step).
+        """
+        plan.objective = "Crear archivo"
+        plan.context_requirements["project"] = True
+        plan.governance["allow_write"] = True
+
+        path = ExecutionPlanner._extract_file_path(task)
+        if not path:
+            path = intent.get_entity("path", "")
+        if not path or not str(path).strip():
+            path = "archivo.txt"
+        path = str(path).strip()
+
+        content = ExecutionPlanner._extract_file_content(task)
+
+        # Caso trivial: contenido ya viene en el mensaje del usuario
+        if content:
+            plan.execution_mode = "single"
+            ExecutionPlanner._set_execution_unit(
+                plan,
+                "skill",
+                "write_file",
+                {"path": path, "content": content},
+            )
+            logger.info(
+                "File creation (explicit content) | path=%s | content_length=%d",
+                path,
+                len(content),
+            )
+            return
+
+        # Caso general: Agent razona → Skill escribe
+        plan.execution_mode = "multi_step"
+
+        coder_step = plan.add_step(
+            description=f"Generar contenido para {path}",
+            unit_type="agent",
+            unit_name="coder",
+            params={"task": task, "path": path},
+            expected_output="code_artifact con path y content.",
+            metadata={
+                "stage": "generation",
+                "produces": "code_artifact",
+            },
+        )
+
+        write_step = plan.add_step(
+            description=f"Escribir archivo {path}",
+            unit_type="skill",
+            unit_name="write_file",
+            # path/content llegan por materialización en ExecutionEngine
+            params={},
+            expected_output="Archivo creado en disco.",
+            metadata={
+                "stage": "materialization",
+                "consumes": "code_artifact",
+            },
+        )
+        write_step.depends_on.append(coder_step.id)
+
+        logger.info("File creation (coder→write_file) | path=%s", path)
+
+    @staticmethod
+    def _plan_code_generation(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        """
+        Generación de código sin escritura inmediata.
+        Si más adelante se necesita persistir, el Engine / un plan
+        posterior puede añadir write_file.
+        """
+        plan.objective = "Generar código"
+        plan.context_requirements["gentleman"] = True
+        plan.context_requirements["standards"] = True
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "agent",
+            "coder",
+            {"task": task},
+        )
+
+    @staticmethod
+    def _plan_project_analysis(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        """
+        Analizar proyecto (goals.md Test 2).
+
+        Skill recolecta evidencia → Agent razona.
+        """
+        plan.objective = "Analizar la arquitectura del proyecto"
+        plan.execution_mode = "multi_step"
+        plan.context_requirements["project"] = True
+        plan.context_requirements["engram"] = True
+        plan.context_requirements["standards"] = True
+
+        inspect = plan.add_step(
+            description="Inspeccionar estructura, archivos y componentes del proyecto",
+            unit_type="skill",
+            unit_name="analyze_project",
+            params={"path": ".", "task": task},
+            expected_output="Snapshot estructurado del proyecto.",
+            metadata={
+                "stage": "inspection",
+                "produces": "project_analysis",
+            },
+        )
+
+        architect = plan.add_step(
+            description=(
+                "Interpretar la arquitectura del proyecto " "y generar un resumen ejecutivo"
+            ),
+            unit_type="agent",
+            unit_name="architect",
+            params={"task": task},
+            expected_output="Análisis arquitectónico ejecutivo del proyecto.",
+            metadata={
+                "stage": "architecture_analysis",
+                "consumes": "project_analysis",
+            },
+        )
+        architect.depends_on.append(inspect.id)
+
+    @staticmethod
+    def _plan_architecture_audit(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        """
+        Auditoría arquitectónica:
+        Skill de evidencia → ArchitectAgent.
+        """
+        plan.objective = "Auditar arquitectura del proyecto"
+        plan.execution_mode = "multi_step"
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = True
+
+        evidence = plan.add_step(
+            description="Recolectar evidencia estructural del proyecto",
+            unit_type="skill",
+            unit_name="architecture_audit",
+            params={"task": task},
+            expected_output="architecture_evidence",
+            metadata={"stage": "evidence", "produces": "architecture_evidence"},
+        )
+
+        analysis = plan.add_step(
+            description="Evaluar arquitectura a partir de la evidencia",
+            unit_type="agent",
+            unit_name="architect",
+            params={"task": task},
+            expected_output="Informe arquitectónico ejecutivo.",
+            metadata={"stage": "analysis", "consumes": "architecture_evidence"},
+        )
+        analysis.depends_on.append(evidence.id)
+
+    @staticmethod
+    def _plan_quality_audit(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Auditar calidad del código"
+        plan.execution_mode = "multi_step"
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = True
+
+        evidence = plan.add_step(
+            description="Recolectar evidencia de calidad",
+            unit_type="skill",
+            unit_name="quality_audit",
+            params={"task": task},
+            expected_output="quality_evidence",
+        )
+
+        analysis = plan.add_step(
+            description="Evaluar calidad a partir de la evidencia",
+            unit_type="agent",
+            unit_name="architect",
+            params={"task": task, "mode": "quality"},
+            expected_output="Informe de calidad.",
+        )
+        analysis.depends_on.append(evidence.id)
+
+    @staticmethod
+    def _plan_security_audit(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Auditar seguridad del proyecto"
+        plan.execution_mode = "multi_step"
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = True
+
+        evidence = plan.add_step(
+            description="Recolectar evidencia de seguridad",
+            unit_type="skill",
+            unit_name="security_audit",
+            params={"task": task},
+            expected_output="security_evidence",
+        )
+
+        analysis = plan.add_step(
+            description="Evaluar riesgos de seguridad",
+            unit_type="agent",
+            unit_name="architect",
+            params={"task": task, "mode": "security"},
+            expected_output="Informe de seguridad.",
+        )
+        analysis.depends_on.append(evidence.id)
+
+    @staticmethod
+    def _plan_performance_audit(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Auditar rendimiento del proyecto"
+        plan.execution_mode = "multi_step"
+        plan.context_requirements["project"] = True
+
+        evidence = plan.add_step(
+            description="Recolectar evidencia de rendimiento",
+            unit_type="skill",
+            unit_name="performance_audit",
+            params={"task": task},
+            expected_output="performance_evidence",
+        )
+
+        analysis = plan.add_step(
+            description="Evaluar rendimiento a partir de la evidencia",
+            unit_type="agent",
+            unit_name="architect",
+            params={"task": task, "mode": "performance"},
+            expected_output="Informe de rendimiento.",
+        )
+        analysis.depends_on.append(evidence.id)
 
     @staticmethod
     def _plan_project_creation(
@@ -296,6 +606,10 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
+        """
+        Crear proyecto (goals.md Test 4).
+        Architect decide → Coder estructura → create_project materializa.
+        """
         plan.objective = "Crear un nuevo proyecto de software"
         plan.execution_mode = "multi_step"
 
@@ -339,23 +653,6 @@ class ExecutionPlanner:
             expected_output="Proyecto creado en disco.",
         )
         create.depends_on.append(generate.id)
-
-    @staticmethod
-    def _plan_code_generation(
-        plan: ExecutionPlan,
-        task: str,
-        intent: IntentResult,
-    ) -> None:
-        plan.objective = "Generar código"
-        plan.context_requirements["gentleman"] = True
-        plan.context_requirements["standards"] = True
-
-        ExecutionPlanner._set_execution_unit(
-            plan,
-            "agent",
-            "coder",
-            {"task": task},
-        )
 
     @staticmethod
     def _plan_debug(
@@ -406,54 +703,17 @@ class ExecutionPlanner:
         )
 
         modify = plan.add_step(
-            description="Aplicar cambios",
+            description="Proponer cambios de código",
             unit_type="agent",
             unit_name="coder",
             params={"task": task},
-            expected_output="Código refactorizado conforme a la estrategia.",
+            expected_output="code_artifact con cambios propuestos.",
         )
         modify.depends_on.append(analyze.id)
 
-    @staticmethod
-    def _plan_project_analysis(
-        plan: ExecutionPlan,
-        task: str,
-        intent: IntentResult,
-    ) -> None:
-        plan.objective = "Analizar la arquitectura del proyecto"
-        plan.execution_mode = "multi_step"
-        plan.context_requirements["project"] = True
-        plan.context_requirements["engram"] = True
-        plan.context_requirements["standards"] = True
-
-        inspect = plan.add_step(
-            description="Inspeccionar estructura, archivos y componentes del proyecto",
-            unit_type="skill",
-            unit_name="analyze_project",
-            params={"path": ".", "task": task},
-            expected_output="Snapshot estructurado del proyecto.",
-            metadata={
-                "stage": "inspection",
-                "produces_context": True,
-                "context_key": "project_analysis",
-            },
-        )
-
-        architect = plan.add_step(
-            description=(
-                "Interpretar la arquitectura del proyecto " "y generar un resumen ejecutivo"
-            ),
-            unit_type="agent",
-            unit_name="architect",
-            params={"task": task},
-            expected_output="Análisis arquitectónico ejecutivo del proyecto.",
-            metadata={
-                "stage": "architecture_analysis",
-                "consumes_context": True,
-                "context_source": "project_analysis",
-            },
-        )
-        architect.depends_on.append(inspect.id)
+        # La escritura queda opcional: si el Engine/materialización
+        # detecta code_artifact y hay steps write_file posteriores,
+        # se aplican. Por ahora el plan termina en propuesta.
 
     @staticmethod
     def _plan_documentation(
@@ -470,70 +730,6 @@ class ExecutionPlanner:
             "agent",
             "task_agent",
             {"task": task, "mode": "documentation"},
-        )
-
-    @staticmethod
-    def _plan_file_creation(
-        plan: ExecutionPlan,
-        task: str,
-        intent: IntentResult,
-    ) -> None:
-        """
-        Si el contenido viene explícito en la tarea → write_file directo.
-        Si no → coder produce code_artifact y write_file lo materializa.
-        """
-        plan.objective = "Crear archivo"
-        plan.context_requirements["project"] = True
-        plan.governance["allow_write"] = True
-
-        path = ExecutionPlanner._extract_file_path(task)
-        if not path:
-            path = intent.get_entity("path", "")
-        if not path or not path.strip():
-            path = "archivo.txt"
-        path = path.strip()
-
-        content = ExecutionPlanner._extract_file_content(task)
-
-        # Contenido explícito → un solo step determinista
-        if content:
-            plan.execution_mode = "single"
-            ExecutionPlanner._set_execution_unit(
-                plan,
-                "skill",
-                "write_file",
-                {"path": path, "content": content},
-            )
-            logger.info(
-                "File creation (explicit content) | path=%s | content_length=%d",
-                path,
-                len(content),
-            )
-            return
-
-        # Sin contenido → coder genera, write_file escribe
-        plan.execution_mode = "multi_step"
-
-        coder_step = plan.add_step(
-            description=f"Generar contenido para {path}",
-            unit_type="agent",
-            unit_name="coder",
-            params={"task": task, "path": path},
-            expected_output="code_artifact con path y content.",
-        )
-
-        write_step = plan.add_step(
-            description=f"Escribir archivo {path}",
-            unit_type="skill",
-            unit_name="write_file",
-            params={},  # path/content llegan por materialización
-            expected_output="Archivo creado en disco.",
-        )
-        write_step.depends_on.append(coder_step.id)
-
-        logger.info(
-            "File creation (coder→write_file) | path=%s",
-            path,
         )
 
     @staticmethod
@@ -577,6 +773,10 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
+        """
+        /spec y equivalentes.
+        task_agent produce el texto → write_file lo persiste.
+        """
         plan.objective = "Crear especificación (Spec)"
         plan.execution_mode = "multi_step"
         plan.context_requirements["engram"] = True
@@ -588,7 +788,7 @@ class ExecutionPlanner:
             unit_type="agent",
             unit_name="task_agent",
             params={"task": task, "mode": "spec"},
-            expected_output="Especificación estructurada.",
+            expected_output="Especificación estructurada (texto o code_artifact).",
             metadata={"stage": "spec_generation"},
         )
 
@@ -596,7 +796,9 @@ class ExecutionPlanner:
             description="Guardar especificación en disco",
             unit_type="skill",
             unit_name="write_file",
-            params={"task": task, "mode": "spec"},
+            # path/content deben salir del artifact o de params
+            # que el Agent deje listos; materialización en Engine
+            params={},
             expected_output="Archivo de especificación creado.",
         )
         write_spec.depends_on.append(spec_step.id)
@@ -608,38 +810,18 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
+        """
+        Intent genérico de planificación compleja.
+        Solo aquí se permite LLM para descomponer steps.
+        """
         plan.objective = "Generar un plan de ejecución"
         plan.execution_mode = "multi_step"
         plan.context_requirements["engram"] = True
         plan.context_requirements["standards"] = True
         cls._generate_steps_with_llm(plan, task, intent)
 
-    @staticmethod
-    def _plan_conversation(
-        plan: ExecutionPlan,
-        task: str,
-        intent: IntentResult,
-    ) -> None:
-        """
-        Conversación pura:
-            - sin contexto de proyecto / Obsidian / Engram
-            - multi_turn
-        """
-        plan.objective = task
-        plan.execution_mode = "single"
-
-        for key in plan.context_requirements:
-            plan.context_requirements[key] = False
-
-        ExecutionPlanner._set_execution_unit(
-            plan,
-            "agent",
-            "multi_turn",
-            {"task": task},
-        )
-
     # =========================================================
-    # LLM planning
+    # LLM planning (solo fallback controlado)
     # =========================================================
 
     @classmethod
@@ -650,6 +832,9 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         logger.info("Generando pasos con LLM para tarea: %s", task[:100])
+
+        known_agents = ", ".join(sorted(cls.KNOWN_AGENTS))
+        known_skills = ", ".join(sorted(cls.KNOWN_SKILLS))
 
         prompt = f"""
 Eres un planificador de software.
@@ -665,21 +850,21 @@ Intención:
 Dominio:
 {intent.domain}
 
-Los únicos tipos de unidad permitidos son:
-- agent
-- skill
+Reglas obligatorias:
+- Solo unit_type: "agent" o "skill"
+- Agents permitidos: {known_agents}
+- Skills permitidas: {known_skills}
+- No inventes nombres de agentes ni skills
+- No generes contenido de archivos
+- Skills actúan; Agents razonan
+- Devuelve SOLO un JSON: lista de pasos
 
-No inventes nombres de agentes ni skills.
-Usa solo: architect, coder, multi_turn, task_agent,
-analyze_project, write_file, create_project, sandbox.
-
-Devuelve SOLO un JSON con una lista de pasos.
-
-Cada paso debe tener:
-- "description": descripción clara
-- "unit_type": "agent" o "skill"
-- "unit_name": nombre de la unidad
-- "params": objeto con parámetros opcionales
+Cada paso:
+- "description": string
+- "unit_type": "agent" | "skill"
+- "unit_name": string
+- "params": objeto (puede ir vacío)
+- "depends_on_index": lista de índices (0-based) de pasos previos de los que depende
 
 Ejemplo:
 [
@@ -687,13 +872,15 @@ Ejemplo:
     "description": "Analizar requisitos",
     "unit_type": "agent",
     "unit_name": "architect",
-    "params": {{"task": "..."}}
+    "params": {{"task": "..."}},
+    "depends_on_index": []
   }},
   {{
     "description": "Generar código",
     "unit_type": "agent",
     "unit_name": "coder",
-    "params": {{"task": "..."}}
+    "params": {{"task": "..."}},
+    "depends_on_index": [0]
   }}
 ]
 """
@@ -712,6 +899,8 @@ Ejemplo:
                 logger.warning("El LLM no generó pasos válidos.")
                 return
 
+            created_steps = []
+
             for step_data in steps:
                 if not isinstance(step_data, dict):
                     continue
@@ -728,6 +917,20 @@ Ejemplo:
                     )
                     continue
 
+                if unit_type == "agent" and unit_name not in cls.KNOWN_AGENTS:
+                    logger.warning(
+                        "Paso LLM descartado: agent desconocido=%s",
+                        unit_name,
+                    )
+                    continue
+
+                if unit_type == "skill" and unit_name not in cls.KNOWN_SKILLS:
+                    logger.warning(
+                        "Paso LLM descartado: skill desconocida=%s",
+                        unit_name,
+                    )
+                    continue
+
                 if not unit_name:
                     logger.warning("Paso LLM descartado: unit_name vacío.")
                     continue
@@ -735,7 +938,7 @@ Ejemplo:
                 if not isinstance(params, dict):
                     params = {}
 
-                plan.add_step(
+                step = plan.add_step(
                     description=description or f"Ejecutar {unit_name}",
                     unit_type=unit_type,
                     unit_name=unit_name,
@@ -743,6 +946,21 @@ Ejemplo:
                     expected_output=f"Resultado de {unit_type}: {unit_name}",
                     metadata={"source": "llm"},
                 )
+                created_steps.append((step, step_data.get("depends_on_index", [])))
+
+            # Resolver depends_on por índice
+            for step, dep_indexes in created_steps:
+                if not isinstance(dep_indexes, list):
+                    continue
+                for idx in dep_indexes:
+                    try:
+                        idx = int(idx)
+                    except (TypeError, ValueError):
+                        continue
+                    if 0 <= idx < len(created_steps):
+                        dep_step = created_steps[idx][0]
+                        if dep_step.id not in step.depends_on:
+                            step.depends_on.append(dep_step.id)
 
             logger.info("Pasos generados con LLM: %d", len(plan.steps))
 
