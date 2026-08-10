@@ -163,7 +163,8 @@ class ExecutionPlanner:
     @staticmethod
     def _extract_file_content(task: str) -> str:
         """
-        Extrae contenido simple desde una instrucción de creación de archivo.
+        Extrae contenido simple desde una instrucción de creación
+        de archivo.
 
         Ejemplos:
             crea un archivo prueba.txt con el contenido hola
@@ -195,6 +196,42 @@ class ExecutionPlanner:
                 return content
 
         return ""
+
+    @staticmethod
+    def _set_execution_unit(
+        plan: ExecutionPlan,
+        unit_type: str,
+        unit_name: str,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Añade una única unidad de ejecución al ExecutionPlan.
+
+        Este helper centraliza la creación de steps simples
+        utilizados por las estrategias de planificación.
+        """
+
+        if unit_type not in {"agent", "skill"}:
+            raise ValueError(
+                f"Tipo de unidad inválido: {unit_type!r}. " "Debe ser 'agent' o 'skill'."
+            )
+
+        if not unit_name or not unit_name.strip():
+            raise ValueError("unit_name no puede estar vacío.")
+
+        if params is None:
+            params = {}
+
+        if not isinstance(params, dict):
+            raise TypeError("params debe ser un diccionario.")
+
+        plan.add_step(
+            description=f"Ejecutar {unit_type}: {unit_name}",
+            unit_type=unit_type,
+            unit_name=unit_name,
+            params=params,
+            expected_output=(f"Resultado de {unit_type}: {unit_name}"),
+        )
 
     # =========================================================
     # Planning strategies
@@ -609,22 +646,22 @@ Cada paso debe tener:
 Ejemplo:
 
 [
-  {{
+{{
     "description": "Analizar requisitos",
     "unit_type": "agent",
     "unit_name": "architect",
     "params": {{
-      "task": "..."
+        "task": "..."
     }}
-  }},
-  {{
+}},
+{{
     "description": "Generar código",
     "unit_type": "agent",
     "unit_name": "coder",
     "params": {{
-      "task": "..."
+        "task": "..."
     }}
-  }}
+}}
 ]
 """
 
