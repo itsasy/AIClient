@@ -12,13 +12,18 @@ from skills.base import Skill
 class ShellSkill(Skill):
     """
     Ejecuta comandos shell bajo SecurityPolicy.
-    No decide si el comando es buena idea: solo aplica política.
+
+    No decide si el comando es buena idea: solo aplica política
+    y ejecuta si está permitido.
     """
 
     name = "shell"
     description = "Ejecuta un comando shell con restricciones de seguridad."
-    version = "2.0"
-    capabilities = ("shell", "command_execution")
+    version = "2.1"
+    capabilities = (
+        "shell",
+        "command_execution",
+    )
 
     def execute(
         self,
@@ -27,6 +32,7 @@ class ShellSkill(Skill):
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         params = step.params or {}
+
         command = params.get("command") or params.get("cmd") or params.get("task") or ""
         command = str(command).strip()
 
@@ -37,13 +43,30 @@ class ShellSkill(Skill):
                 "error": "No se proporcionó comando.",
             }
 
+        # 1. Governance del plan
+        if not plan.allows_shell():
+            return {
+                "ok": False,
+                "result": {
+                    "command": command,
+                    "blocked": True,
+                },
+                "error": "Ejecución de shell no permitida por la política del plan.",
+            }
+
+        # 2. SecurityPolicy (sudo, rm -rf /, patrones peligrosos)
         ok, err = SecurityPolicy.check_command(command, plan)
         if not ok:
             return {
                 "ok": False,
-                "result": {"command": command, "blocked": True},
+                "result": {
+                    "command": command,
+                    "blocked": True,
+                },
                 "error": err,
             }
+
+        timeout = int(params.get("timeout", 60) or 60)
 
         try:
             completed = subprocess.run(
@@ -51,27 +74,39 @@ class ShellSkill(Skill):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=int(params.get("timeout", 60)),
+                timeout=timeout,
             )
+
             return {
                 "ok": completed.returncode == 0,
                 "result": {
                     "command": command,
                     "returncode": completed.returncode,
-                    "stdout": completed.stdout,
-                    "stderr": completed.stderr,
+                    "stdout": (completed.stdout or "")[:4000],
+                    "stderr": (completed.stderr or "")[:2000],
                 },
-                "error": None if completed.returncode == 0 else completed.stderr,
+                "error": (
+                    None
+                    if completed.returncode == 0
+                    else (completed.stderr or f"exit {completed.returncode}")
+                ),
             }
+
         except subprocess.TimeoutExpired:
             return {
                 "ok": False,
-                "result": {"command": command},
-                "error": "Timeout ejecutando comando.",
+                "result": {
+                    "command": command,
+                    "blocked": False,
+                },
+                "error": f"Timeout ejecutando comando ({timeout}s).",
             }
+
         except Exception as e:
             return {
                 "ok": False,
-                "result": {"command": command},
+                "result": {
+                    "command": command,
+                },
                 "error": str(e),
             }

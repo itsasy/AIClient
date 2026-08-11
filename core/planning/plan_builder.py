@@ -190,6 +190,9 @@ class PlanBuilder:
                 "signals",
                 [],
             ),
+            original_query=str(
+                intent_data.get("original_query") or original_task or "",
+            ),
             metadata=intent_data.get(
                 "metadata",
                 {},

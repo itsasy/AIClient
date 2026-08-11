@@ -16,7 +16,7 @@ class ExecutionPlanner:
     """
     Constructor declarativo de ExecutionPlans.
 
-    Decide CÓMO ejecutarse una intención.
+    Decide CÓMO debe ejecutarse una intención.
     Nunca ejecuta Agents ni Skills.
     """
 
@@ -46,6 +46,22 @@ class ExecutionPlanner:
         "shell",
         "readme",
         "ingest",
+    }
+
+    FRAMEWORK_ALIASES = {
+        "next": "nextjs",
+        "next.js": "nextjs",
+        "nextjs": "nextjs",
+        "reactjs": "react",
+        "react.js": "react",
+        "react": "react",
+        "vuejs": "vue",
+        "vue.js": "vue",
+        "vue": "vue",
+        "nuxt": "vue",
+        "django": "django",
+        "laravel": "laravel",
+        "flutter": "flutter",
     }
 
     # =========================================================
@@ -174,6 +190,11 @@ class ExecutionPlanner:
             return ""
         return str(value).strip().lower()
 
+    @classmethod
+    def _normalize_framework(cls, value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        return cls.FRAMEWORK_ALIASES.get(raw, raw or "unknown")
+
     @staticmethod
     def _extract_file_path(task: str) -> str:
         if not isinstance(task, str):
@@ -186,6 +207,8 @@ class ExecutionPlanner:
             r"\barchivo\s+([^\s\"']+)",
             r"\b(?:crea|crear|genera|generar|escribe|escribir)\s+"
             r"(?:un\s+|una\s+)?([^\s\"']+\.[a-zA-Z0-9]+)",
+            r"\b(?:crea|crear)\s+((?:\.\./)+[^\s\"']+)",
+            r"\b(?:crea|crear)\s+(/[^\s\"']+)",
             r"\b([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\b",
         )
 
@@ -313,7 +336,7 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         """
-        Crear archivo (goals.md Test 3).
+        Crear archivo (goals.md Test 3 / 6).
 
         - Contenido explícito → write_file directo (single).
         - Sin contenido → coder → write_file (multi_step).
@@ -548,8 +571,9 @@ class ExecutionPlanner:
         )
         analysis.depends_on.append(evidence.id)
 
-    @staticmethod
+    @classmethod
     def _plan_project_creation(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -557,18 +581,47 @@ class ExecutionPlanner:
         plan.objective = "Crear un nuevo proyecto de software"
         plan.execution_mode = "multi_step"
 
-        framework = intent.get_entity("framework", "unknown")
+        framework_raw = intent.get_entity("framework", "unknown")
+        if not framework_raw or framework_raw == "unknown":
+            lower = task.lower()
+            for token in (
+                "next.js",
+                "nextjs",
+                "next",
+                "react",
+                "vue",
+                "laravel",
+                "django",
+                "flutter",
+            ):
+                if token in lower:
+                    framework_raw = token
+                    break
+
+        framework = cls._normalize_framework(framework_raw)
+
         name = intent.get_entity("name", "mi_proyecto")
+        if not name or name == "mi_proyecto":
+            m = re.search(
+                r"(?:llamado|llamada|called|named)\s+([a-zA-Z0-9_\-]+)",
+                task,
+                re.IGNORECASE,
+            )
+            if m:
+                name = m.group(1)
 
         plan.context_requirements["project"] = False
         plan.context_requirements["gentleman"] = True
         plan.governance["allow_write"] = True
 
+        plan.params["framework"] = framework
+        plan.params["name"] = name
+
         analyze = plan.add_step(
             description=f"Analizar requisitos para proyecto {framework}",
             unit_type="agent",
             unit_name="architect",
-            params={"task": task, "framework": framework},
+            params={"task": task, "framework": framework, "name": name},
             expected_output="Decisiones arquitectónicas y requisitos estructurados.",
         )
 
@@ -682,11 +735,22 @@ class ExecutionPlanner:
         plan.context_requirements["project"] = True
         plan.governance["allow_shell"] = True
 
+        command = task.strip()
+        command = re.sub(
+            r"^(?:ejecuta|ejecutar|run|please\s+run)\s+",
+            "",
+            command,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        if not command:
+            command = task.strip()
+
         ExecutionPlanner._set_execution_unit(
             plan,
             "skill",
             "shell",
-            {"task": task},
+            {"command": command, "task": task},
         )
 
     @staticmethod

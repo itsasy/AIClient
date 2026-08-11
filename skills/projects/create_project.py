@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -15,31 +17,15 @@ from skills.base import Skill
 
 class CreateProjectSkill(Skill):
     """
-    Skill para crear proyectos completos en diferentes stacks.
+    Crea proyectos en stacks conocidos.
 
-    Soporte:
-        - Laravel (composer create-project)
-        - React (npx create-react-app)
-        - Vue (npm create vue@latest)
-        - Django (django-admin startproject)
-        - Next.js (npx create-next-app)
-        - Flutter (flutter create)
-
-    Responsabilidades:
-        - Validar nombre del proyecto (caracteres seguros).
-        - Ejecutar comandos específicos por framework.
-        - Usar PathPolicy para verificar la ruta de destino.
-        - Usar SecurityPolicy para controlar permisos.
-
-    No:
-        - Genera contenido.
-        - Llama al LLM.
-        - Decide qué framework usar (lo recibe del plan).
+    No genera contenido, no llama al LLM.
+    Recibe framework/name del plan y materializa en disco.
     """
 
     name = "create_project"
     description = "Crea un proyecto completo en el stack especificado."
-    version = "2.0"
+    version = "2.1"
     capabilities = (
         "project_generation",
         "laravel",
@@ -50,54 +36,59 @@ class CreateProjectSkill(Skill):
         "flutter",
     )
 
-    # Mapeo de framework a comando y estrategia
+    FRAMEWORK_ALIASES = {
+        "next": "nextjs",
+        "next.js": "nextjs",
+        "nextjs": "nextjs",
+        "reactjs": "react",
+        "react.js": "react",
+        "vuejs": "vue",
+        "vue.js": "vue",
+        "nuxt": "vue",
+        "django": "django",
+        "laravel": "laravel",
+        "flutter": "flutter",
+        "react": "react",
+        "vue": "vue",
+    }
+
     FRAMEWORK_COMMANDS = {
         "laravel": {
             "command": "composer create-project laravel/laravel {name}",
-            "post_commands": [
-                "cd {name} && php artisan sail:install --with=mysql,redis --no-interaction",
-            ],
+            "post_commands": [],
             "dependency": "composer",
-            "validate": lambda name: True,  # composer valida por sí mismo
         },
         "react": {
-            "command": "npx create-react-app {name}",
+            "command": "npx --yes create-react-app {name}",
             "post_commands": [],
             "dependency": "npx",
-            "validate": lambda name: True,
         },
         "vue": {
-            "command": "npm create vue@latest {name}",
-            "post_commands": [
-                "cd {name} && npm install",
-            ],
+            "command": "npm create vue@latest {name} -- --default",
+            "post_commands": [],
             "dependency": "npm",
-            "validate": lambda name: True,
         },
         "django": {
             "command": "django-admin startproject {name}",
-            "post_commands": [
-                "cd {name} && python manage.py runserver",
-            ],
+            "post_commands": [],
             "dependency": "django-admin",
-            "validate": lambda name: True,
         },
         "nextjs": {
-            "command": "npx create-next-app@latest {name}",
+            "command": (
+                "npx --yes create-next-app@latest {name} "
+                '--ts --eslint --app --src-dir --import-alias "@/*" --use-npm --no-turbopack'
+            ),
             "post_commands": [],
             "dependency": "npx",
-            "validate": lambda name: True,
         },
         "flutter": {
             "command": "flutter create {name}",
             "post_commands": [],
             "dependency": "flutter",
-            "validate": lambda name: True,
         },
     }
 
-    # Caracteres permitidos para nombres de proyecto
-    ALLOWED_NAME_PATTERN = r"^[a-zA-Z0-9_\-]+$"
+    ALLOWED_NAME_PATTERN = re.compile(r"^[a-zA-Z][a-zA-Z0-9_\-]*$")
 
     def execute(
         self,
@@ -105,66 +96,68 @@ class CreateProjectSkill(Skill):
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """
-        Crea un proyecto según el framework y nombre especificados.
-        """
         params = step.params or {}
 
-        framework = params.get("framework", "").strip().lower()
-        name = params.get("name", "").strip()
-        options = params.get("options", {})
+        framework = self._normalize_framework(params.get("framework", ""))
+        name = str(params.get("name", "") or "").strip()
 
-        # 1. Validar framework soportado
         if framework not in self.FRAMEWORK_COMMANDS:
             return self._error(
-                f"Framework '{framework}' no soportado. "
+                f"Framework '{params.get('framework')}' no soportado. "
                 f"Soportados: {', '.join(sorted(self.FRAMEWORK_COMMANDS.keys()))}"
             )
 
-        # 2. Validar nombre del proyecto
         if not name:
             return self._error("No se proporcionó un nombre para el proyecto.")
 
-        import re
-
-        if not re.match(self.ALLOWED_NAME_PATTERN, name):
+        if not self.ALLOWED_NAME_PATTERN.match(name):
             return self._error(
                 f"Nombre de proyecto inválido: '{name}'. "
-                "Usa solo letras, números, guiones y guiones bajos."
+                "Debe empezar por letra y usar solo letras, números, - y _."
             )
 
-        # 3. Validar seguridad de la ruta de destino
-        target_dir = Config.TARGET_PROJECT_ROOT / name
-        ok, error = SecurityPolicy.check_path(str(target_dir), plan)
-        if not ok:
-            return self._error(error)
-
-        # 4. Verificar política de escritura
         if not plan.allows_write():
             return self._error("Política de escritura no permitida en este plan.")
 
-        # 5. Verificar si el directorio ya existe
-        if target_dir.exists():
+        target_dir = Path(Config.TARGET_PROJECT_ROOT) / name
+
+        ok, error = SecurityPolicy.check_path(str(target_dir), plan)
+        if not ok:
+            return self._error(error or "Ruta de destino no permitida.")
+
+        if not PathPolicy.is_within_project(target_dir):
             return self._error(
-                f"El directorio '{name}' ya existe en {target_dir.parent}. "
-                "Elimínalo o elige otro nombre."
+                f"Path traversal bloqueado: destino fuera del proyecto ({target_dir})."
             )
 
-        # 6. Verificar dependencia necesaria
+        if target_dir.exists():
+            return self._error(f"El directorio '{name}' ya existe en {target_dir.parent}.")
+
         dependency = self.FRAMEWORK_COMMANDS[framework]["dependency"]
         if not self._check_dependency(dependency):
             return self._error(
-                f"La dependencia '{dependency}' no está disponible en el sistema. "
+                f"La dependencia '{dependency}' no está disponible. "
                 f"Instálala antes de crear un proyecto {framework}."
             )
 
-        # 7. Ejecutar la creación
-        results = self._execute_framework(framework, name, target_dir)
+        main_result = self._execute_framework(framework, name, plan)
+        if not main_result.get("ok"):
+            return {
+                "ok": False,
+                "result": {
+                    "type": "project_creation",
+                    "framework": framework,
+                    "name": name,
+                    "path": str(target_dir),
+                    "commands": [main_result],
+                },
+                "error": main_result.get("error")
+                or main_result.get("output")
+                or "Fallo al crear el proyecto.",
+            }
 
-        # 8. Ejecutar comandos post-creación
-        post_results = self._execute_post_commands(framework, name)
+        post_results = self._execute_post_commands(framework, name, plan)
 
-        # 9. Componer resultado
         return {
             "ok": True,
             "result": {
@@ -172,33 +165,42 @@ class CreateProjectSkill(Skill):
                 "framework": framework,
                 "name": name,
                 "path": str(target_dir),
-                "commands": results,
+                "commands": [main_result],
                 "post_commands": post_results,
             },
             "error": None,
         }
 
-    # ==========================================================
+    # ----------------------------------------------------------
     # Helpers
-    # ==========================================================
+    # ----------------------------------------------------------
+
+    def _normalize_framework(self, value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        return self.FRAMEWORK_ALIASES.get(raw, raw)
 
     def _check_dependency(self, dependency: str) -> bool:
-        """Verifica si un comando está disponible en el sistema."""
-        try:
-            # Verificar si el comando existe en el PATH
-            subprocess.run(
-                ["which", dependency],
-                capture_output=True,
-                timeout=2,
-                check=False,
-            )
-            return True
-        except Exception:
-            return False
+        path = shutil.which(dependency)
+        return path is not None
 
-    def _execute_command(self, command: str, cwd: Path | None = None) -> dict[str, Any]:
-        """Ejecuta un comando shell de forma segura."""
+    def _execute_command(
+        self,
+        command: str,
+        plan: ExecutionPlan,
+        cwd: Path | None = None,
+    ) -> dict[str, Any]:
+        ok, err = SecurityPolicy.check_command(command, plan)
+        if not ok:
+            return {
+                "ok": False,
+                "command": command,
+                "error": err,
+                "output": "",
+                "blocked": True,
+            }
+
         start = time.time()
+        timeout = getattr(Config, "SHELL_TIMEOUT", 300)
 
         try:
             result = subprocess.run(
@@ -206,27 +208,26 @@ class CreateProjectSkill(Skill):
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=Config.SHELL_TIMEOUT,
-                cwd=cwd or Config.TARGET_PROJECT_ROOT,
+                timeout=timeout,
+                cwd=str(cwd or Config.TARGET_PROJECT_ROOT),
                 check=False,
             )
-
             duration = round(time.time() - start, 3)
-
-            output = result.stdout.strip() or result.stderr.strip() or ""
+            output = (result.stdout or result.stderr or "").strip()
 
             return {
                 "ok": result.returncode == 0,
                 "command": command,
-                "output": output[:1500],
+                "output": output[:2000],
                 "returncode": result.returncode,
                 "duration": duration,
+                "error": None if result.returncode == 0 else output[:500],
             }
         except subprocess.TimeoutExpired:
             return {
                 "ok": False,
                 "command": command,
-                "error": f"Timeout ({Config.SHELL_TIMEOUT}s)",
+                "error": f"Timeout ({timeout}s)",
                 "output": "",
             }
         except Exception as e:
@@ -241,31 +242,29 @@ class CreateProjectSkill(Skill):
         self,
         framework: str,
         name: str,
-        target_dir: Path,
-    ) -> list[dict[str, Any]]:
-        """Ejecuta el comando principal para el framework."""
-        command_template = self.FRAMEWORK_COMMANDS[framework]["command"]
-        command = command_template.format(name=name)
-
-        results = [self._execute_command(command)]
-
-        return results
+        plan: ExecutionPlan,
+    ) -> dict[str, Any]:
+        template = self.FRAMEWORK_COMMANDS[framework]["command"]
+        command = template.format(name=name)
+        return self._execute_command(command, plan)
 
     def _execute_post_commands(
         self,
         framework: str,
         name: str,
+        plan: ExecutionPlan,
     ) -> list[dict[str, Any]]:
-        """Ejecuta comandos post-creación dentro del proyecto."""
-        post_commands = self.FRAMEWORK_COMMANDS[framework].get("post_commands", [])
-        results = []
+        templates = self.FRAMEWORK_COMMANDS[framework].get("post_commands", [])
+        project_dir = Path(Config.TARGET_PROJECT_ROOT) / name
+        results: list[dict[str, Any]] = []
 
-        project_dir = Config.TARGET_PROJECT_ROOT / name
-
-        for cmd_template in post_commands:
-            command = cmd_template.format(name=name)
-            result = self._execute_command(command, cwd=project_dir)
-            results.append(result)
+        for template in templates:
+            command = template.format(name=name)
+            # Si el template usa "cd X && ...", mejor correr en project_dir
+            if command.startswith(f"cd {name}"):
+                # ya usamos cwd=project_dir
+                command = re.sub(rf"^cd\s+{re.escape(name)}\s+&&\s+", "", command)
+            results.append(self._execute_command(command, plan, cwd=project_dir))
 
         return results
 
