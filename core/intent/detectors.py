@@ -281,12 +281,14 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         creation = re.search(
-            r"\b(" r"crear|" r"crea|" r"generar|" r"genera" r")\b",
+            r"\b(crear|crea|generar|genera|escribe|escribir)\b",
             q,
         )
+        if not creation:
+            return None
 
         file_keyword = re.search(
-            r"\b(" r"archivo|" r"fichero|" r"file" r")\b",
+            r"\b(archivo|fichero|file)\b",
             q,
         )
 
@@ -295,24 +297,49 @@ class IntentDetectors:
             q,
         )
 
-        if not creation:
+        # Path traversal o ruta absoluta / relativa sospechosa
+        traversal = re.search(
+            r"(\.\./)+[^\s\"']+|" r"(?:^|\s)/[^\s\"']+|" r"(?:^|\s)\.\./[^\s\"']+",
+            query,
+        )
+
+        if not file_keyword and not extension and not traversal:
             return None
 
-        if not file_keyword and not extension:
-            return None
+        path = cls.file(query) if hasattr(cls, "file") else None
+        if not path and traversal:
+            path = traversal.group(0).strip()
+        if not path:
+            # fallback: primer token tras el verbo de creación
+            m = re.search(
+                r"\b(?:crea|crear|genera|generar|escribe|escribir)\s+"
+                r"(?:el\s+|un\s+|una\s+|el\s+archivo\s+)?"
+                r"([^\s\"']+)",
+                query,
+                re.IGNORECASE,
+            )
+            if m:
+                path = m.group(1).strip()
 
         return IntentResult(
             intent="file_creation",
             domain="file",
             category="creation",
-            confidence=0.92,
+            confidence=0.92 if (file_keyword or extension) else 0.88,
             entities={
-                "path": cls.file(query),
+                "path": path or "",
                 "task": query,
             },
             signals=[
-                "file_keyword",
-            ],
+                s
+                for s, flag in (
+                    ("file_keyword", bool(file_keyword)),
+                    ("extension", bool(extension)),
+                    ("path_traversal", bool(traversal)),
+                )
+                if flag
+            ]
+            or ["file_creation"],
             original_query=query,
         )
 
