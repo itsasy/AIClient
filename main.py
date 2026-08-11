@@ -10,11 +10,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from core.commands.router import CommandRouter
 from runtime.execution_engine import ExecutionEngine
 
 
-def main():
-    engine = ExecutionEngine()
+def main() -> None:
+    engine = ExecutionEngine(command_router=CommandRouter())
 
     if len(sys.argv) > 1:
         query = " ".join(sys.argv[1:])

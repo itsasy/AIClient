@@ -75,27 +75,13 @@ def handle_direct_query(
     query: str,
     auto_mode: bool = False,
 ) -> None:
-    """
-    Ejecuta una consulta directa contra CommandRouter / ExecutionEngine.
-    """
-
     if not query.strip():
         return
 
     router = CommandRouter()
-    engine = ExecutionEngine()
+    engine = ExecutionEngine(command_router=router)
 
-    plan = router.process(query)
-
-    if plan is not None:
-        if auto_mode:
-            plan.execution_policy["autonomous"] = True
-            plan.execution_policy["requires_approval"] = False
-
-        result = engine.execute(plan)
-
-    else:
-        result = engine.execute_from_input(query)
+    result = engine.execute_from_input(query)
 
     if result.is_success:
         response = result.result

@@ -105,7 +105,9 @@ class TUIApp(App):
 
     def __init__(self):
         super().__init__()
-        self.engine = ExecutionEngine()
+        from core.commands.router import CommandRouter
+
+        self.engine = ExecutionEngine(command_router=CommandRouter())
         self.engram = EngramMemory()
         self.spec_manager = SpecManager()
         self.context_cache = ""
@@ -141,7 +143,6 @@ class TUIApp(App):
         self.update_context()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        """Procesa el mensaje del usuario."""
         input_widget = self.query_one("#input-field")
         message = input_widget.value.strip()
         input_widget.value = ""
@@ -149,13 +150,25 @@ class TUIApp(App):
         if not message:
             return
 
-        if message.startswith("/"):
+        # Comandos locales de la TUI (no SDD)
+        local_cmds = {
+            "/help",
+            "/memory",
+            "/specs",
+            "/status",
+            "/ingest",
+            "/clear",
+            "/exit",
+        }
+        first = message.split(maxsplit=1)[0].lower()
+
+        if first in local_cmds:
             await self.handle_command(message)
             return
 
+        # /spec /plan /build /test /review → Engine (CommandRouter)
         self.log_user(message)
         self.log_system("⏳ Procesando...")
-
         input_widget.disabled = True
         self.process_query(message)
 
@@ -165,17 +178,15 @@ class TUIApp(App):
         try:
             result = self.engine.execute_from_input(message)
             if result.is_success:
-                self.log_ai(result.result)
+                self.log_ai(str(result.result) if result.result is not None else "OK")
             else:
                 self.log_error(f"Error: {result.error}")
         except Exception as e:
             self.log_error(f"Error: {str(e)}")
         finally:
-            # Reactivar input
             input_widget = self.query_one("#input-field")
             input_widget.disabled = False
             input_widget.focus()
-            # Actualizar contexto después de la respuesta
             self.update_context()
 
     async def handle_command(self, command: str) -> None:

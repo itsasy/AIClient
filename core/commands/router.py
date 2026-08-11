@@ -20,7 +20,7 @@ class CommandRouter:
     Esto evita que el LLM interprete comandos deterministas.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._workflows: dict[str, BaseWorkflow] = {}
         self._register_defaults()
 
@@ -39,14 +39,35 @@ class CommandRouter:
         self.register("test", TestWorkflow())
         self.register("review", ReviewWorkflow())
 
-    def register(self, name: str, workflow: BaseWorkflow) -> None:
+    def register(
+        self,
+        name: str,
+        workflow: BaseWorkflow,
+    ) -> None:
         """Registra un workflow para un comando."""
         self._workflows[name] = workflow
-        logger.info("Workflow registrado: /%s", name)
 
-    def route(self, user_input: str) -> CommandResult | None:
+        logger.info(
+            "Workflow registrado: /%s",
+            name,
+        )
+
+    def list_commands(self) -> list[str]:
         """
-        Analiza la entrada y devuelve un CommandResult si es un comando slash.
+        Devuelve los comandos registrados.
+
+        La implementación interna de los workflows permanece
+        encapsulada dentro de CommandRouter.
+        """
+        return sorted(self._workflows.keys())
+
+    def route(
+        self,
+        user_input: str,
+    ) -> CommandResult | None:
+        """
+        Analiza la entrada y devuelve un CommandResult
+        si es un comando slash.
         """
         if not user_input or not user_input.strip():
             return None
@@ -70,7 +91,10 @@ class CommandRouter:
         )
 
     def execute(
-        self, command: str, arguments: str, context: dict[str, Any] | None = None
+        self,
+        command: str,
+        arguments: str,
+        context: dict[str, Any] | None = None,
     ) -> ExecutionPlan | None:
         """
         Ejecuta el workflow correspondiente al comando.
@@ -78,27 +102,43 @@ class CommandRouter:
         workflow = self._workflows.get(command)
 
         if workflow is None:
-            logger.warning("Comando desconocido: /%s", command)
+            logger.warning(
+                "Comando desconocido: /%s",
+                command,
+            )
             return None
 
         # Validar argumentos
         valid, error = workflow.validate(arguments)
+
         if not valid:
             raise ValueError(f"Argumentos inválidos para /{command}: {error}")
 
         # Ejecutar workflow
-        return workflow.execute(arguments, context)
+        return workflow.execute(
+            arguments,
+            context,
+        )
 
     def process(
-        self, user_input: str, context: dict[str, Any] | None = None
+        self,
+        user_input: str,
+        context: dict[str, Any] | None = None,
     ) -> ExecutionPlan | None:
         """
-        Procesa la entrada completa: si es comando slash, devuelve ExecutionPlan.
-        Si no, devuelve None (debe seguir con IntentAnalyzer).
+        Procesa la entrada completa: si es comando slash,
+        devuelve ExecutionPlan.
+
+        Si no es comando slash, devuelve None
+        y la entrada debe continuar con IntentAnalyzer.
         """
         result = self.route(user_input)
 
         if result is None:
             return None
 
-        return self.execute(result.command, result.arguments, context)
+        return self.execute(
+            result.command,
+            result.arguments,
+            context,
+        )

@@ -8,35 +8,54 @@ from core.execution_plan import ExecutionPlan
 
 class PlanWorkflow(BaseWorkflow):
     """
-    /plan
-    Genera un plan de ejecución a partir de la tarea actual.
+    /plan [descripción]
+
+    Genera un plan de ejecución legible (no ejecuta el plan generado).
+    Usa task_agent (no existe agent "planner").
     """
 
     name = "plan"
     description = "Genera un plan de ejecución para la tarea actual."
 
-    def execute(self, arguments: str, context: dict[str, Any] | None = None) -> ExecutionPlan:
+    def execute(
+        self,
+        arguments: str,
+        context: dict[str, Any] | None = None,
+    ) -> ExecutionPlan:
+        topic = (arguments or "").strip() or "la tarea actual del proyecto"
+
         plan = ExecutionPlan(
-            original_task=f"/plan {arguments}" if arguments else "/plan",
+            original_task=f"/plan {topic}" if arguments else "/plan",
             intent="planning",
             intent_category="planning",
-            objective="Generar un plan de ejecución",
-            execution_mode="multi_step",
+            objective=f"Generar plan de ejecución para: {topic}",
+            execution_mode="single",
         )
 
-        # Usar el agente planner
-        plan.add_step(
-            description=f"Generar plan de ejecución para: {arguments or 'tarea actual'}",
+        plan.context_requirements["project"] = True
+        plan.context_requirements["engram"] = True
+        plan.context_requirements["standards"] = True
+
+        plan.set_execution_unit(
             unit_type="agent",
-            unit_name="planner",
+            unit_name="task_agent",
             params={
-                "task": arguments or "Generar un plan para la tarea actual",
+                "task": (
+                    f"Elabora un plan de ejecución paso a paso para: {topic}.\n\n"
+                    "Formato:\n"
+                    "1. Objetivo\n"
+                    "2. Pasos numerados (qué hacer, en qué orden)\n"
+                    "3. Dependencias entre pasos\n"
+                    "4. Riesgos\n"
+                    "5. Criterio de hecho\n\n"
+                    "Sé concreto y técnico. No ejecutes nada; solo planifica."
+                ),
+                "mode": "planning",
             },
-            expected_output="Plan de ejecución estructurado.",
-            metadata={"stage": "plan_generation"},
         )
 
-        plan.metadata["requires_self_critic"] = True
+        plan.metadata["requires_self_critic"] = False
+        plan.metadata["workflow"] = "plan"
 
         return plan
 

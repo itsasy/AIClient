@@ -40,34 +40,18 @@ class ExecutionEngine:
             ↓
         ExecutionPlan
             ↓
-        validate
-            ↓
-        context
-            ↓
-        execute
-            ↓
-        evaluate
-            ↓
-        retry
-            ↓
-        finalize
-            ↓
-        ExecutionResult
-            ↓
-        learning
-            ↓
-        metrics
-
-    El Engine coordina la ejecución.
-
-    No:
-        - Descubre Agents.
-        - Descubre Skills.
-        - Decide qué Agent/Skill utilizar.
-        - Registra unidades.
+        validate → context → execute → evaluate → retry → finalize → learning
     """
 
     name = "execution_engine"
+
+    SUCCESS_STATUSES = frozenset(
+        {
+            "completed",
+            "success",
+            "ok",
+        }
+    )
 
     def __init__(
         self,
@@ -76,12 +60,14 @@ class ExecutionEngine:
         context_manager: ContextManager | None = None,
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
+        command_router: Any | None = None,
     ) -> None:
         self.context_manager = context_manager or ContextManager()
         self.intent_analyzer = intent_analyzer or IntentAnalyzer()
         self.plan_builder = plan_builder or PlanBuilder()
         self.agent_manager = agent_manager or AgentManager()
         self.skill_manager = skill_manager or SkillManager()
+        self.command_router = command_router
 
         self.dispatcher = UnitDispatcher(
             agent_registry=self.agent_manager.registry,
@@ -101,7 +87,6 @@ class ExecutionEngine:
         self.learner = ContinuousLearner()
         self.engram = EngramMemory()
         self.metrics_store = MetricsStore()
-
         self._retry_context: dict[str, dict[str, Any]] = {}
 
         logger.info(
@@ -123,6 +108,21 @@ class ExecutionEngine:
             raise ValueError("user_input no puede estar vacío.")
 
         logger.info("Engine procesando entrada=%s", user_input[:100])
+
+        # 0. Slash commands (/spec, /plan, …) antes del IntentAnalyzer
+        if self.command_router is not None:
+            try:
+                slash_plan = self.command_router.process(user_input)
+            except ValueError as exc:
+                return ExecutionResult.fail(
+                    plan_id="slash",
+                    error=str(exc),
+                    executor=self.name,
+                )
+            if slash_plan is not None:
+                if metadata:
+                    slash_plan.metadata.update(metadata)
+                return self.execute(slash_plan)
 
         intent = self.intent_analyzer.analyze(user_input)
 
@@ -156,12 +156,10 @@ class ExecutionEngine:
             result = self._execute_with_retries(plan, context)
             result = self._finalize(plan, result, started)
             self._learn(plan, result)
-
             return result
 
         except Exception as exc:
             logger.exception("Error fatal en ExecutionEngine")
-
             try:
                 plan.mark_failed()
             except Exception:
@@ -195,7 +193,6 @@ class ExecutionEngine:
         self._update_metrics(result)
         self._save_metric(plan, result, duration)
         self._retry_context.pop(plan.id, None)
-
         return result
 
     def _save_metric(
@@ -244,16 +241,12 @@ class ExecutionEngine:
     ) -> dict[str, Any]:
         step_context = dict(context)
 
-        dependencies = self.context_manager.get_dependency_results(
-            context,
-            step,
-        )
+        dependencies = self.context_manager.get_dependency_results(context, step)
 
         if dependencies:
             execution = step_context.setdefault("execution", {})
             execution["dependencies"] = dependencies
 
-        # Puente Agent → Skill / evidence → Agent
         self._materialize_dependency_outputs(
             step=step,
             dependencies=dependencies,
@@ -283,39 +276,44 @@ class ExecutionEngine:
         step_context: dict[str, Any],
     ) -> None:
         """
-        Traduce resultados tipados de dependencias a:
-          - step.params   (para Skills)
-          - step_context  (para Agents)
+        Proyecta outputs tipados de dependencias a:
+          - step.params  (Skills)
+          - step_context (Agents)
 
-        No inventa contenido. Solo proyecta lo que ya produjo
-        un step anterior. El plan sigue siendo la fuente de verdad.
+        Contratos:
+          - code_artifact → write_file (path, content)
+          - texto plano   → write_file.content (fallback /spec)
+          - architecture_evidence / project_analysis → architect
         """
         if not dependencies:
             return
 
         artifacts: list[dict[str, Any]] = []
         evidence_by_type: dict[str, Any] = {}
+        plain_texts: list[str] = []
 
-        for _dep_id, dep_data in dependencies.items():
+        for dep_id, dep_data in dependencies.items():
             if not isinstance(dep_data, dict):
                 continue
 
             status = dep_data.get("status")
+            if status is not None and status not in self.SUCCESS_STATUSES:
+                pass
+
             raw = dep_data.get("result")
-
-            # Solo dependencias exitosas (tolerante a status None)
-            if status and status not in ("completed", "success"):
-                if not raw:
-                    continue
-
             if raw is None:
                 continue
 
             payload = raw
-            if isinstance(raw, dict) and "result" in raw and "ok" in raw:
-                if not raw.get("ok", True):
+            if isinstance(raw, dict) and "ok" in raw and "result" in raw:
+                if raw.get("ok") is False:
                     continue
                 payload = raw.get("result")
+
+            # Texto plano (task_agent, multi_turn, …)
+            if isinstance(payload, str) and payload.strip():
+                plain_texts.append(payload)
+                continue
 
             if not isinstance(payload, dict):
                 continue
@@ -324,6 +322,7 @@ class ExecutionEngine:
 
             if payload_type == "code_artifact":
                 artifacts.append(payload)
+
             elif payload_type in (
                 "architecture_evidence",
                 "quality_evidence",
@@ -332,25 +331,31 @@ class ExecutionEngine:
                 "project_analysis",
             ):
                 evidence_by_type[payload_type] = payload
-            elif "architecture" in payload and payload_type is None:
-                evidence_by_type["architecture_evidence"] = payload
 
-            # analyze_project puede devolver snapshot sin type
-            if payload_type is None and (
-                "files" in payload or "structure" in payload or "summary" in payload
+            elif "architecture" in payload and payload_type is None:
+                evidence_by_type.setdefault("architecture_evidence", payload)
+
+            elif payload_type is None and (
+                "structure" in payload or "files" in payload or "project" in payload
             ):
                 evidence_by_type.setdefault("project_analysis", payload)
 
-        # Skills: materializar en step.params (sin sobrescribir)
+        # ----------------------------------------------------------
+        # Skills: write_file
+        # ----------------------------------------------------------
         if step.unit_type == "skill" and step.unit_name == "write_file":
             params = dict(step.params or {})
             needs_path = not params.get("path")
             needs_content = params.get("content") is None
 
             if (needs_path or needs_content) and artifacts:
-                file_index = int(params.get("file_index", 0) or 0)
-                files = artifacts[0].get("files") or []
+                file_index = 0
+                try:
+                    file_index = int(params.get("file_index", 0) or 0)
+                except (TypeError, ValueError):
+                    file_index = 0
 
+                files = artifacts[0].get("files") or []
                 if 0 <= file_index < len(files):
                     chosen = files[file_index]
                     if needs_path and chosen.get("path"):
@@ -359,27 +364,56 @@ class ExecutionEngine:
                         params["content"] = chosen["content"]
 
                     step.params = params
-
                     current = step_context.setdefault("execution", {})
                     current_step = current.setdefault("current_step", {})
                     current_step["params"] = dict(params)
 
-        # Agents: materializar evidencia en contexto de primer nivel
+                    logger.info(
+                        "Materializado write_file | path=%s | content_len=%s",
+                        params.get("path"),
+                        len(str(params.get("content", ""))),
+                    )
+                    needs_path = not params.get("path")
+                    needs_content = params.get("content") is None
+
+            # Fallback: texto plano de task_agent / multi_turn
+            if needs_content and plain_texts:
+                params = dict(step.params or {})
+                params["content"] = plain_texts[0]
+                if needs_path and not params.get("path"):
+                    params["path"] = "output.md"
+                step.params = params
+
+                current = step_context.setdefault("execution", {})
+                current_step = current.setdefault("current_step", {})
+                current_step["params"] = dict(params)
+
+                logger.info(
+                    "Materializado write_file desde texto | path=%s | content_len=%s",
+                    params.get("path"),
+                    len(str(params.get("content", ""))),
+                )
+
+        # ----------------------------------------------------------
+        # Agents: evidencia
+        # ----------------------------------------------------------
         if step.unit_type == "agent":
             if "architecture_evidence" in evidence_by_type:
                 evidence = evidence_by_type["architecture_evidence"]
                 step_context["architecture"] = evidence
-                step_context["project_summary"] = evidence.get("summary", "")
+                if not step_context.get("project_summary"):
+                    step_context["project_summary"] = evidence.get("summary", "")
 
             if "project_analysis" in evidence_by_type:
                 analysis = evidence_by_type["project_analysis"]
                 step_context["project_analysis"] = analysis
-                # ArchitectAgent también mira "architecture"
                 if "architecture" not in step_context:
                     step_context["architecture"] = analysis
                 if not step_context.get("project_summary"):
                     step_context["project_summary"] = (
-                        analysis.get("summary", "") if isinstance(analysis, dict) else ""
+                        analysis.get("summary")
+                        or analysis.get("project_summary")
+                        or ""
                     )
 
             for key in (
@@ -392,6 +426,9 @@ class ExecutionEngine:
 
             if artifacts:
                 step_context["code_artifacts"] = artifacts
+
+            if plain_texts:
+                step_context["dependency_text"] = plain_texts[0]
 
     # =========================================================
     # Retry
@@ -416,13 +453,10 @@ class ExecutionEngine:
 
                 if result.is_success or result.is_partial:
                     return result
-
                 if result.is_cancelled:
                     return result
-
                 if not (result.is_failure or result.status == "retry"):
                     return result
-
                 if retries >= max_retries:
                     return result
 
@@ -436,10 +470,8 @@ class ExecutionEngine:
                     retries,
                     max_retries,
                 )
-
                 self._reset_execution_context(plan, context)
                 time.sleep(0.5)
-
         finally:
             self._retry_context.pop(plan.id, None)
 
@@ -454,7 +486,7 @@ class ExecutionEngine:
             step.reset()
 
     # =========================================================
-    # Single execution
+    # Single / multi
     # =========================================================
 
     def _execute_single(
@@ -468,7 +500,6 @@ class ExecutionEngine:
                 error="Plan sin execution_unit_type.",
                 executor=self.name,
             )
-
         if not plan.execution_unit:
             return ExecutionResult.fail(
                 plan_id=plan.id,
@@ -509,10 +540,6 @@ class ExecutionEngine:
         self._store_step_result(plan, context, step, result)
         return result
 
-    # =========================================================
-    # Multi-step execution
-    # =========================================================
-
     def _execute_steps(
         self,
         plan: ExecutionPlan,
@@ -522,7 +549,6 @@ class ExecutionEngine:
             return self._fail(plan, "Plan multi_step sin pasos.")
 
         ordered = self._resolve_order(plan.steps)
-
         results: list[ExecutionResult] = []
         executed_steps: list[ExecutionStep] = []
         errors: list[dict[str, str]] = []
@@ -532,7 +558,6 @@ class ExecutionEngine:
 
             if dependency_failure is not None:
                 step.mark_skipped(dependency_failure)
-
                 result = ExecutionResult.fail(
                     plan_id=plan.id,
                     error=dependency_failure,
@@ -543,7 +568,6 @@ class ExecutionEngine:
                         "unit": step.unit_name,
                     },
                 )
-
                 self._store_step_result(plan, context, step, result)
                 results.append(result)
                 executed_steps.append(step)
@@ -554,7 +578,6 @@ class ExecutionEngine:
                         "error": dependency_failure,
                     }
                 )
-
                 if plan.should_stop_on_error():
                     break
                 continue
@@ -587,12 +610,11 @@ class ExecutionEngine:
             executed_steps.append(step)
 
             if result.is_failure:
-                error = result.error or "Error desconocido"
                 errors.append(
                     {
                         "step": step.description,
                         "unit": step.unit_name,
-                        "error": error,
+                        "error": result.error or "Error desconocido",
                     }
                 )
                 if plan.should_stop_on_error():
@@ -624,7 +646,8 @@ class ExecutionEngine:
             )
 
         detail = "\n".join(
-            f"- {error['step']} ({error['unit']}): {error['error']}" for error in errors
+            f"- {error['step']} ({error['unit']}): {error['error']}"
+            for error in errors
         )
 
         if len(errors) == len(results):
@@ -666,18 +689,23 @@ class ExecutionEngine:
 
         for dependency_id in step.depends_on:
             dependency = completed_steps.get(dependency_id)
-
             if dependency is None:
                 return f"Dependencia no ejecutada: {dependency_id}"
 
             status = dependency.get("status")
-            if status not in ("completed", "success"):
-                return f"Dependencia fallida: {dependency_id}"
+            error = dependency.get("error")
+
+            if status in self.SUCCESS_STATUSES:
+                continue
+            if error is None and dependency.get("result") is not None:
+                continue
+
+            return f"Dependencia fallida: {dependency_id} (status={status})"
 
         return None
 
     # =========================================================
-    # Evaluation
+    # Evaluation / learning
     # =========================================================
 
     def _evaluate(
@@ -687,7 +715,6 @@ class ExecutionEngine:
     ) -> ExecutionResult:
         if not plan.metadata.get("requires_self_critic", False):
             return result
-
         if result.is_failure:
             return result
 
@@ -726,18 +753,9 @@ class ExecutionEngine:
             },
         )
 
-    # =========================================================
-    # Learning
-    # =========================================================
-
-    def _learn(
-        self,
-        plan: ExecutionPlan,
-        result: ExecutionResult,
-    ) -> None:
+    def _learn(self, plan: ExecutionPlan, result: ExecutionResult) -> None:
         if not (result.is_success or result.is_partial):
             return
-
         try:
             self.learner.extract_and_learn(
                 user_query=plan.original_task,
@@ -747,7 +765,7 @@ class ExecutionEngine:
             logger.warning("Learning post-ejecución falló: %s", exc)
 
     # =========================================================
-    # Ordering
+    # Ordering / state / metrics
     # =========================================================
 
     def _resolve_order(
@@ -761,26 +779,20 @@ class ExecutionEngine:
 
         while pending:
             progress = False
-
             for step in pending[:]:
-                missing = [dep for dep in step.depends_on if dep not in available_ids]
+                missing = [
+                    d for d in step.depends_on if d not in available_ids
+                ]
                 if missing:
                     raise ValueError(f"Dependencias inexistentes: {missing}")
-
-                if all(dep in resolved for dep in step.depends_on):
+                if all(d in resolved for d in step.depends_on):
                     ordered.append(step)
                     resolved.add(step.id)
                     pending.remove(step)
                     progress = True
-
             if not progress:
                 raise RuntimeError("Dependencias circulares en el plan.")
-
         return ordered
-
-    # =========================================================
-    # Plan state
-    # =========================================================
 
     def _apply_plan_state(
         self,
@@ -796,10 +808,6 @@ class ExecutionEngine:
         elif result.is_cancelled:
             plan.mark_cancelled()
 
-    # =========================================================
-    # Metrics
-    # =========================================================
-
     def _update_metrics(self, result: ExecutionResult) -> None:
         if result.is_success:
             self.metrics["success"] += 1
@@ -812,10 +820,6 @@ class ExecutionEngine:
 
     def get_metrics(self) -> dict[str, int]:
         return dict(self.metrics)
-
-    # =========================================================
-    # Failure
-    # =========================================================
 
     def _fail(self, plan: ExecutionPlan, error: str) -> ExecutionResult:
         logger.error("Plan %s falló: %s", plan.id, error)

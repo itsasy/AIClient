@@ -9,6 +9,7 @@ from flask import Flask, abort, jsonify, request
 from core.config import Config
 from core.document_ingestor import DocumentIngestor
 from core.engram_memory import EngramMemory
+from core.commands.router import CommandRouter
 from runtime.execution_engine import ExecutionEngine
 from core.spec_manager import SpecManager
 from core.standards_learner import StandardsLearner
@@ -16,7 +17,7 @@ from core.standards_learner import StandardsLearner
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-engine = ExecutionEngine()
+engine = ExecutionEngine(command_router=CommandRouter())
 learner = StandardsLearner()
 engram_memory = EngramMemory()
 spec_manager = SpecManager()
