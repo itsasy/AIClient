@@ -57,7 +57,7 @@ class CoderAgent(Agent):
         )
         context["coding_task"] = task
 
-        raw = LLMRouter.generate(plan=plan, context=context)
+        raw = LLMRouter().generate(plan=plan, context=context)
         artifact = self._parse_artifact(
             raw=raw,
             fallback_paths=requested_paths,
