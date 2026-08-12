@@ -8,59 +8,42 @@ from core.execution_plan import ExecutionPlan
 
 class TestWorkflow(BaseWorkflow):
     """
-    /test
-    Ejecuta las pruebas del proyecto.
+    /test [comando]
+
+    Ejecuta la suite de tests del proyecto (o el comando indicado).
+    Por defecto: pytest -q
     """
 
     name = "test"
-    description = "Ejecuta las pruebas del proyecto."
+    description = "Ejecuta tests del proyecto."
 
-    def execute(self, arguments: str, context: dict[str, Any] | None = None) -> ExecutionPlan:
+    def execute(
+        self,
+        arguments: str,
+        context: dict[str, Any] | None = None,
+    ) -> ExecutionPlan:
+        cmd = (arguments or "").strip() or "pytest -q"
+
         plan = ExecutionPlan(
-            original_task=f"/test {arguments}" if arguments else "/test",
+            original_task=f"/test {cmd}".strip(),
             intent="testing",
             intent_category="testing",
-            objective="Ejecutar pruebas",
-            execution_mode="multi_step",
+            objective=f"Ejecutar tests: {cmd}",
+            execution_mode="single",
         )
 
-        # Paso 1: analizar qué pruebas ejecutar
-        plan.add_step(
-            description="Analizar qué pruebas ejecutar",
-            unit_type="agent",
-            unit_name="architect",
-            params={
-                "task": arguments or "Ejecutar pruebas del proyecto",
-            },
-            expected_output="Plan de pruebas.",
-            metadata={"stage": "test_analysis"},
-        )
+        plan.context_requirements["project"] = False
+        plan.governance["allow_shell"] = True
 
-        # Paso 2: ejecutar pruebas
-        plan.add_step(
-            description="Ejecutar pruebas",
+        plan.set_execution_unit(
             unit_type="skill",
             unit_name="shell",
-            params={
-                "command": self._get_test_command(arguments),
-            },
-            expected_output="Resultado de las pruebas.",
-            metadata={"stage": "test_execution"},
+            params={"command": cmd},
         )
 
-        if len(plan.steps) >= 2:
-            plan.steps[1].depends_on.append(plan.steps[0].id)
-
-        plan.governance["allow_shell"] = True
-        plan.context_requirements["project"] = True
-        plan.metadata["requires_self_critic"] = True
-
+        plan.metadata["workflow"] = "test"
         return plan
 
     def validate(self, arguments: str) -> tuple[bool, str]:
+        # /test sin args → pytest por defecto
         return True, ""
-
-    def _get_test_command(self, arguments: str) -> str:
-        if arguments:
-            return arguments.strip()
-        return "echo 'No hay pruebas configuradas'"

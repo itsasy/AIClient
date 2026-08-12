@@ -9,21 +9,6 @@ from core.intent.models import IntentResult
 class IntentDetectors:
     """
     Detectores deterministas de intención.
-
-    Responsabilidades:
-
-    - Normalizar la consulta.
-    - Detectar patrones.
-    - Extraer entidades.
-    - Crear IntentResult.
-
-    No:
-
-    - ejecutan acciones;
-    - construyen ExecutionPlans;
-    - seleccionan agentes;
-    - seleccionan skills;
-    - gestionan contexto.
     """
 
     name = "intent_detectors"
@@ -49,6 +34,8 @@ class IntentDetectors:
             cls.docker,
             cls.command_execution,
             cls.file_creation,
+            cls.module_scaffold,
+            cls.ui_scaffold,
             cls.refactor,
             cls.debug,
             cls.testing,
@@ -62,11 +49,7 @@ class IntentDetectors:
         )
 
         for detector in detectors:
-            result = detector(
-                query,
-                normalized,
-            )
-
+            result = detector(query, normalized)
             if result:
                 return result
 
@@ -77,25 +60,11 @@ class IntentDetectors:
     # =========================================================
 
     @staticmethod
-    def normalize(
-        text: str,
-    ) -> str:
-
+    def normalize(text: str) -> str:
         if not text:
             return ""
 
-        value = (
-            unicodedata.normalize(
-                "NFKD",
-                text,
-            )
-            .encode(
-                "ascii",
-                "ignore",
-            )
-            .decode()
-        )
-
+        value = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
         return " ".join(value.lower().strip().split())
 
     # =========================================================
@@ -110,35 +79,17 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         framework_pattern = (
-            r"\b("
-            r"laravel|"
-            r"react|"
-            r"vue|"
-            r"django|"
-            r"nestjs|"
-            r"spring|"
-            r"fastapi|"
-            r"nextjs|"
-            r"next"
-            r")\b"
+            r"\b(" r"laravel|react|vue|django|nestjs|spring|fastapi|nextjs|next" r")\b"
         )
-
         creation_pattern = (
             r"\b("
-            r"crear|"
-            r"crea|"
-            r"nuevo|"
-            r"nueva|"
-            r"generar|"
-            r"genera|"
-            r"crear un proyecto|"
-            r"crear proyecto"
+            r"crear|crea|nuevo|nueva|generar|genera|"
+            r"crear un proyecto|crear proyecto"
             r")\b"
         )
 
         if not re.search(framework_pattern, q):
             return None
-
         if not re.search(creation_pattern, q):
             return None
 
@@ -153,10 +104,7 @@ class IntentDetectors:
                 "name": cls.project_name(query),
                 "task": query,
             },
-            signals=[
-                "framework_detected",
-                "creation_keyword",
-            ],
+            signals=["framework_detected", "creation_keyword"],
             original_query=query,
         )
 
@@ -172,24 +120,13 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         analysis = re.search(
-            r"\b("
-            r"analiza|"
-            r"analizar|"
-            r"revisa|"
-            r"revisar|"
-            r"inspecciona|"
-            r"inspeccionar|"
-            r"evalua|"
-            r"evaluar"
-            r")\b",
+            r"\b(analiza|analizar|revisa|revisar|inspecciona|inspeccionar|evalua|evaluar)\b",
             q,
         )
-
         target = re.search(
-            r"\b(" r"proyecto|" r"repo|" r"repositorio|" r"codigo|" r"arquitectura" r")\b",
+            r"\b(proyecto|repo|repositorio|codigo|arquitectura)\b",
             q,
         )
-
         if not analysis or not target:
             return None
 
@@ -199,13 +136,8 @@ class IntentDetectors:
             category="project",
             complexity="high",
             confidence=0.92,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "analysis_keyword",
-                "project_target",
-            ],
+            entities={"task": query},
+            signals=["analysis_keyword", "project_target"],
             original_query=query,
         )
 
@@ -229,12 +161,8 @@ class IntentDetectors:
             category="infrastructure",
             complexity="normal",
             confidence=0.95,
-            entities={
-                "command": query,
-            },
-            signals=[
-                "docker_keyword",
-            ],
+            entities={"command": query},
+            signals=["docker_keyword"],
             original_query=query,
         )
 
@@ -250,7 +178,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"ejecuta|" r"ejecutar|" r"run|" r"corre|" r"correr|" r"lanza|" r"lanzar" r")\b",
+            r"\b(ejecuta|ejecutar|run|corre|correr|lanza|lanzar)\b",
             q,
         ):
             return None
@@ -260,12 +188,8 @@ class IntentDetectors:
             domain="execution",
             category="command",
             confidence=0.90,
-            entities={
-                "command": query,
-            },
-            signals=[
-                "command_keyword",
-            ],
+            entities={"command": query},
+            signals=["command_keyword"],
             original_query=query,
         )
 
@@ -287,19 +211,10 @@ class IntentDetectors:
         if not creation:
             return None
 
-        file_keyword = re.search(
-            r"\b(archivo|fichero|file)\b",
-            q,
-        )
-
-        extension = re.search(
-            r"\.\w{1,10}\b",
-            q,
-        )
-
-        # Path traversal o ruta absoluta / relativa sospechosa
+        file_keyword = re.search(r"\b(archivo|fichero|file)\b", q)
+        extension = re.search(r"\.\w{1,10}\b", q)
         traversal = re.search(
-            r"(\.\./)+[^\s\"']+|" r"(?:^|\s)/[^\s\"']+|" r"(?:^|\s)\.\./[^\s\"']+",
+            r"(\.\./)+[^\s\"']+|(?:^|\s)/[^\s\"']+|(?:^|\s)\.\./[^\s\"']+",
             query,
         )
 
@@ -310,7 +225,6 @@ class IntentDetectors:
         if not path and traversal:
             path = traversal.group(0).strip()
         if not path:
-            # fallback: primer token tras el verbo de creación
             m = re.search(
                 r"\b(?:crea|crear|genera|generar|escribe|escribir)\s+"
                 r"(?:el\s+|un\s+|una\s+|el\s+archivo\s+)?"
@@ -344,7 +258,95 @@ class IntentDetectors:
         )
 
     # =========================================================
-    # Refactor
+    # Module scaffold
+    # =========================================================
+
+    @classmethod
+    def module_scaffold(
+        cls,
+        query: str,
+        q: str,
+    ) -> IntentResult | None:
+
+        if not re.search(
+            r"\b("
+            r"scaffold|esqueleto|"
+            r"generar modulo|generar módulo|genera modulo|genera módulo|"
+            r"crear modulo|crear módulo|crea modulo|crea módulo"
+            r")\b",
+            q,
+        ):
+            return None
+
+        module = None
+        m = re.search(
+            r"\b("
+            r"auth|pos|catalog|catalogo|catálogo|cash|caja|"
+            r"payments|pagos|pago|invoicing|facturacion|facturación|"
+            r"delivery|reports|reportes"
+            r")\b",
+            q,
+        )
+        if m:
+            raw = m.group(1)
+            aliases = {
+                "catalogo": "catalog",
+                "catálogo": "catalog",
+                "caja": "cash",
+                "pagos": "payments",
+                "pago": "payments",
+                "facturacion": "invoicing",
+                "facturación": "invoicing",
+                "reportes": "reports",
+            }
+            module = aliases.get(raw, raw)
+
+        return IntentResult(
+            intent="module_scaffold",
+            domain="project",
+            category="development",
+            confidence=0.9,
+            entities={
+                "module": module or "",
+                "task": query,
+            },
+            signals=["module_scaffold"],
+            original_query=query,
+        )
+
+    # =========================================================
+    # UI scaffold
+    # =========================================================
+
+    @classmethod
+    def ui_scaffold(
+        cls,
+        query: str,
+        q: str,
+    ) -> IntentResult | None:
+
+        if not re.search(
+            r"\b("
+            r"ui shell|ui-shell|scaffold ui|"
+            r"generar ui|genera ui|"
+            r"login pos|dashboard pos|interfaz pos"
+            r")\b",
+            q,
+        ):
+            return None
+
+        return IntentResult(
+            intent="ui_scaffold",
+            domain="frontend",
+            category="development",
+            confidence=0.9,
+            entities={"task": query},
+            signals=["ui_scaffold"],
+            original_query=query,
+        )
+
+    # =========================================================
+    # Refactor / debug / testing / spec / planning / docs
     # =========================================================
 
     @classmethod
@@ -356,15 +358,8 @@ class IntentDetectors:
 
         if not re.search(
             r"\b("
-            r"refactor|"
-            r"refactoriza|"
-            r"refactorizar|"
-            r"optimiza|"
-            r"optimizar|"
-            r"reestructura|"
-            r"reestructurar|"
-            r"limpia|"
-            r"limpiar"
+            r"refactor|refactoriza|refactorizar|"
+            r"optimiza|optimizar|reestructura|reestructurar|limpia|limpiar"
             r")\b",
             q,
         ):
@@ -376,18 +371,10 @@ class IntentDetectors:
             category="maintenance",
             complexity="high",
             confidence=0.92,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "refactor_keyword",
-            ],
+            entities={"task": query},
+            signals=["refactor_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Debug
-    # =========================================================
 
     @classmethod
     def debug(
@@ -397,16 +384,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b("
-            r"error|"
-            r"bug|"
-            r"debug|"
-            r"falla|"
-            r"fallo|"
-            r"problema|"
-            r"excepcion|"
-            r"exception"
-            r")\b",
+            r"\b(error|bug|debug|falla|fallo|problema|excepcion|exception)\b",
             q,
         ):
             return None
@@ -417,18 +395,10 @@ class IntentDetectors:
             category="maintenance",
             complexity="normal",
             confidence=0.88,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "debug_keyword",
-            ],
+            entities={"task": query},
+            signals=["debug_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Testing
-    # =========================================================
 
     @classmethod
     def testing(
@@ -438,16 +408,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b("
-            r"test|"
-            r"testing|"
-            r"tests|"
-            r"prueba|"
-            r"pruebas|"
-            r"unitario|"
-            r"unitaria|"
-            r"integracion"
-            r")\b",
+            r"\b(test|testing|tests|prueba|pruebas|unitario|unitaria|integracion)\b",
             q,
         ):
             return None
@@ -457,18 +418,10 @@ class IntentDetectors:
             domain="code",
             category="testing",
             confidence=0.88,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "testing_keyword",
-            ],
+            entities={"task": query},
+            signals=["testing_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Specification
-    # =========================================================
 
     @classmethod
     def spec(
@@ -478,7 +431,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"spec|" r"specification|" r"especificacion|" r"especificación" r")\b",
+            r"\b(spec|specification|especificacion|especificación)\b",
             q,
         ):
             return None
@@ -489,18 +442,10 @@ class IntentDetectors:
             category="specification",
             complexity="high",
             confidence=0.92,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "spec_keyword",
-            ],
+            entities={"task": query},
+            signals=["spec_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Planning
-    # =========================================================
 
     @classmethod
     def planning(
@@ -510,7 +455,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"plan|" r"planifica|" r"planificar|" r"roadmap|" r"estrategia" r")\b",
+            r"\b(plan|planifica|planificar|roadmap|estrategia)\b",
             q,
         ):
             return None
@@ -521,18 +466,10 @@ class IntentDetectors:
             category="strategy",
             complexity="high",
             confidence=0.90,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "planning_keyword",
-            ],
+            entities={"task": query},
+            signals=["planning_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Documentation
-    # =========================================================
 
     @classmethod
     def documentation(
@@ -542,7 +479,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"readme|" r"documenta|" r"documentar|" r"documentacion|" r"manual" r")\b",
+            r"\b(readme|documenta|documentar|documentacion|manual)\b",
             q,
         ):
             return None
@@ -552,18 +489,10 @@ class IntentDetectors:
             domain="documentation",
             category="generation",
             confidence=0.90,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "documentation_keyword",
-            ],
+            entities={"task": query},
+            signals=["documentation_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Consolidation
-    # =========================================================
 
     @classmethod
     def consolidation(
@@ -573,7 +502,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"consolidate|" r"consolidacion|" r"consolidación|" r"consolidar" r")\b",
+            r"\b(consolidate|consolidacion|consolidación|consolidar)\b",
             q,
         ):
             return None
@@ -583,18 +512,10 @@ class IntentDetectors:
             domain="memory",
             category="maintenance",
             confidence=0.90,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "consolidation_keyword",
-            ],
+            entities={"task": query},
+            signals=["consolidation_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Rollback
-    # =========================================================
 
     @classmethod
     def rollback(
@@ -604,7 +525,7 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         if not re.search(
-            r"\b(" r"rollback|" r"revertir|" r"revert|" r"deshacer" r")\b",
+            r"\b(rollback|revertir|revert|deshacer)\b",
             q,
         ):
             return None
@@ -614,18 +535,10 @@ class IntentDetectors:
             domain="memory",
             category="maintenance",
             confidence=0.90,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "rollback_keyword",
-            ],
+            entities={"task": query},
+            signals=["rollback_keyword"],
             original_query=query,
         )
-
-    # =========================================================
-    # Metrics
-    # =========================================================
 
     @classmethod
     def analyze_metrics(
@@ -634,16 +547,11 @@ class IntentDetectors:
         q: str,
     ) -> IntentResult | None:
 
-        analyze = re.search(
-            r"\b(" r"analiza|" r"analizar|" r"analyze|" r"analizar" r")\b",
-            q,
-        )
-
+        analyze = re.search(r"\b(analiza|analizar|analyze)\b", q)
         metrics = re.search(
-            r"\b(" r"metricas|" r"métricas|" r"metrics|" r"rendimiento|" r"performance" r")\b",
+            r"\b(metricas|métricas|metrics|rendimiento|performance)\b",
             q,
         )
-
         if not analyze or not metrics:
             return None
 
@@ -652,13 +560,8 @@ class IntentDetectors:
             domain="analytics",
             category="analysis",
             confidence=0.88,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "metrics_keyword",
-                "analysis_keyword",
-            ],
+            entities={"task": query},
+            signals=["metrics_keyword", "analysis_keyword"],
             original_query=query,
         )
 
@@ -674,28 +577,16 @@ class IntentDetectors:
     ) -> IntentResult | None:
 
         creation = re.search(
-            r"\b(" r"crea|" r"crear|" r"genera|" r"generar|" r"implementa|" r"implementar" r")\b",
+            r"\b(crea|crear|genera|generar|implementa|implementar)\b",
             q,
         )
-
         code_target = re.search(
             r"\b("
-            r"funcion|"
-            r"función|"
-            r"clase|"
-            r"componente|"
-            r"script|"
-            r"endpoint|"
-            r"servicio|"
-            r"controller|"
-            r"controlador|"
-            r"middleware|"
-            r"repository|"
-            r"repositorio"
+            r"funcion|función|clase|componente|script|endpoint|servicio|"
+            r"controller|controlador|middleware|repository|repositorio"
             r")\b",
             q,
         )
-
         if not creation or not code_target:
             return None
 
@@ -708,9 +599,7 @@ class IntentDetectors:
                 "task": query,
                 "language": cls.language(q),
             },
-            signals=[
-                "code_keyword",
-            ],
+            signals=["code_keyword"],
             original_query=query,
         )
 
@@ -720,7 +609,6 @@ class IntentDetectors:
 
     @staticmethod
     def framework(q: str) -> str:
-
         frameworks = (
             "laravel",
             "react",
@@ -732,79 +620,44 @@ class IntentDetectors:
             "nextjs",
             "next",
         )
-
         for framework in frameworks:
-            if re.search(
-                rf"\b{re.escape(framework)}\b",
-                q,
-            ):
+            if re.search(rf"\b{re.escape(framework)}\b", q):
                 return framework
-
         return "unknown"
 
     @staticmethod
     def language(q: str) -> str:
-
         if re.search(r"\bpython\b", q):
             return "python"
-
         if re.search(r"\b(php|laravel)\b", q):
             return "php"
-
-        if re.search(
-            r"\b(typescript|ts)\b",
-            q,
-        ):
+        if re.search(r"\b(typescript|ts)\b", q):
             return "typescript"
-
-        if re.search(
-            r"\b(javascript|js)\b",
-            q,
-        ):
+        if re.search(r"\b(javascript|js)\b", q):
             return "javascript"
-
-        if re.search(
-            r"\b(java|spring)\b",
-            q,
-        ):
+        if re.search(r"\b(java|spring)\b", q):
             return "java"
-
         return "unknown"
 
     @staticmethod
-    def project_name(
-        query: str,
-    ) -> str:
-
+    def project_name(query: str) -> str:
         patterns = (
             r"(?:llamado|llamada|nombre)\s+([A-Za-z0-9_-]+)",
             r"(?:proyecto)\s+([A-Za-z0-9_-]+)",
         )
-
         for pattern in patterns:
-            match = re.search(
-                pattern,
-                query,
-                re.IGNORECASE,
-            )
-
+            match = re.search(pattern, query, re.IGNORECASE)
             if match:
                 return match.group(1)
-
         return "mi_proyecto"
 
     @staticmethod
-    def file(
-        query: str,
-    ) -> str:
-
+    def file(query: str) -> str:
         match = re.search(
             r"([A-Za-z0-9_.\\/-]+\.(?:py|php|js|ts|tsx|jsx|json|md|html|css|yaml|yml|toml))\b",
             query,
             re.IGNORECASE,
         )
-
         if match:
             return match.group(1)
-
         return "archivo.txt"

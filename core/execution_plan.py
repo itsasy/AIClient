@@ -76,12 +76,11 @@ class ExecutionPlan:
     DEFAULT_CONTEXT_REQUIREMENTS = {
         "project": False,
         "engram": False,
+        "memory": False,
         "obsidian": False,
         "gentleman": False,
         "standards": False,
         "documents": False,
-        "reference_material": False,
-        "memory": False,
         "spec": False,
         "swarmforge": False,
     }

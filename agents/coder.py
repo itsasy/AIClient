@@ -15,30 +15,21 @@ logger = logging.getLogger(__name__)
 
 class CoderAgent(Agent):
     """
-    Genera artefactos de código.
+    Genera código y lo normaliza a code_artifact.
 
     Responsabilidad:
-        - Razonar sobre la tarea.
-        - Producir contenido listo para ser escrito por Skills.
-        - NO escribir archivos.
-        - NO ejecutar shell.
-
-    Contrato de salida preferido:
-        {
-          "ok": true,
-          "type": "code_artifact",
-          "files": [{"path": "...", "content": "..."}],
-          "notes": "...",
-          "error": null
-        }
+        razonar código → JSON tipado (code_artifact)
+        no escribe disco (write_file / skills lo hacen)
     """
 
     name = "coder"
-    role = "Generador e Implementador de Código"
-    version = "2.2"
+    role = "Ingeniero de software"
+    version = "2.1"
+    aliases = ("code", "developer")
     capabilities = (
         "code_generation",
-        "implementation",
+        "code_artifact",
+        "ui_generation",
     )
 
     def process(
@@ -46,242 +37,144 @@ class CoderAgent(Agent):
         plan: ExecutionPlan,
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         context = dict(context or {})
         params = dict(step.params or {})
+        task = str(params.get("task") or plan.objective or plan.original_task)
 
-        target_path = (
-            params.get("path")
-            or plan.params.get("path")
-            or self._guess_path_from_task(plan.original_task or "")
-            or ""
+        # Pistas de paths pedidos por el plan (ui-shell, file_creation, …)
+        requested_paths = self._collect_requested_paths(plan, step)
+        if requested_paths:
+            context["requested_paths"] = requested_paths
+
+        context.setdefault("agent_role", self.role)
+        context.setdefault(
+            "requested_output",
+            (
+                "Responde SOLO con JSON code_artifact: "
+                '{"type":"code_artifact","files":[{"path":"...","content":"..."}]}'
+            ),
         )
+        context["coding_task"] = task
 
-        agent_context = {
-            **context,
-            "agent_role": {
-                "name": self.name,
-                "responsibility": (
-                    "Implementar soluciones técnicas siguiendo el ExecutionPlan. "
-                    "Debes devolver ÚNICAMENTE un JSON válido con los archivos "
-                    "a crear o modificar. Sin markdown. Sin explicaciones fuera del JSON."
-                ),
-                "priorities": [
-                    "Código limpio y completo",
-                    "Buenas prácticas",
-                    "Seguridad",
-                    "Legibilidad",
-                    "Compatibilidad con la tarea solicitada",
-                ],
-            },
-            "requested_output": {
-                "format": "json_only",
-                "schema": {
-                    "type": "code_artifact",
-                    "files": [
-                        {
-                            "path": target_path or "ruta/relativa.ext",
-                            "content": "contenido completo del archivo",
-                        }
-                    ],
-                    "notes": "opcional",
-                },
-                "rules": [
-                    "Devuelve ÚNICAMENTE JSON válido.",
-                    "No uses bloques ``` ni markdown.",
-                    "No inventes rutas fuera del proyecto.",
-                    "Cada 'content' debe ser el archivo completo, listo para escribir.",
-                    (
-                        f'Si la tarea pide un archivo concreto, usa path="{target_path}".'
-                        if target_path
-                        else "Incluye un path relativo razonable."
-                    ),
-                ],
-            },
-            "coding_task": {
-                "task": plan.original_task or params.get("task", ""),
-                "suggested_path": target_path,
-            },
-        }
-
-        # Evitar que el prompt se hinche con snapshots enormes irrelevantes
-        for heavy_key in (
-            "project",
-            "project_analysis",
-            "architecture",
-            "documents",
-            "obsidian",
-            "swarmforge",
-        ):
-            agent_context.pop(heavy_key, None)
-
-        raw = LLMRouter().generate(
-            plan=plan,
-            context=agent_context,
+        raw = LLMRouter.generate(plan=plan, context=context)
+        artifact = self._parse_artifact(
+            raw=raw,
+            fallback_paths=requested_paths,
+            fallback_path=params.get("path"),
         )
+        return artifact
 
-        artifact = self._parse_artifact(raw, fallback_path=target_path)
-
-        if artifact is None:
-            logger.warning(
-                "CoderAgent no pudo construir code_artifact. " "raw_chars=%s path=%s",
-                len(raw or ""),
-                target_path,
-            )
-            return {
-                "ok": False,
-                "type": "code_artifact",
-                "files": [],
-                "raw": raw,
-                "error": "Respuesta del modelo no es un code_artifact válido.",
-            }
-
-        return {
-            "ok": True,
-            "type": "code_artifact",
-            "files": artifact["files"],
-            "notes": artifact.get("notes", ""),
-            "error": None,
-        }
-
-    def validate_plan(self, plan: ExecutionPlan) -> list[str]:
-        errors: list[str] = []
-        if not plan.params.get("task") and not plan.original_task:
-            errors.append("CoderAgent requiere una tarea de implementación.")
-        return errors
-
-    # =========================================================
-    # Parsing
-    # =========================================================
+    def _collect_requested_paths(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+    ) -> list[str]:
+        paths: list[str] = []
+        # write_file dependientes de este step
+        for other in plan.steps:
+            if step.id in (other.depends_on or []):
+                if other.unit_name == "write_file":
+                    p = (other.params or {}).get("path")
+                    if p:
+                        paths.append(str(p))
+        # path explícito en params del coder
+        if (step.params or {}).get("path"):
+            paths.insert(0, str(step.params["path"]))
+        # dedupe preservando orden
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                ordered.append(p)
+        return ordered
 
     def _parse_artifact(
         self,
-        raw: str,
-        fallback_path: str = "",
-    ) -> dict[str, Any] | None:
-        if not raw or not isinstance(raw, str):
-            return None
+        raw: Any,
+        fallback_paths: list[str] | None = None,
+        fallback_path: str | None = None,
+    ) -> dict[str, Any]:
+        text = raw if isinstance(raw, str) else json.dumps(raw, ensure_ascii=False)
+        text = text.strip()
 
-        text = raw.strip()
-
-        # Quitar fences accidentales
-        if "```" in text:
-            text = re.sub(r"^```(?:json|html|python|javascript|css)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
-            text = text.strip()
+        # Extraer bloque JSON si viene con markdown
+        fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+        if fenced:
+            text = fenced.group(1).strip()
 
         data = self._try_load_json(text)
+        if data is None:
+            # Intento: primer {...} balanceado superficial
+            m = re.search(r"\{[\s\S]*\}", text)
+            if m:
+                data = self._try_load_json(m.group(0))
 
-        if data is not None:
-            files = self._normalize_files(data, fallback_path=fallback_path)
-            if files:
-                return {
-                    "type": "code_artifact",
-                    "files": files,
-                    "notes": str(data.get("notes", "") or ""),
-                }
+        if isinstance(data, dict):
+            normalized = self._normalize_dict(data)
+            if normalized is not None:
+                return normalized
 
-        # Fallback: texto libre + path conocido → un solo archivo
-        if fallback_path and text and not text.startswith("{"):
-            logger.info(
-                "CoderAgent fallback texto libre → code_artifact | path=%s",
-                fallback_path,
-            )
-            return {
-                "type": "code_artifact",
-                "files": [
-                    {
-                        "path": fallback_path,
-                        "content": text,
-                    }
-                ],
-                "notes": "fallback_raw_text",
-            }
-
-        # Último intento: extraer HTML/código entre delimitadores obvios
-        html_match = re.search(
-            r"(<!DOCTYPE html>[\s\S]*?</html>)",
-            raw,
-            re.IGNORECASE,
+        # Fallback: texto libre → un archivo
+        logger.warning("CoderAgent no pudo parsear JSON. Fallback texto libre.")
+        path = (
+            (fallback_paths[0] if fallback_paths else None)
+            or fallback_path
+            or "src/generated/output.txt"
         )
-        if html_match and fallback_path:
-            return {
-                "type": "code_artifact",
-                "files": [
-                    {
-                        "path": fallback_path,
-                        "content": html_match.group(1).strip(),
-                    }
-                ],
-                "notes": "fallback_html_extract",
-            }
-
-        return None
-
-    @staticmethod
-    def _try_load_json(text: str) -> dict[str, Any] | None:
-        try:
-            data = json.loads(text)
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            pass
-
-        match = re.search(r"\{[\s\S]*\}", text)
-        if not match:
-            return None
-
-        try:
-            data = json.loads(match.group(0))
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            return None
-
-        return None
-
-    @staticmethod
-    def _normalize_files(
-        data: dict[str, Any],
-        fallback_path: str = "",
-    ) -> list[dict[str, str]]:
-        files_raw = data.get("files")
-
-        # Formas alternativas que a veces devuelve el modelo
-        if files_raw is None and "path" in data and "content" in data:
-            files_raw = [
+        return {
+            "type": "code_artifact",
+            "files": [
                 {
-                    "path": data.get("path"),
-                    "content": data.get("content"),
+                    "path": path,
+                    "content": text if isinstance(raw, str) else str(raw),
                 }
-            ]
+            ],
+        }
 
-        if not isinstance(files_raw, list):
-            return []
+    def _try_load_json(self, text: str) -> Any | None:
+        try:
+            return json.loads(text)
+        except Exception:
+            return None
 
-        normalized: list[dict[str, str]] = []
-        for item in files_raw:
-            if not isinstance(item, dict):
-                continue
-            path = item.get("path") or fallback_path
-            content = item.get("content")
-            if isinstance(path, str) and path.strip() and content is not None:
-                normalized.append(
+    def _normalize_dict(self, data: dict[str, Any]) -> dict[str, Any] | None:
+        # Ya es code_artifact
+        if data.get("type") == "code_artifact" and isinstance(data.get("files"), list):
+            files = []
+            for item in data["files"]:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("path")
+                content = item.get("content")
+                if path is None:
+                    continue
+                files.append(
                     {
-                        "path": path.strip(),
-                        "content": str(content),
+                        "path": str(path),
+                        "content": "" if content is None else str(content),
                     }
                 )
-        return normalized
+            if files:
+                return {"type": "code_artifact", "files": files}
 
-    @staticmethod
-    def _guess_path_from_task(task: str) -> str:
-        if not task:
-            return ""
-        match = re.search(
-            r"\b([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\b",
-            task,
-        )
-        if match:
-            return match.group(1).strip()
-        return ""
+        # { "files": [ ... ] } sin type
+        if isinstance(data.get("files"), list):
+            data = dict(data)
+            data["type"] = "code_artifact"
+            return self._normalize_dict(data)
+
+        # { "path", "content" } simple
+        if data.get("path") is not None and "content" in data:
+            return {
+                "type": "code_artifact",
+                "files": [
+                    {
+                        "path": str(data["path"]),
+                        "content": str(data.get("content") or ""),
+                    }
+                ],
+            }
+
+        return None

@@ -16,6 +16,7 @@ class ContextRegistry:
     - Registrar providers.
     - Resolver providers.
     - Gestionar aliases.
+    - Mantener instancias de providers.
     - Exponer catálogo.
 
     No:
@@ -25,11 +26,15 @@ class ContextRegistry:
     - Decide qué contexto requiere un plan.
     """
 
-    def __init__(self):
-
+    def __init__(self) -> None:
         self._providers: dict[
             str,
             type[BaseContextProvider],
+        ] = {}
+
+        self._instances: dict[
+            str,
+            BaseContextProvider,
         ] = {}
 
         self._aliases: dict[
@@ -41,22 +46,14 @@ class ContextRegistry:
     # Normalization
     # ==================================================
 
-    def _normalize(
-        self,
-        key: str,
-    ) -> str:
-
-        if not key:
-
+    @staticmethod
+    def _normalize(key: str) -> str:
+        if not isinstance(key, str):
             return ""
 
         return key.lower().strip().replace("-", "_").replace(" ", "_")
 
-    def _resolve(
-        self,
-        key: str,
-    ) -> str:
-
+    def _resolve(self, key: str) -> str:
         normalized = self._normalize(key)
 
         return self._aliases.get(
@@ -74,32 +71,33 @@ class ContextRegistry:
         aliases: list[str] | None = None,
         overwrite: bool = False,
     ) -> None:
+        if not isinstance(provider, type):
+            raise TypeError("ContextRegistry.register requiere una clase provider.")
 
-        if not provider:
-
-            raise ValueError("Provider inválido")
+        if not issubclass(provider, BaseContextProvider):
+            raise TypeError("El provider debe heredar de BaseContextProvider.")
 
         key = self._normalize(provider.key)
 
         if not key:
-
-            raise ValueError("ContextProvider requiere key")
+            raise ValueError("ContextProvider requiere key.")
 
         if key in self._providers and not overwrite:
-
             raise ValueError(f"Provider ya registrado: {key}")
 
         self._providers[key] = provider
 
+        # Invalidar instancia anterior si se sobrescribe.
+        self._instances.pop(key, None)
+
         if aliases:
-
             for alias in aliases:
-
                 alias_key = self._normalize(alias)
 
-                if alias_key:
+                if not alias_key:
+                    continue
 
-                    self._aliases[alias_key] = key
+                self._aliases[alias_key] = key
 
         logger.info(
             "Context provider registrado=%s",
@@ -114,45 +112,59 @@ class ContextRegistry:
         self,
         key: str,
     ) -> BaseContextProvider | None:
-
         resolved = self._resolve(key)
 
-        provider = self._providers.get(resolved)
+        provider_class = self._providers.get(resolved)
 
-        if provider is None:
-
+        if provider_class is None:
             return None
 
-        return provider()
+        instance = self._instances.get(resolved)
+
+        if instance is not None:
+            return instance
+
+        instance = provider_class()
+
+        self._instances[resolved] = instance
+
+        return instance
 
     def has(
         self,
         key: str,
     ) -> bool:
-
         return self._resolve(key) in self._providers
 
     # ==================================================
     # Information
     # ==================================================
 
-    def list(
-        self,
-    ) -> list[str]:
-
+    def list(self) -> list[str]:
         return sorted(self._providers.keys())
 
-    def aliases(
-        self,
-    ) -> dict[str, str]:
-
+    def aliases(self) -> dict[str, str]:
         return self._aliases.copy()
 
-    def count(
-        self,
-    ) -> int:
-
+    def count(self) -> int:
         return len(self._providers)
+
+    def metadata(self) -> list[dict]:
+        """
+        Devuelve el catálogo descriptivo de providers registrados.
+        """
+
+        result = []
+
+        for key in self.list():
+            provider = self.get(key)
+
+            if provider is None:
+                continue
+
+            result.append(provider.metadata())
+
+        return result
 
     # ==================================================
     # Management
@@ -162,7 +174,6 @@ class ContextRegistry:
         self,
         key: str,
     ) -> None:
-
         resolved = self._resolve(key)
 
         self._providers.pop(
@@ -170,19 +181,20 @@ class ContextRegistry:
             None,
         )
 
+        self._instances.pop(
+            resolved,
+            None,
+        )
+
         aliases = [alias for alias, target in self._aliases.items() if target == resolved]
 
         for alias in aliases:
-
             self._aliases.pop(
                 alias,
                 None,
             )
 
-    def clear(
-        self,
-    ) -> None:
-
+    def clear(self) -> None:
         self._providers.clear()
-
+        self._instances.clear()
         self._aliases.clear()

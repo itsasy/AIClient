@@ -35,6 +35,8 @@ class SkillLoader:
         "skills.scraping.job_scraper",
         "skills.files.write_file",
         "skills.projects.create_project",
+        "skills.projects.scaffold_module",
+        "skills.projects.scaffold_ui_shell",
         "skills.audit.security_audit",
         "skills.audit.performance_audit",
         "skills.audit.quality_audit",

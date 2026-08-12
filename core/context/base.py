@@ -10,17 +10,19 @@ class BaseContextProvider(ABC):
     """
     Contrato base para proveedores de contexto.
 
-    Un provider:
-        - Tiene una key única.
-        - Carga información contextual.
-        - Devuelve exclusivamente sus propios datos.
+    Responsabilidades:
+    - Identificar el provider mediante `key`.
+    - Exponer metadata descriptiva.
+    - Cargar y devolver su propio contexto.
 
-    Un provider NO:
-        - Modifica ExecutionPlan.
-        - Ejecuta Agents.
-        - Ejecuta Skills.
-        - Construye prompts.
-        - Modifica directamente el contexto acumulado.
+    El provider NO debe:
+    - mutar el contexto acumulado;
+    - asignar context[key];
+    - ejecutar otros providers;
+    - controlar el lifecycle del contexto.
+
+    ContextManager es responsable de integrar el resultado
+    dentro del contexto acumulado.
     """
 
     key: ClassVar[str] = ""
@@ -34,6 +36,10 @@ class BaseContextProvider(ABC):
             raise TypeError(f"{cls.__name__} debe definir key")
 
     def metadata(self) -> dict[str, Any]:
+        """
+        Devuelve metadata descriptiva del provider.
+        """
+
         return {
             "key": self.key,
             "name": self.name or self.key,
@@ -47,7 +53,17 @@ class BaseContextProvider(ABC):
         context: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Devuelve los datos contextuales producidos por el provider.
+        Carga el contexto propio del provider.
+
+        Contrato:
+
+        - Sin información disponible → {}
+        - Con información disponible → dict
+        - Nunca mutar `context`
+        - Nunca asignar `context[self.key]`
+
+        ContextManager se encarga de integrar el resultado
+        dentro del contexto acumulado.
         """
 
         raise NotImplementedError

@@ -42,6 +42,8 @@ class ExecutionPlanner:
         "performance_audit",
         "write_file",
         "create_project",
+        "scaffold_module",
+        "scaffold_ui_shell",
         "sandbox",
         "shell",
         "readme",
@@ -335,13 +337,6 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
-        """
-        Crear archivo (goals.md Test 3 / 6).
-
-        - Contenido explícito → write_file directo (single).
-        - Sin contenido → coder → write_file (multi_step).
-        - Contexto ligero: no cargar snapshot de proyecto.
-        """
         plan.objective = "Crear archivo"
 
         plan.context_requirements["project"] = False
@@ -401,6 +396,59 @@ class ExecutionPlanner:
         write_step.depends_on.append(coder_step.id)
 
         logger.info("File creation (coder→write_file) | path=%s", path)
+
+    @staticmethod
+    def _plan_module_scaffold(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        entities = getattr(intent, "entities", None) or {}
+        module = str(entities.get("module") or "").strip().lower()
+
+        aliases = {
+            "catalogo": "catalog",
+            "catálogo": "catalog",
+            "caja": "cash",
+            "pagos": "payments",
+            "pago": "payments",
+            "facturacion": "invoicing",
+            "facturación": "invoicing",
+            "reportes": "reports",
+        }
+        module = aliases.get(module, module)
+
+        plan.objective = f"Scaffold módulo {module or '(sin nombre)'}"
+        plan.execution_mode = "single"
+        plan.context_requirements["project"] = False
+        plan.context_requirements["engram"] = False
+        plan.governance["allow_write"] = True
+        plan.metadata["module"] = module
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "scaffold_module",
+            {"module": module},
+        )
+
+    @staticmethod
+    def _plan_ui_scaffold(
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.objective = "Scaffold UI shell POS"
+        plan.execution_mode = "single"
+        plan.context_requirements["project"] = False
+        plan.governance["allow_write"] = True
+
+        ExecutionPlanner._set_execution_unit(
+            plan,
+            "skill",
+            "scaffold_ui_shell",
+            {},
+        )
 
     @staticmethod
     def _plan_code_generation(
@@ -777,27 +825,36 @@ class ExecutionPlanner:
         task: str,
         intent: IntentResult,
     ) -> None:
+        """Fallback si llega intent=spec sin slash (CommandRouter usa SpecWorkflow)."""
         plan.objective = "Crear especificación (Spec)"
         plan.execution_mode = "multi_step"
         plan.context_requirements["engram"] = True
         plan.context_requirements["standards"] = True
         plan.governance["allow_write"] = True
 
+        try:
+            from core.specs.paths import spec_path_for
+
+            path = spec_path_for(task)
+        except Exception:
+            path = ".specs/spec.md"
+
         spec_step = plan.add_step(
             description="Generar especificación detallada a partir de la tarea",
             unit_type="agent",
             unit_name="task_agent",
-            params={"task": task, "mode": "spec"},
+            params={"task": task, "mode": "spec", "path": path},
             expected_output="Especificación estructurada.",
-            metadata={"stage": "spec_generation"},
+            metadata={"stage": "spec_generation", "produces": "code_artifact"},
         )
 
         write_spec = plan.add_step(
             description="Guardar especificación en disco",
             unit_type="skill",
             unit_name="write_file",
-            params={},
+            params={"path": path},
             expected_output="Archivo de especificación creado.",
+            metadata={"stage": "materialization", "consumes": "code_artifact"},
         )
         write_spec.depends_on.append(spec_step.id)
 
@@ -859,24 +916,6 @@ Cada paso:
 - "unit_name": string
 - "params": objeto (puede ir vacío)
 - "depends_on_index": lista de índices (0-based) de pasos previos
-
-Ejemplo:
-[
-  {{
-    "description": "Analizar requisitos",
-    "unit_type": "agent",
-    "unit_name": "architect",
-    "params": {{"task": "..."}},
-    "depends_on_index": []
-  }},
-  {{
-    "description": "Generar código",
-    "unit_type": "agent",
-    "unit_name": "coder",
-    "params": {{"task": "..."}},
-    "depends_on_index": [0]
-  }}
-]
 """
 
         try:
