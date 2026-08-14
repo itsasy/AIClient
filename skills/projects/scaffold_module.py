@@ -36,7 +36,7 @@ class ScaffoldModuleSkill(Skill):
         ),
         "invoicing": (
             "src/modules/invoicing",
-            ("__init__.py", "provider.py", "service.py"),
+            ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
         "delivery": ("src/modules/delivery", ("__init__.py", "service.py")),
         "reports": ("src/modules/reports", ("__init__.py", "service.py")),
