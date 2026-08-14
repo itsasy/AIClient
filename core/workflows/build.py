@@ -108,7 +108,7 @@ class BuildWorkflow(BaseWorkflow):
         if not raw:
             return (
                 False,
-                "Uso: /build ui-shell [--ai] [país=XX] (default = static; --ai = generar con coder)",
+                "Uso: /build <módulo|pos-stack|from-spec|ui-shell> " "[país=XX] [--ai]",
             )
         token = self._first_token(raw)
         if token in self.STACK_ALIASES | self.SPEC_STACK_ALIASES | self.UI_ALIASES:
