@@ -32,7 +32,11 @@ class ScaffoldModuleSkill(Skill):
         "cash": ("src/modules/cash", ("__init__.py", "service.py", "routes.py")),
         "payments": (
             "src/modules/payments",
-            ("__init__.py", "provider.py", "service.py"),
+            ("__init__.py", "provider.py", "service.py", "factory.py"),
+        ),
+        "invoicing": (
+            "src/modules/invoicing",
+            ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
         "invoicing": (
             "src/modules/invoicing",
@@ -307,6 +311,12 @@ class {class_name}:
                 "    def __init__(self) -> None:\n"
                 "        pass\n"
             )
+        if filename == "factory.py":
+            if module == "payments":
+                return self._payments_factory_source()
+            if module == "invoicing":
+                return self._invoicing_factory_source()
+            return f"# {module}/factory.py\n"
         if filename == "routes.py":
             return (
                 f'"""Rutas HTTP del módulo {module}."""\n'
@@ -452,6 +462,101 @@ class InvoicingService:
 
     def status(self, invoice_id: str) -> dict[str, Any]:
         return self.provider.status(invoice_id)
+'''
+
+    def _payments_factory_source(self) -> str:
+        return '''"""Selección de PaymentProvider según locale / config.
+
+El dominio usa el Protocol; aquí se elige mock o adapter de país.
+"""
+from __future__ import annotations
+
+from src.modules.payments.provider import PaymentProvider
+from src.modules.payments.service import MockPaymentProvider
+
+
+def get_payment_provider(
+    locale: str,
+    *,
+    use_mock: bool = True,
+) -> PaymentProvider:
+    code = (locale or "").strip().upper()
+
+    if use_mock:
+        return MockPaymentProvider()
+
+    if code == "AR":
+        from src.adapters.ar.mercadopago import MercadoPagoProvider
+
+        return MercadoPagoProvider()
+    if code == "MX":
+        from src.adapters.mx.conekta import ConektaProvider
+
+        return ConektaProvider()
+    if code == "ES":
+        from src.adapters.es.redsys import RedsysProvider
+
+        return RedsysProvider()
+    if code == "PE":
+        from src.adapters.pe.local_wallet import LocalWalletProvider
+
+        return LocalWalletProvider()
+    if code == "CL":
+        from src.adapters.cl.webpay import WebpayProvider
+
+        return WebpayProvider()
+    if code == "CO":
+        from src.adapters.co.pse import PseProvider
+
+        return PseProvider()
+
+    return MockPaymentProvider()
+'''
+
+    def _invoicing_factory_source(self) -> str:
+        return '''"""Selección de ElectronicInvoiceProvider según locale / config."""
+from __future__ import annotations
+
+from src.modules.invoicing.provider import ElectronicInvoiceProvider
+from src.modules.invoicing.service import MockInvoiceProvider
+
+
+def get_invoice_provider(
+    locale: str,
+    *,
+    use_mock: bool = True,
+) -> ElectronicInvoiceProvider:
+    code = (locale or "").strip().upper()
+
+    if use_mock:
+        return MockInvoiceProvider()
+
+    if code == "AR":
+        from src.adapters.ar.afip import AfipInvoiceProvider
+
+        return AfipInvoiceProvider()
+    if code == "MX":
+        from src.adapters.mx.cfdi import CfdiInvoiceProvider
+
+        return CfdiInvoiceProvider()
+    if code == "ES":
+        from src.adapters.es.verifactu import VerifactuInvoiceProvider
+
+        return VerifactuInvoiceProvider()
+    if code == "CL":
+        from src.adapters.cl.sii_dte import SiiDteProvider
+
+        return SiiDteProvider()
+    if code == "CO":
+        from src.adapters.co.dian import DianInvoiceProvider
+
+        return DianInvoiceProvider()
+    if code == "PE":
+        from src.adapters.pe.boleta_local import BoletaLocalProvider
+
+        return BoletaLocalProvider()
+
+    return MockInvoiceProvider()
 '''
 
     @staticmethod
