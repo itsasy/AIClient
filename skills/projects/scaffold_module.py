@@ -187,12 +187,6 @@ class ElectronicInvoiceProvider(Protocol):
         if path.exists():
             return created
 
-        protocol = "PaymentProvider" if module == "payments" else "ElectronicInvoiceProvider"
-        filename, class_name = entry
-        path = base / filename
-        if path.exists():
-            return created
-
         if module == "payments":
             source = self._payment_adapter_source(class_name, locale, filename)
         else:

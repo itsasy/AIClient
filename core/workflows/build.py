@@ -90,9 +90,9 @@ class BuildWorkflow(BaseWorkflow):
         token = self._first_token(raw)
 
         if token in self.UI_ALIASES:
-            if "--static" in raw.lower():
-                return self._plan_ui_static(raw)
-            return self._plan_ui_shell(raw, locale_code)
+            if "--ai" in raw.lower():
+                return self._plan_ui_shell(raw, locale_code)
+            return self._plan_ui_static(raw)
 
         if token in self.SPEC_STACK_ALIASES:
             return self._plan_from_spec(raw, locale_code)
@@ -108,7 +108,7 @@ class BuildWorkflow(BaseWorkflow):
         if not raw:
             return (
                 False,
-                "Uso: /build <módulo|pos-stack|from-spec|ui-shell> [país=XX] [--static]",
+                "Uso: /build ui-shell [--ai] [país=XX] (default = static; --ai = generar con coder)",
             )
         token = self._first_token(raw)
         if token in self.STACK_ALIASES | self.SPEC_STACK_ALIASES | self.UI_ALIASES:
@@ -222,27 +222,42 @@ class BuildWorkflow(BaseWorkflow):
                 flags=re.I,
             )
             tokens = {t.lower() for t in rest.split() if len(t) > 2}
-            chosen = None
+
+            def score(path: Path, text: str) -> tuple[int, float]:
+                stem = path.stem.lower()
+                head = text.lower()[:4000]
+                s = 0
+                if "pos" in stem or "pos" in head:
+                    s += 10
+                if tokens:
+                    for t in tokens:
+                        if t in stem:
+                            s += 5
+                        if t in head:
+                            s += 2
+                # mtime como desempate (más nuevo = mayor)
+                try:
+                    mtime = path.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                return (s, mtime)
+
+            ranked: list[tuple[tuple[int, float], Path, str]] = []
             for path in files:
                 try:
                     text = path.read_text(encoding="utf-8")
                 except OSError:
                     continue
-                if tokens and not any(
-                    t in path.stem.lower() or t in text.lower()[:3000] for t in tokens
-                ):
-                    continue
-                chosen = path
-                spec_text = text
-                break
-            if chosen is None and files:
-                chosen = files[0]
-                try:
-                    spec_text = chosen.read_text(encoding="utf-8")
-                except OSError:
-                    spec_text = ""
-            if chosen is not None:
+                ranked.append((score(path, text), path, text))
+
+            ranked.sort(key=lambda x: x[0], reverse=True)
+            if ranked:
+                _, chosen, spec_text = ranked[0]
                 spec_name = chosen.name
+            else:
+                chosen = None
+                spec_text = ""
+                spec_name = ""
 
         inferred = self._modules_from_spec(spec_text)
         if inferred:
