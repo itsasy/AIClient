@@ -95,11 +95,14 @@ class PlanWorkflow(BaseWorkflow):
         parts = [
             f"Elabora un plan de ejecución paso a paso para: {topic}.",
             "",
-            "Reglas:",
+            "Reglas obligatorias:",
             "- Basa el plan en la especificación si existe abajo.",
-            "- No inventes stack (Vue, microservicios, etc.) si no está en el spec.",
-            "- No asumas país/pagos/fisco fuera del bloque LOCALE.",
-            "- Sé concreto: módulos, orden, dependencias, criterios de hecho.",
+            "- NO inventes stack (Vue, React, Next, Laravel, microservicios, etc.)",
+            "  si no está en el spec o en el pedido del usuario.",
+            "- NO inventes módulos o integraciones que el spec no mencione.",
+            "- Locale: solo aplica moneda/pagos/fisco si el tema o el spec lo requieren.",
+            "  No conviertas un plan de auth/JWT en un plan de pagos AFIP.",
+            "- Sé concreto: pasos, orden, dependencias, criterios de hecho.",
             "- No ejecutes nada; solo planifica.",
             "",
             "Formato:",
@@ -116,7 +119,7 @@ class PlanWorkflow(BaseWorkflow):
             parts.extend(
                 [
                     "",
-                    f"=== LOCALE ({locale_code or 'n/a'}) ===",
+                    f"=== LOCALE ({locale_code or 'n/a'}) — contexto, no mandato de producto ===",
                     locale_summary,
                     "=== FIN LOCALE ===",
                 ]
@@ -137,6 +140,7 @@ class PlanWorkflow(BaseWorkflow):
                     "",
                     "No hay spec en .specs/ para este tema.",
                     "Planifica en genérico y marca supuestos explícitos.",
+                    "No inventes stack.",
                 ]
             )
 

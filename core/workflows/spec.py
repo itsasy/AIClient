@@ -130,16 +130,25 @@ class SpecWorkflow(BaseWorkflow):
             "3. Requisitos funcionales",
             "4. Requisitos no funcionales",
             "5. Modelo de dominio (entidades principales)",
-            "6. Integraciones (pagos, facturación, terceros) — pluggables si aplica",
+            "6. Integraciones (pagos, facturación, terceros) — solo si aplica al tema",
             "7. Criterios de aceptación",
             "8. Riesgos y supuestos",
             "",
-            "Reglas:",
-            "- No asumas país ni medios de pago si no están en el tema o en LOCALE.",
-            "- Si es POS/SaaS, separa módulos (auth, catálogo, POS, caja, reportes, licencia).",
-            "- Pagos y facturación como interfaces/adapters, no SDKs fijos en el núcleo.",
+            "Reglas obligatorias:",
             "- Responde SOLO con Markdown, sin preámbulos.",
+            "- NO inventes framework ni stack (Vue, React, Next, Laravel, Django, microservicios)",
+            "  salvo que el usuario lo pida explícitamente en el tema.",
+            "- NO inventes módulos de negocio que el tema no pida.",
+            "- Pagos y facturación: solo como interfaces/adapters si el tema es POS, cobros o fisco.",
+            "- Si el tema es autenticación, JWT, smoke de locale u otra cosa acotada:",
+            "  no conviertas la spec en un diseño completo de POS ni de pasarelas.",
+            "- El bloque LOCALE es contexto regional. Úsalo así:",
+            "  · Tema de pagos/POS/fisco → aplica moneda, medios de pago y régimen fiscal del locale.",
+            "  · Tema ajeno (auth, JWT, smoke, infra) → puedes citar país/moneda en una línea de contexto;",
+            "    NO los eleves a requisitos funcionales centrales ni a integraciones obligatorias.",
+            "- Si no hay LOCALE, no asumas país ni pasarela.",
         ]
+
         if locale_code or locale_block:
             lines.extend(
                 [
@@ -149,4 +158,14 @@ class SpecWorkflow(BaseWorkflow):
                     "=== FIN LOCALE ===",
                 ]
             )
+        else:
+            lines.extend(
+                [
+                    "",
+                    "=== LOCALE ===",
+                    "No especificado. No asumir país, moneda, pagos ni régimen fiscal.",
+                    "=== FIN LOCALE ===",
+                ]
+            )
+
         return "\n".join(lines)

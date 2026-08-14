@@ -73,6 +73,12 @@ class LocaleResolver:
             )
             sources.append("default")
 
+        logger.info(
+            "Locale resolve | code=%s | sources=%s",
+            normalized,
+            sources,
+        )
+
         return {
             "locale_code": normalized,
             "locale_summary": summary,
@@ -80,7 +86,7 @@ class LocaleResolver:
         }
 
     def _obsidian_root(self) -> Path | None:
-        for attr in ("OBSIDIAN_VAULT", "OBSIDIAN_PATH", "OBSIDIAN_DIR"):
+        for attr in ("OBSIDIAN_VAULT", "OBSIDIAN_VAULT_PATH", "OBSIDIAN_PATH", "OBSIDIAN_DIR"):
             raw = getattr(Config, attr, None)
             if raw:
                 path = Path(str(raw)).expanduser()
