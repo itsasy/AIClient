@@ -81,6 +81,23 @@ class PlanWorkflow(BaseWorkflow):
             plan.metadata["locale"] = locale_code
             plan.metadata["locale_sources"] = locale_info.get("sources", [])
 
+        topic_l = topic.lower()
+        if any(
+            k in topic_l
+            for k in (
+                "jwt",
+                "auth",
+                "login",
+                "autentic",
+                "sesión",
+                "sesion",
+                "oauth",
+                "password",
+                "contraseña",
+            )
+        ):
+            plan.context_requirements["standards"] = False
+
         return plan
 
     def validate(self, arguments: str) -> tuple[bool, str]:
@@ -97,13 +114,16 @@ class PlanWorkflow(BaseWorkflow):
             "",
             "Reglas obligatorias:",
             "- Basa el plan en la especificación si existe abajo.",
-            "- NO inventes stack (Vue, React, Next, Laravel, microservicios, etc.)",
-            "  si no está en el spec o en el pedido del usuario.",
+            "- NO inventes stack ni framework (Vue, React, Next, Laravel, Django,",
+            "  microservicios, etc.) si no está en el spec o en el pedido del usuario.",
+            "- Si el contexto trae standards de frontend u otro dominio, IGNÓRALOS",
+            "  cuando el tema no los pida (p. ej. plan de JWT/auth ≠ adoptar Vue).",
             "- NO inventes módulos o integraciones que el spec no mencione.",
             "- Locale: solo aplica moneda/pagos/fisco si el tema o el spec lo requieren.",
-            "  No conviertas un plan de auth/JWT en un plan de pagos AFIP.",
+            "  No conviertas un plan de auth/JWT en un plan de pagos o AFIP.",
             "- Sé concreto: pasos, orden, dependencias, criterios de hecho.",
             "- No ejecutes nada; solo planifica.",
+            "- No añadas notas del estilo «se usa Vue según standards» salvo pedido explícito.",
             "",
             "Formato:",
             "1. Objetivo",
