@@ -19,11 +19,11 @@ except ImportError:
 
 class BuildWorkflow(BaseWorkflow):
     """
-    /build <módulo|pos-stack|from-spec|ui-shell> [país=XX] [--static]
+    /build <módulo|pos-stack|from-spec|ui-shell|enrich> [país=XX] [--ai]
     """
 
     name = "build"
-    description = "Scaffold de módulo(s) de producto o UI shell."
+    description = "Scaffold de módulo(s), UI shell o enrich desde spec."
 
     ALLOWED = {
         "auth",
@@ -59,26 +59,40 @@ class BuildWorkflow(BaseWorkflow):
         "reports",
     )
 
-    STACK_ALIASES = {
-        "pos-stack",
-        "pos_stack",
-        "stack",
-        "full-pos",
-        "full_pos",
-        "pos-completo",
-    }
+    STACK_ALIASES = frozenset(
+        {
+            "pos-stack",
+            "pos_stack",
+            "stack",
+            "full-pos",
+            "full_pos",
+            "pos-completo",
+        }
+    )
 
-    SPEC_STACK_ALIASES = {
-        "from-spec",
-        "from_spec",
-        "desde-spec",
-    }
+    SPEC_STACK_ALIASES = frozenset(
+        {
+            "from-spec",
+            "from_spec",
+            "desde-spec",
+        }
+    )
 
-    UI_ALIASES = {
-        "ui",
-        "ui-shell",
-        "ui_shell",
-    }
+    UI_ALIASES = frozenset(
+        {
+            "ui",
+            "ui-shell",
+            "ui_shell",
+        }
+    )
+
+    ENRICH_ALIASES = frozenset(
+        {
+            "enrich",
+            "from-spec-code",
+            "implement",
+        }
+    )
 
     def execute(
         self,
@@ -94,6 +108,9 @@ class BuildWorkflow(BaseWorkflow):
                 return self._plan_ui_shell(raw, locale_code)
             return self._plan_ui_static(raw)
 
+        if token in self.ENRICH_ALIASES:
+            return self._plan_enrich_from_spec(raw, locale_code)
+
         if token in self.SPEC_STACK_ALIASES:
             return self._plan_from_spec(raw, locale_code)
 
@@ -108,10 +125,13 @@ class BuildWorkflow(BaseWorkflow):
         if not raw:
             return (
                 False,
-                "Uso: /build <módulo|pos-stack|from-spec|ui-shell> " "[país=XX] [--ai]",
+                "Uso: /build <módulo|pos-stack|from-spec|ui-shell|enrich> "
+                "[módulo] [país=XX] [--ai]",
             )
         token = self._first_token(raw)
-        if token in self.STACK_ALIASES | self.SPEC_STACK_ALIASES | self.UI_ALIASES:
+        if token in (
+            self.STACK_ALIASES | self.SPEC_STACK_ALIASES | self.UI_ALIASES | self.ENRICH_ALIASES
+        ):
             return True, ""
         module = self._parse_module(raw)
         if module not in self.ALLOWED:
@@ -119,7 +139,7 @@ class BuildWorkflow(BaseWorkflow):
                 False,
                 f"Módulo '{module}' no soportado. "
                 f"Permitidos: {', '.join(sorted(self.ALLOWED))}, "
-                "pos-stack, from-spec, ui-shell",
+                "pos-stack, from-spec, ui-shell, enrich",
             )
         return True, ""
 
@@ -235,7 +255,6 @@ class BuildWorkflow(BaseWorkflow):
                             s += 5
                         if t in head:
                             s += 2
-                # mtime como desempate (más nuevo = mayor)
                 try:
                     mtime = path.stat().st_mtime
                 except OSError:
@@ -254,10 +273,6 @@ class BuildWorkflow(BaseWorkflow):
             if ranked:
                 _, chosen, spec_text = ranked[0]
                 spec_name = chosen.name
-            else:
-                chosen = None
-                spec_text = ""
-                spec_name = ""
 
         inferred = self._modules_from_spec(spec_text)
         if inferred:
@@ -375,12 +390,137 @@ LOCALE:
         plan.metadata["module"] = "ui-shell"
         return plan
 
+    def _plan_enrich_from_spec(
+        self,
+        raw: str,
+        locale_code: str | None,
+    ) -> ExecutionPlan:
+        """coder → write_file: service.py de un módulo desde .specs/ + locale."""
+        rest = re.sub(
+            r"^(enrich|from-spec-code|implement)\s*",
+            "",
+            raw.strip(),
+            flags=re.I,
+        )
+        module = self._parse_module(rest) if rest.strip() else "pos"
+        if module not in self.ALLOWED:
+            module = "pos"
+
+        root = Path(getattr(Config, "TARGET_PROJECT_ROOT", Path.cwd()))
+        specs_dir = root / ".specs"
+        spec_excerpt = ""
+        spec_name = ""
+
+        if specs_dir.is_dir():
+            files = list(specs_dir.glob("*.md")) + list(specs_dir.glob("*.json"))
+
+            def score(p: Path) -> tuple[int, float]:
+                stem = p.stem.lower()
+                s = 0
+                if module in stem:
+                    s += 8
+                if "pos" in stem:
+                    s += 5
+                try:
+                    mtime = p.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                return (s, mtime)
+
+            ranked = sorted(files, key=score, reverse=True)
+            if ranked:
+                chosen = ranked[0]
+                spec_name = chosen.name
+                try:
+                    spec_excerpt = chosen.read_text(encoding="utf-8")[:12000]
+                except OSError:
+                    spec_excerpt = ""
+
+        locale_block = ""
+        if locale_code:
+            try:
+                from core.locale.packs import locale_summary
+
+                locale_block = locale_summary(locale_code)
+            except Exception:
+                locale_block = f"locale={locale_code}"
+
+        target = f"src/modules/{module}/service.py"
+        prompt = f"""Implementa la lógica de dominio del módulo "{module}" del POS.
+
+Archivo de salida único: {target}
+
+Reglas:
+- Python 3.11+, type hints.
+- NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
+- NO inventes SDKs de pago/fiscal; usa Protocols/mocks si hace falta.
+- Si el módulo es pos: pedidos/tickets en memoria (dict/list), estados simples.
+- Si es payments/invoicing: delega en factory/service existentes del módulo.
+- Código listo para pegar; sin markdown fuera del JSON.
+
+Devuelve SOLO JSON:
+{{
+  "type": "code_artifact",
+  "files": [
+    {{"path": "{target}", "content": "..."}}
+  ]
+}}
+
+=== SPEC ({spec_name or "ninguna"}) ===
+{spec_excerpt or "(sin spec; implementa esqueleto POS razonable y documenta supuestos)"}
+=== FIN SPEC ===
+
+=== LOCALE ===
+{locale_block or "no especificado"}
+=== FIN LOCALE ===
+"""
+
+        plan = ExecutionPlan(
+            original_task=f"/build {raw}".strip(),
+            intent="code_generation",
+            intent_category="development",
+            objective=f"Implementar {target} desde spec",
+            execution_mode="multi_step",
+        )
+        plan.governance["allow_write"] = True
+        plan.context_requirements["project"] = True
+        plan.context_requirements["standards"] = False
+        plan.metadata["workflow"] = "build"
+        plan.metadata["module"] = module
+        plan.metadata["aggregate_results"] = False
+        if locale_code:
+            plan.metadata["locale"] = locale_code
+        if spec_name:
+            plan.metadata["from_spec"] = spec_name
+
+        gen = plan.add_step(
+            description=f"Generar {target}",
+            unit_type="agent",
+            unit_name="coder",
+            params={
+                "task": prompt,
+                "mode": "enrich_module",
+                "requested_output": "code_artifact",
+            },
+            expected_output="code_artifact",
+            metadata={"stage": "generation", "produces": "code_artifact"},
+        )
+        write = plan.add_step(
+            description=f"Escribir {target}",
+            unit_type="skill",
+            unit_name="write_file",
+            params={"path": target, "file_index": 0},
+            expected_output=f"Archivo {target}",
+            metadata={"stage": "materialization", "consumes": "code_artifact"},
+        )
+        write.depends_on.append(gen.id)
+        return plan
+
     def _modules_from_spec(self, text: str) -> list[str]:
         if not text:
             return []
         lower = text.lower()
 
-        # Spec de producto POS → stack completo (o casi)
         if (
             any(
                 k in lower
@@ -418,7 +558,7 @@ LOCALE:
             raw,
             flags=re.IGNORECASE,
         )
-        cleaned = re.sub(r"--static", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"--(?:static|ai)\b", " ", cleaned, flags=re.I)
         return (cleaned.split() or [""])[0].strip().lower()
 
     def _parse_module(self, raw: str) -> str:
