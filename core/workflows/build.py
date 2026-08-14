@@ -450,6 +450,12 @@ LOCALE:
 
 Archivo de salida único: {target}
 
+IMPORTANTE — aislamiento:
+- Estás generando código del PRODUCTO destino (POS), NO del orquestador AIClient.
+- PROHIBIDO importar: core.*, runtime.*, llm.*, agents.*, skills.*, ExecutionPlan, ProviderManager.
+- POS no emite facturas AFIP ni calcula régimen fiscal; eso es invoicing + adapters.
+- Dominio POS: pedidos/tickets/líneas/estados en memoria; métodos claros create/add_line/pay/close.
+
 Reglas:
 - Python 3.11+, type hints.
 - NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
@@ -483,7 +489,7 @@ Devuelve SOLO JSON:
             execution_mode="multi_step",
         )
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = True
+        plan.context_requirements["project"] = False
         plan.context_requirements["standards"] = False
         plan.metadata["workflow"] = "build"
         plan.metadata["module"] = module
