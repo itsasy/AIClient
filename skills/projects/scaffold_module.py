@@ -296,6 +296,10 @@ class {class_name}:
         if filename == "__init__.py":
             return f'"""Módulo {module}."""\n'
         if filename == "service.py":
+            if module == "payments":
+                return self._payments_service_source()
+            if module == "invoicing":
+                return self._invoicing_service_source()
             return (
                 f'"""Servicio de dominio: {module}."""\n'
                 "from __future__ import annotations\n\n"
@@ -310,6 +314,145 @@ class {class_name}:
                 "# Registrar endpoints en el router de la app.\n"
             )
         return f"# {module}/{filename}\n"
+
+    def _payments_service_source(self) -> str:
+        return '''"""Servicio de dominio: payments.
+
+Depende del contrato PaymentProvider (Protocol), no de un SDK concreto.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from src.modules.payments.provider import PaymentProvider
+
+
+class MockPaymentProvider:
+    """Mock local para tests y demos offline."""
+
+    def list_methods(self, locale: str) -> list[dict[str, Any]]:
+        return [
+            {"id": "efectivo", "name": "Efectivo"},
+            {"id": "card", "name": "Tarjeta"},
+        ]
+
+    def charge(
+        self,
+        amount: float,
+        currency: str,
+        method: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "payment_id": f"mock-{method}-{amount}",
+            "amount": amount,
+            "currency": currency,
+            "method": method,
+            "status": "approved",
+            "metadata": metadata or {},
+        }
+
+    def refund(
+        self,
+        payment_id: str,
+        amount: float | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "payment_id": payment_id,
+            "refunded": amount,
+            "status": "refunded",
+        }
+
+
+class PaymentsService:
+    def __init__(self, provider: PaymentProvider | None = None) -> None:
+        self.provider: PaymentProvider = provider or MockPaymentProvider()
+
+    def available_methods(self, locale: str) -> list[dict[str, Any]]:
+        return self.provider.list_methods(locale)
+
+    def charge(
+        self,
+        amount: float,
+        currency: str,
+        method: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if amount <= 0:
+            return {"ok": False, "error": "amount must be > 0"}
+        return self.provider.charge(amount, currency, method, metadata)
+
+    def refund(
+        self,
+        payment_id: str,
+        amount: float | None = None,
+    ) -> dict[str, Any]:
+        return self.provider.refund(payment_id, amount)
+'''
+
+    def _invoicing_service_source(self) -> str:
+        return '''"""Servicio de dominio: invoicing.
+
+Depende de ElectronicInvoiceProvider; el locale elige el adapter real.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from src.modules.invoicing.provider import ElectronicInvoiceProvider
+
+
+class MockInvoiceProvider:
+    """Mock local para tests y demos offline."""
+
+    def issue(
+        self,
+        ticket: dict[str, Any],
+        customer: dict[str, Any] | None,
+        locale: str,
+    ) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "invoice_id": f"mock-inv-{locale}",
+            "fiscal_id": "MOCK-CAE-000",
+            "ticket": ticket,
+            "customer": customer,
+            "locale": locale,
+            "status": "issued",
+        }
+
+    def cancel(self, invoice_id: str, reason: str) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "invoice_id": invoice_id,
+            "reason": reason,
+            "status": "cancelled",
+        }
+
+    def status(self, invoice_id: str) -> dict[str, Any]:
+        return {"ok": True, "invoice_id": invoice_id, "status": "issued"}
+
+
+class InvoicingService:
+    def __init__(self, provider: ElectronicInvoiceProvider | None = None) -> None:
+        self.provider: ElectronicInvoiceProvider = provider or MockInvoiceProvider()
+
+    def issue(
+        self,
+        ticket: dict[str, Any],
+        customer: dict[str, Any] | None = None,
+        locale: str = "AR",
+    ) -> dict[str, Any]:
+        return self.provider.issue(ticket, customer, locale)
+
+    def cancel(self, invoice_id: str, reason: str = "") -> dict[str, Any]:
+        return self.provider.cancel(invoice_id, reason)
+
+    def status(self, invoice_id: str) -> dict[str, Any]:
+        return self.provider.status(invoice_id)
+'''
 
     @staticmethod
     def _to_class(module: str) -> str:
