@@ -188,45 +188,113 @@ class ElectronicInvoiceProvider(Protocol):
             return created
 
         protocol = "PaymentProvider" if module == "payments" else "ElectronicInvoiceProvider"
-        path.write_text(
-            (
-                f'"""Adapter {class_name} ({locale}) — stub."""\n'
-                "from __future__ import annotations\n\n"
-                "from typing import Any\n\n\n"
-                f"class {class_name}:\n"
-                f'    """Implementa {protocol} para {locale}. Stub sin SDK."""\n\n'
-                "    def list_methods(self, locale: str) -> list[dict[str, Any]]:\n"
-                "        return []\n\n"
-                "    def charge(\n"
-                "        self,\n"
-                "        amount: float,\n"
-                "        currency: str,\n"
-                "        method: str,\n"
-                "        metadata: dict[str, Any] | None = None,\n"
-                "    ) -> dict[str, Any]:\n"
-                '        raise NotImplementedError("Conectar SDK real")\n\n'
-                "    def refund(\n"
-                "        self,\n"
-                "        payment_id: str,\n"
-                "        amount: float | None = None,\n"
-                "    ) -> dict[str, Any]:\n"
-                '        raise NotImplementedError("Conectar SDK real")\n\n'
-                "    def issue(\n"
-                "        self,\n"
-                "        ticket: dict[str, Any],\n"
-                "        customer: dict[str, Any] | None,\n"
-                "        locale: str,\n"
-                "    ) -> dict[str, Any]:\n"
-                '        raise NotImplementedError("Conectar API fiscal")\n\n'
-                "    def cancel(self, invoice_id: str, reason: str) -> dict[str, Any]:\n"
-                '        raise NotImplementedError("Conectar API fiscal")\n\n'
-                "    def status(self, invoice_id: str) -> dict[str, Any]:\n"
-                '        raise NotImplementedError("Conectar API fiscal")\n'
-            ),
-            encoding="utf-8",
-        )
+        filename, class_name = entry
+        path = base / filename
+        if path.exists():
+            return created
+
+        if module == "payments":
+            source = self._payment_adapter_source(class_name, locale, filename)
+        else:
+            source = self._invoice_adapter_source(class_name, locale, filename)
+
+        path.write_text(source, encoding="utf-8")
         created.append(str(path.relative_to(root)))
         return created
+
+    def _payment_adapter_source(
+        self,
+        class_name: str,
+        locale: str,
+        filename_hint: str,
+    ) -> str:
+        return f'''"""Adapter de pagos {class_name} ({locale}).
+
+Stub de producción-orientado: sin SDK real.
+Cablear cliente oficial en charge/refund cuando haya credenciales.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+
+class {class_name}:
+    """Implementa el contrato PaymentProvider para locale={locale}."""
+
+    def list_methods(self, locale: str) -> list[dict[str, Any]]:
+        # TODO: devolver métodos reales según {locale} / cuenta
+        if locale.upper() != "{locale}":
+            return []
+        return [
+            {{"id": "efectivo", "name": "Efectivo"}},
+            {{"id": "card", "name": "Tarjeta"}},
+            # TODO: medios del provider ({filename_hint})
+        ]
+
+    def charge(
+        self,
+        amount: float,
+        currency: str,
+        method: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        # TODO: llamar SDK / API de {filename_hint}
+        raise NotImplementedError(
+            "Conectar SDK de pagos ({class_name}) — amount={{amount}} currency={{currency}}"
+        )
+
+    def refund(
+        self,
+        payment_id: str,
+        amount: float | None = None,
+    ) -> dict[str, Any]:
+        # TODO: reembolso parcial/total vía API
+        raise NotImplementedError(
+            "Conectar refund en {class_name} — payment_id={{payment_id}}"
+        )
+'''
+
+    def _invoice_adapter_source(
+        self,
+        class_name: str,
+        locale: str,
+        filename_hint: str,
+    ) -> str:
+        return f'''"""Adapter de facturación {class_name} ({locale}).
+
+Stub orientado a ElectronicInvoiceProvider. Sin PAC/AFIP/SDK real.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+
+class {class_name}:
+    """Implementa ElectronicInvoiceProvider para locale={locale}."""
+
+    def issue(
+        self,
+        ticket: dict[str, Any],
+        customer: dict[str, Any] | None,
+        locale: str,
+    ) -> dict[str, Any]:
+        # TODO: emitir comprobante ({filename_hint}) — CAE/UUID/folio
+        raise NotImplementedError(
+            "Conectar API fiscal {class_name} para locale={{locale}}"
+        )
+
+    def cancel(self, invoice_id: str, reason: str) -> dict[str, Any]:
+        # TODO: nota de crédito / anulación
+        raise NotImplementedError(
+            "Conectar cancelación en {class_name} — id={{invoice_id}}"
+        )
+
+    def status(self, invoice_id: str) -> dict[str, Any]:
+        # TODO: consulta estado fiscal
+        raise NotImplementedError(
+            "Conectar status en {class_name} — id={{invoice_id}}"
+        )
+'''
 
     def _file_content(self, module: str, filename: str) -> str:
         if filename == "provider.py" and module in self.INTERFACE_STUBS:
