@@ -450,19 +450,21 @@ LOCALE:
 
 Archivo de salida único: {target}
 
+Reglas:
+- Python 3.11+, type hints.
+- NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
+- NO inventes SDKs de pago/fiscal; usa Protocols/mocks si hace falta.
+- Si el módulo es pos: implementa pedidos/tickets, líneas y estados en memoria.
+- Expón métodos claros create, add_line, pay y close.
+- Mantén el dominio autocontenido y sin dependencias del orquestador.
+- Si es payments/invoicing: delega en factory/service existentes del módulo.
+- Código listo para pegar; sin markdown fuera del JSON.
+
 IMPORTANTE — aislamiento:
 - Estás generando código del PRODUCTO destino (POS), NO del orquestador AIClient.
 - PROHIBIDO importar: core.*, runtime.*, llm.*, agents.*, skills.*, ExecutionPlan, ProviderManager.
 - POS no emite facturas AFIP ni calcula régimen fiscal; eso es invoicing + adapters.
 - Dominio POS: pedidos/tickets/líneas/estados en memoria; métodos claros create/add_line/pay/close.
-
-Reglas:
-- Python 3.11+, type hints.
-- NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
-- NO inventes SDKs de pago/fiscal; usa Protocols/mocks si hace falta.
-- Si el módulo es pos: pedidos/tickets en memoria (dict/list), estados simples.
-- Si es payments/invoicing: delega en factory/service existentes del módulo.
-- Código listo para pegar; sin markdown fuera del JSON.
 
 Devuelve SOLO JSON:
 {{
