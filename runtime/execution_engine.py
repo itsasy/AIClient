@@ -411,9 +411,7 @@ class ExecutionEngine:
                     step_context["architecture"] = analysis
                 if not step_context.get("project_summary"):
                     step_context["project_summary"] = (
-                        analysis.get("summary")
-                        or analysis.get("project_summary")
-                        or ""
+                        analysis.get("summary") or analysis.get("project_summary") or ""
                     )
 
             for key in (
@@ -540,6 +538,93 @@ class ExecutionEngine:
         self._store_step_result(plan, context, step, result)
         return result
 
+    def _aggregate_scaffold_results(
+        self,
+        plan: ExecutionPlan,
+        results: list[ExecutionResult],
+    ) -> dict[str, Any]:
+        """
+        Resume scaffolds multi-step (pos-stack / from-spec / ui multi-file).
+        """
+        modules: list[str] = []
+        created: list[str] = []
+        adapters: list[str] = []
+        errors: list[str] = []
+        locale = plan.metadata.get("locale")
+
+        for item in results:
+            if item.error:
+                errors.append(str(item.error))
+
+            raw = item.result
+            # Desanidar {ok, result, error} de Skills
+            if isinstance(raw, dict) and "ok" in raw and "result" in raw:
+                if raw.get("ok") is False and raw.get("error"):
+                    errors.append(str(raw["error"]))
+                raw = raw.get("result")
+
+            if not isinstance(raw, dict):
+                continue
+
+            mod = raw.get("module")
+            if mod:
+                modules.append(str(mod))
+
+            for path in raw.get("created") or []:
+                p = str(path)
+                created.append(p)
+                if "/adapters/" in p.replace("\\", "/"):
+                    adapters.append(p)
+
+        def uniq(seq: list[str]) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for x in seq:
+                if x not in seen:
+                    seen.add(x)
+                    out.append(x)
+            return out
+
+        return {
+            "type": "module_scaffold_batch",
+            "modules": uniq(modules),
+            "created": uniq(created),
+            "adapters": uniq(adapters),
+            "locale": locale,
+            "from_spec": plan.metadata.get("from_spec"),
+            "steps_ok": sum(1 for r in results if r.is_success),
+            "steps_total": len(results),
+            "errors": errors,
+        }
+
+    def _should_aggregate_scaffold(
+        self,
+        plan: ExecutionPlan,
+        results: list[ExecutionResult],
+    ) -> bool:
+        if len(results) <= 1:
+            return False
+        if plan.metadata.get("aggregate_results"):
+            return True
+        intent = (plan.intent or "").lower()
+        if intent in {"module_scaffold", "ui_scaffold"}:
+            return True
+        # Heurística: varios steps scaffold_module / write_file
+        names = []
+        for step in plan.steps:
+            names.append(f"{step.unit_type}:{step.unit_name}")
+        scaffoldish = sum(
+            1
+            for n in names
+            if n
+            in {
+                "skill:scaffold_module",
+                "skill:scaffold_ui_shell",
+                "skill:write_file",
+            }
+        )
+        return scaffoldish >= 2
+
     def _execute_steps(
         self,
         plan: ExecutionPlan,
@@ -634,7 +719,11 @@ class ExecutionEngine:
         ]
 
         if not errors:
-            final_result = results[-1].result if results else None
+            if self._should_aggregate_scaffold(plan, results):
+                final_result = self._aggregate_scaffold_results(plan, results)
+            else:
+                final_result = results[-1].result if results else None
+
             return ExecutionResult.success(
                 plan_id=plan.id,
                 result=final_result,
@@ -642,12 +731,13 @@ class ExecutionEngine:
                 metadata={
                     "steps": result_payload,
                     "step_count": len(results),
+                    "aggregated": isinstance(final_result, dict)
+                    and final_result.get("type") == "module_scaffold_batch",
                 },
             )
 
         detail = "\n".join(
-            f"- {error['step']} ({error['unit']}): {error['error']}"
-            for error in errors
+            f"- {error['step']} ({error['unit']}): {error['error']}" for error in errors
         )
 
         if len(errors) == len(results):
@@ -780,9 +870,7 @@ class ExecutionEngine:
         while pending:
             progress = False
             for step in pending[:]:
-                missing = [
-                    d for d in step.depends_on if d not in available_ids
-                ]
+                missing = [d for d in step.depends_on if d not in available_ids]
                 if missing:
                     raise ValueError(f"Dependencias inexistentes: {missing}")
                 if all(d in resolved for d in step.depends_on):

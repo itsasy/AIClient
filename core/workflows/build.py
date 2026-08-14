@@ -168,6 +168,8 @@ class BuildWorkflow(BaseWorkflow):
             objective="Scaffold stack POS",
             execution_mode="multi_step",
         )
+
+        plan.metadata["aggregate_results"] = True
         plan.context_requirements["project"] = False
         plan.governance["allow_write"] = True
 
@@ -250,6 +252,7 @@ class BuildWorkflow(BaseWorkflow):
 
         plan = self._plan_stack(raw, locale_code, modules=modules)
         plan.metadata["from_spec"] = spec_name or True
+        plan.metadata["aggregate_results"] = True
         plan.objective = f"Scaffold desde spec {spec_name or '(última)'}"
         return plan
 
