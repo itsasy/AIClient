@@ -361,10 +361,29 @@ LOCALE:
         if not text:
             return []
         lower = text.lower()
+
+        # Spec de producto POS → stack completo (o casi)
+        if (
+            any(
+                k in lower
+                for k in (
+                    "punto de venta",
+                    " pos",
+                    "pos ",
+                    "restaurante",
+                    "multiestación",
+                    "multiestacion",
+                    "offline",
+                )
+            )
+            or "pos_" in lower
+        ):
+            return list(self.POS_STACK)
+
         keywords = {
             "auth": ("auth", "autentic", "login", "jwt", "sesión", "sesion"),
             "catalog": ("catalog", "producto", "menú", "menu", "precio"),
-            "pos": ("punto de venta", " pos", "ticket", "pedido", "turno"),
+            "pos": ("punto de venta", " ticket", "pedido", "turno"),
             "cash": ("caja", "cash", "cierre de caja"),
             "payments": ("pago", "payment", "pasarela", "cobro"),
             "invoicing": ("factura", "invoice", "afip", "cfdi", "fiscal"),
