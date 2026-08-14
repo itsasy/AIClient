@@ -36,10 +36,6 @@ class ScaffoldModuleSkill(Skill):
         ),
         "invoicing": (
             "src/modules/invoicing",
-            ("__init__.py", "provider.py", "service.py", "factory.py"),
-        ),
-        "invoicing": (
-            "src/modules/invoicing",
             ("__init__.py", "provider.py", "service.py"),
         ),
         "delivery": ("src/modules/delivery", ("__init__.py", "service.py")),
@@ -92,24 +88,6 @@ class ElectronicInvoiceProvider(Protocol):
     def status(self, invoice_id: str) -> dict[str, Any]:
         ...
 """,
-    }
-
-    PAYMENT_ADAPTERS = {
-        "AR": ("mercadopago.py", "MercadoPagoProvider"),
-        "PE": ("local_wallet.py", "LocalWalletProvider"),
-        "MX": ("conekta.py", "ConektaProvider"),
-        "ES": ("redsys.py", "RedsysProvider"),
-        "CL": ("webpay.py", "WebpayProvider"),
-        "CO": ("pse.py", "PseProvider"),
-    }
-
-    INVOICE_ADAPTERS = {
-        "AR": ("afip.py", "AfipInvoiceProvider"),
-        "MX": ("cfdi.py", "CfdiInvoiceProvider"),
-        "ES": ("verifactu.py", "VerifactuInvoiceProvider"),
-        "CL": ("sii_dte.py", "SiiDteProvider"),
-        "CO": ("dian.py", "DianInvoiceProvider"),
-        "PE": ("boleta_local.py", "BoletaLocalProvider"),
     }
 
     def execute(
@@ -172,6 +150,16 @@ class ElectronicInvoiceProvider(Protocol):
         if not locale or module not in {"payments", "invoicing"}:
             return []
 
+        from core.locale.packs import get_locale_pack
+
+        pack = get_locale_pack(locale)
+        if pack is None:
+            return []
+
+        entry = pack.payment_adapter if module == "payments" else pack.invoice_adapter
+        if not entry:
+            return []
+
         created: list[str] = []
         base = root / "src" / "adapters" / locale.lower()
         base.mkdir(parents=True, exist_ok=True)
@@ -180,11 +168,6 @@ class ElectronicInvoiceProvider(Protocol):
         if not init.exists():
             init.write_text(f'"""Adapters locale {locale}."""\n', encoding="utf-8")
             created.append(str(init.relative_to(root)))
-
-        mapping = self.PAYMENT_ADAPTERS if module == "payments" else self.INVOICE_ADAPTERS
-        entry = mapping.get(locale)
-        if not entry:
-            return created
 
         filename, class_name = entry
         path = base / filename
@@ -465,10 +448,7 @@ class InvoicingService:
 '''
 
     def _payments_factory_source(self) -> str:
-        return '''"""Selección de PaymentProvider según locale / config.
-
-El dominio usa el Protocol; aquí se elige mock o adapter de país.
-"""
+        return '''"""Selección de PaymentProvider según locale / config."""
 from __future__ import annotations
 
 from src.modules.payments.provider import PaymentProvider
@@ -480,36 +460,14 @@ def get_payment_provider(
     *,
     use_mock: bool = True,
 ) -> PaymentProvider:
-    code = (locale or "").strip().upper()
-
     if use_mock:
         return MockPaymentProvider()
 
+    code = (locale or "").strip().upper()
     if code == "AR":
         from src.adapters.ar.mercadopago import MercadoPagoProvider
-
         return MercadoPagoProvider()
-    if code == "MX":
-        from src.adapters.mx.conekta import ConektaProvider
-
-        return ConektaProvider()
-    if code == "ES":
-        from src.adapters.es.redsys import RedsysProvider
-
-        return RedsysProvider()
-    if code == "PE":
-        from src.adapters.pe.local_wallet import LocalWalletProvider
-
-        return LocalWalletProvider()
-    if code == "CL":
-        from src.adapters.cl.webpay import WebpayProvider
-
-        return WebpayProvider()
-    if code == "CO":
-        from src.adapters.co.pse import PseProvider
-
-        return PseProvider()
-
+    # Otros locales: generar/adaptar cuando existan adapters en el proyecto destino.
     return MockPaymentProvider()
 '''
 
@@ -526,36 +484,13 @@ def get_invoice_provider(
     *,
     use_mock: bool = True,
 ) -> ElectronicInvoiceProvider:
-    code = (locale or "").strip().upper()
-
     if use_mock:
         return MockInvoiceProvider()
 
+    code = (locale or "").strip().upper()
     if code == "AR":
         from src.adapters.ar.afip import AfipInvoiceProvider
-
         return AfipInvoiceProvider()
-    if code == "MX":
-        from src.adapters.mx.cfdi import CfdiInvoiceProvider
-
-        return CfdiInvoiceProvider()
-    if code == "ES":
-        from src.adapters.es.verifactu import VerifactuInvoiceProvider
-
-        return VerifactuInvoiceProvider()
-    if code == "CL":
-        from src.adapters.cl.sii_dte import SiiDteProvider
-
-        return SiiDteProvider()
-    if code == "CO":
-        from src.adapters.co.dian import DianInvoiceProvider
-
-        return DianInvoiceProvider()
-    if code == "PE":
-        from src.adapters.pe.boleta_local import BoletaLocalProvider
-
-        return BoletaLocalProvider()
-
     return MockInvoiceProvider()
 '''
 

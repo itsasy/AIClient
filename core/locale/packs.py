@@ -11,6 +11,10 @@ class LocalePack:
 
     No implementa pasarelas ni AFIP/CFDI.
     Solo orienta generación y evita hardcode de un solo país.
+
+    payment_adapter / invoice_adapter:
+        (filename, ClassName) para stubs en src/adapters/{code}/
+        None = no generar adapter de ese tipo en scaffold.
     """
 
     code: str
@@ -20,6 +24,8 @@ class LocalePack:
     invoicing: str
     notes: tuple[str, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    payment_adapter: tuple[str, str] | None = None
+    invoice_adapter: tuple[str, str] | None = None
 
 
 PACKS: dict[str, LocalePack] = {
@@ -40,6 +46,8 @@ PACKS: dict[str, LocalePack] = {
             "Medios de pago locales frecuentes en retail/food service.",
             "No reutilizar Yape/Plin fuera de PE.",
         ),
+        payment_adapter=("local_wallet.py", "LocalWalletProvider"),
+        invoice_adapter=("boleta_local.py", "BoletaLocalProvider"),
     ),
     "AR": LocalePack(
         code="AR",
@@ -61,6 +69,8 @@ PACKS: dict[str, LocalePack] = {
             "invoice_authority": "AFIP",
             "suggested_providers": ("mercado_pago",),
         },
+        payment_adapter=("mercadopago.py", "MercadoPagoProvider"),
+        invoice_adapter=("afip.py", "AfipInvoiceProvider"),
     ),
     "MX": LocalePack(
         code="MX",
@@ -82,6 +92,8 @@ PACKS: dict[str, LocalePack] = {
             "invoice_authority": "SAT",
             "suggested_providers": ("stripe", "mercado_pago", "conekta"),
         },
+        payment_adapter=("conekta.py", "ConektaProvider"),
+        invoice_adapter=("cfdi.py", "CfdiInvoiceProvider"),
     ),
     "ES": LocalePack(
         code="ES",
@@ -103,6 +115,8 @@ PACKS: dict[str, LocalePack] = {
             "invoice_authority": "AEAT",
             "suggested_providers": ("redsys", "stripe"),
         },
+        payment_adapter=("redsys.py", "RedsysProvider"),
+        invoice_adapter=("verifactu.py", "VerifactuInvoiceProvider"),
     ),
     "CL": LocalePack(
         code="CL",
@@ -124,6 +138,8 @@ PACKS: dict[str, LocalePack] = {
             "invoice_authority": "SII",
             "suggested_providers": ("webpay", "mercado_pago"),
         },
+        payment_adapter=("webpay.py", "WebpayProvider"),
+        invoice_adapter=("sii_dte.py", "SiiDteProvider"),
     ),
     "CO": LocalePack(
         code="CO",
@@ -146,6 +162,8 @@ PACKS: dict[str, LocalePack] = {
             "invoice_authority": "DIAN",
             "suggested_providers": ("mercado_pago", "payu"),
         },
+        payment_adapter=("pse.py", "PseProvider"),
+        invoice_adapter=("dian.py", "DianInvoiceProvider"),
     ),
 }
 
