@@ -65,7 +65,7 @@ class ReviewWorkflow(BaseWorkflow):
         review.depends_on.append(inspect.id)
 
         plan.metadata["workflow"] = "review"
-        plan.metadata["requires_self_critic"] = False
+        plan.metadata["requires_self_critic"] = True
         return plan
 
     def validate(self, arguments: str) -> tuple[bool, str]:
