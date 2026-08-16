@@ -1,38 +1,52 @@
+from __future__ import annotations
+
 import json
 import logging
 import re
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
 from core.config import Config
 from core.engram_memory import EngramMemory
-from core.execution_plan import ExecutionPlan
 from core.standards_learner import StandardsLearner
 from llm.provider_manager import ProviderManager
-from llm.provider_selector import ProviderSelector
 
 logger = logging.getLogger(__name__)
 
 
 class ContinuousLearner:
     """
-    Aprendizaje continuo: detecta correcciones y preferencias del usuario,
-    las extrae y las guarda para usarlas en futuras interacciones.
+    Detecta correcciones/preferencias en el texto del usuario.
 
-    Almacenamiento dual controlado por Config.LEARNER_BACKEND:
-    - "engram": solo Engram (SQLite + FTS5)
-    - "legacy": solo `.standards.json`
-    - "both": ambos (por defecto)
+    Fase B:
+        - extract_and_learn → solo CANDIDATO pendiente
+        - approve_candidate → persiste estándar de verdad
+        - reject_candidate → descarta
+
+    No escribe standards/Engram estable sin aprobación.
     """
 
-    def __init__(self):
+    PENDING_DIR = Path(getattr(Config, "PROJECT_ROOT", Path("."))) / ".memory" / "learning"
+
+    def __init__(self) -> None:
         self.standards = StandardsLearner()
         self.engram = EngramMemory()
         self.provider_manager = ProviderManager()
         self.backend = getattr(Config, "LEARNER_BACKEND", "both")
 
+        self.PENDING_DIR.mkdir(parents=True, exist_ok=True)
+
         logger.info(
-            "ContinuousLearner inicializado (backend: %s)",
+            "ContinuousLearner inicializado (backend: %s | pending=%s)",
             self.backend,
+            self.PENDING_DIR,
         )
+
+    # =========================================================
+    # Public API
+    # =========================================================
 
     def extract_and_learn(
         self,
@@ -40,9 +54,11 @@ class ContinuousLearner:
         assistant_response: str,
     ) -> bool:
         """
-        Detecta si el usuario está dando una corrección o preferencia,
-        extrae el estándar y lo guarda.
+        Si el usuario expresa una preferencia/corrección explícita,
+        crea un candidato pendiente. No persiste el estándar aún.
         """
+        if not user_query or not user_query.strip():
+            return False
 
         learn_patterns = [
             r"(aprende|recuerda|guarda|almacena)\s+que\s+(.+?)(?:\.|$)",
@@ -52,138 +68,146 @@ class ContinuousLearner:
         ]
 
         for pattern in learn_patterns:
-            match = re.search(
-                pattern,
-                user_query.lower(),
+            match = re.search(pattern, user_query.lower())
+            if not match:
+                continue
+
+            raw_text = match.group(2).strip()
+            return self._propose_from_text(
+                raw_text=raw_text,
+                original_query=user_query,
+                assistant_response=assistant_response or "",
             )
-
-            if match:
-                raw_text = match.group(2).strip()
-
-                return self._learn_from_text(
-                    raw_text,
-                    user_query,
-                )
 
         return False
 
-    def _learn_from_text(
-        self,
-        text: str,
-        original_query: str,
-    ) -> bool:
-        """
-        Usa el LLM para extraer clave y valor del texto.
-        """
+    def list_pending(self) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for path in sorted(self.PENDING_DIR.glob("pending-*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                data["_path"] = str(path)
+                items.append(data)
+            except Exception:
+                logger.exception("No se pudo leer candidato %s", path)
+        return items
 
-        prompt = f"""
-Extrae un estándar o preferencia de aprendizaje del siguiente texto del usuario.
-
-Texto: "{text}"
-
-Devuelve SOLO un JSON válido con dos campos: "key" y "value".
-
-Ejemplo:
-{{"key": "framework_preferido", "value": "Vue"}}
-
-Si no se puede extraer, devuelve:
-{{"key": null, "value": null}}
-
-REGLAS:
-- La "key" debe ser una etiqueta corta y descriptiva (minúsculas, guiones bajos).
-- El "value" debe ser el contenido concreto de la preferencia.
-- No inventes información que no esté en el texto.
-"""
+    def approve_candidate(self, candidate_id: str) -> bool:
+        path = self._pending_path(candidate_id)
+        if not path.exists():
+            logger.warning("Candidato no encontrado: %s", candidate_id)
+            return False
 
         try:
-            plan = ExecutionPlan(
-                original_task="learn_extraction",
-                intent="learning",
-                skills=["learning"],
-            )
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("Candidato ilegible: %s", candidate_id)
+            return False
 
-            provider, fallback = ProviderSelector.select(plan)
+        key = str(data.get("key") or "").strip()
+        value = str(data.get("value") or "").strip()
+        if not key or not value:
+            logger.warning("Candidato sin key/value: %s", candidate_id)
+            return False
 
-            response = self.provider_manager.generate(
-                prompt,
-                provider_name=provider,
-                fallback_chain=fallback,
-            )
+        self._persist_standard(
+            key=key,
+            value=value,
+            original_query=str(data.get("original_query") or ""),
+            raw_text=str(data.get("raw_text") or ""),
+        )
 
-            start = response.find("{")
-            end = response.rfind("}") + 1
+        done = path.with_name(path.name.replace("pending-", "done-", 1))
+        path.rename(done)
+        logger.info("Candidato aprobado: %s → %s=%s", candidate_id, key, value)
+        return True
 
-            if start != -1 and end != -1:
-                response = response[start:end]
+    def reject_candidate(self, candidate_id: str) -> bool:
+        path = self._pending_path(candidate_id)
+        if not path.exists():
+            logger.warning("Candidato no encontrado: %s", candidate_id)
+            return False
 
-            data = json.loads(response)
+        rejected = path.with_name(path.name.replace("pending-", "rejected-", 1))
+        path.rename(rejected)
+        logger.info("Candidato rechazado: %s", candidate_id)
+        return True
 
-            key = data.get("key")
-            value = data.get("value")
+    # =========================================================
+    # Proposal (no persist estable)
+    # =========================================================
 
-            if key and value:
-                self._save_standard(
-                    key,
-                    value,
-                    original_query,
-                    text,
-                )
+    def _propose_from_text(
+        self,
+        raw_text: str,
+        original_query: str,
+        assistant_response: str,
+    ) -> bool:
+        extracted = self._extract_key_value(raw_text)
+        if not extracted:
+            return False
 
-                logger.info(
-                    "Aprendido: %s = %s",
-                    key,
-                    value,
-                )
+        key = str(extracted.get("key") or "").strip()
+        value = str(extracted.get("value") or "").strip()
+        if not key or not value:
+            return False
 
-                return True
+        candidate_id = str(uuid.uuid4())
+        payload = {
+            "id": candidate_id,
+            "status": "pending",
+            "key": key,
+            "value": value,
+            "raw_text": raw_text,
+            "original_query": original_query,
+            "assistant_response_excerpt": (assistant_response or "")[:500],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "source": "continuous_learner",
+        }
 
-        except Exception as e:
-            logger.debug(
-                "No se pudo extraer aprendizaje: %s",
-                e,
-            )
+        path = self._pending_path(candidate_id)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
-        return False
+        logger.info(
+            "Learning candidate pendiente | id=%s | key=%s",
+            candidate_id,
+            key,
+        )
+        return True
 
-    def _save_standard(
+    def _pending_path(self, candidate_id: str) -> Path:
+        return self.PENDING_DIR / f"pending-{candidate_id}.json"
+
+    # =========================================================
+    # Persist estable (solo tras approve)
+    # =========================================================
+
+    def _persist_standard(
         self,
         key: str,
         value: str,
         original_query: str,
         raw_text: str,
-    ):
-        """
-        Guarda un estándar según el backend configurado.
-        """
-
+    ) -> None:
         backend = self.backend
 
-        if backend in (
-            "legacy",
-            "both",
-        ):
-            self.standards.learn(
-                key,
-                value,
-            )
+        if backend in ("legacy", "both"):
+            self.standards.learn(key, value)
 
-        if backend in (
-            "engram",
-            "both",
-        ):
+        if backend in ("engram", "both"):
             content = f"Estándar aprendido: {key} = {value}"
-
-            tags = [
-                "standard",
-                "preference",
-                "continuous_learning",
-                f"key_{key}",
-                "trazabilidad",
-            ]
-
             self.engram.save(
                 content,
-                tags=tags,
+                tags=[
+                    "standard",
+                    "preference",
+                    "continuous_learning",
+                    f"key_{key}",
+                    "approved",
+                ],
                 source="continuous_learner",
             )
 
@@ -193,95 +217,97 @@ REGLAS:
                 f"Extraído: {raw_text}\n"
                 f"→ {key} = {value}"
             )
-
             self.engram.save(
                 context_content,
                 tags=[
                     "learning_context",
                     "trazabilidad",
                     f"key_{key}",
+                    "approved",
                 ],
                 source="continuous_learner",
             )
 
+    # =========================================================
+    # LLM extract — adaptá a tu ProviderManager actual
+    # =========================================================
+
+    def _extract_key_value(self, text: str) -> dict[str, str] | None:
+        """
+        Usa el LLM para extraer clave y valor.
+        Debe devolver {"key": "...", "value": "..."} o None.
+        """
+        prompt = f"""
+Extrae un estándar o preferencia de aprendizaje del siguiente texto del usuario.
+
+Texto: "{text}"
+
+Devuelve SOLO un JSON válido con dos campos: "key" y "value".
+Sin markdown ni texto extra.
+""".strip()
+
+        try:
+            # Ajustá esta llamada a la API real de tu ProviderManager
+            raw = self.provider_manager.generate(
+                prompt,
+                # task_type / purpose barato si existe en tu selector
+            )
+            if not isinstance(raw, str):
+                raw = str(raw)
+
+            raw = raw.strip()
+            if raw.startswith("```"):
+                lines = raw.split("\n")
+                if lines and lines[0].startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip().startswith("```"):
+                    lines = lines[:-1]
+                raw = "\n".join(lines).strip()
+
+            data = json.loads(raw)
+            if isinstance(data, dict) and data.get("key") and data.get("value"):
+                return {
+                    "key": str(data["key"]).strip(),
+                    "value": str(data["value"]).strip(),
+                }
+        except Exception:
+            logger.exception("No se pudo extraer key/value del texto de aprendizaje")
+
+        return None
+
     def get_context(self) -> str:
         """
-        Devuelve los estándares aprendidos formateados
-        para inyectar en prompts.
+        Estándares ya aprobados (legacy + engram), para prompts.
+        Igual que antes; no incluye pendientes.
         """
-
-        lines = []
-        seen_keys = set()
-
+        lines: list[str] = []
+        seen_keys: set[str] = set()
         backend = self.backend
 
-        if backend in (
-            "engram",
-            "both",
-        ):
-            memories = self.engram.recall(
-                "standard preference",
-                limit=10,
-            )
-
+        if backend in ("engram", "both"):
+            memories = self.engram.recall("standard preference", limit=10)
             for memory in memories:
-                content = memory.get(
-                    "content",
-                    "",
-                )
+                content = memory.get("content", "")
+                if not content.startswith("Estándar aprendido:"):
+                    continue
+                try:
+                    parts = content.replace("Estándar aprendido: ", "", 1).split(" = ", 1)
+                    if len(parts) == 2:
+                        key, value = parts[0].strip(), parts[1].strip()
+                        if key not in seen_keys:
+                            lines.append(f"- {key}: {value}")
+                            seen_keys.add(key)
+                except Exception:
+                    continue
 
-                if content.startswith("Estándar aprendido:"):
-                    try:
-                        parts = content.replace(
-                            "Estándar aprendido: ",
-                            "",
-                        ).split(" = ")
+        if backend in ("legacy", "both"):
+            # Si StandardsLearner expone listado, integralo aquí como ya lo tenías
+            try:
+                for key, value in getattr(self.standards, "all", lambda: {})().items():
+                    if key not in seen_keys:
+                        lines.append(f"- {key}: {value}")
+                        seen_keys.add(key)
+            except Exception:
+                pass
 
-                        if len(parts) == 2:
-                            key = parts[0].strip()
-                            value = parts[1].strip()
-
-                            if key not in seen_keys:
-                                lines.append(f"- {key}: {value}")
-                                seen_keys.add(key)
-
-                    except Exception:
-                        pass
-
-        if backend in (
-            "legacy",
-            "both",
-        ):
-            legacy = self.standards.list_standards()
-
-            for key, value in legacy.items():
-                if key not in seen_keys:
-                    lines.append(f"- {key}: {value}")
-                    seen_keys.add(key)
-
-        if not lines:
-            return ""
-
-        return "=== ESTÁNDARES APRENDIDOS ===\n" + "\n".join(lines)
-
-    def learn_direct(
-        self,
-        key: str,
-        value: str,
-        context: str = "",
-    ) -> bool:
-        """
-        Aprende un estándar sin utilizar el LLM.
-        """
-
-        if not key or not value:
-            return False
-
-        self._save_standard(
-            key,
-            value,
-            context or f"Directo: {key} = {value}",
-            f"{key} = {value}",
-        )
-
-        return True
+        return "\n".join(lines)

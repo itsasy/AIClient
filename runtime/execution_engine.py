@@ -1464,12 +1464,18 @@ class ExecutionEngine:
             return
 
         try:
-            self.learner.extract_and_learn(
+            proposed = self.learner.extract_and_learn(
                 user_query=plan.original_task,
                 assistant_response=str(
                     result.result or result.error or "",
                 ),
             )
+            if proposed:
+                logger.info(
+                    "Learning candidate creado | plan=%s | task=%s",
+                    plan.id,
+                    (plan.original_task or "")[:80],
+                )
         except Exception as exc:
             logger.warning(
                 "Learning post-ejecución falló: %s",
