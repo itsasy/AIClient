@@ -30,20 +30,24 @@ class ApplicationContainer:
 
     def __init__(self) -> None:
         self.context_registry = ContextRegistry()
+
         self.context_manager = ContextManager(
             registry=self.context_registry,
         )
 
-        # auto_load=True → cargan defaults al instanciar
+        # Los Managers son responsables de construir y cargar
+        # sus respectivos Registries.
         self.agent_manager = AgentManager()
         self.skill_manager = SkillManager()
 
         # Registra /spec /plan /build /test /review
         self.command_router = CommandRouter()
 
+        # ExecutionEngine consume únicamente los Registries.
+        # No conoce ni gestiona AgentManager / SkillManager.
         self.execution_engine = ExecutionEngine(
-            agent_manager=self.agent_manager,
-            skill_manager=self.skill_manager,
+            agent_registry=self.agent_manager.registry,
+            skill_registry=self.skill_manager.registry,
             context_manager=self.context_manager,
             intent_analyzer=IntentAnalyzer(),
             plan_builder=PlanBuilder(),
@@ -67,6 +71,8 @@ class ApplicationContainer:
             "agent_manager": self.agent_manager,
             "skill_manager": self.skill_manager,
             "command_router": self.command_router,
+            "agent_registry": self.agent_manager.registry,
+            "skill_registry": self.skill_manager.registry,
         }
 
         return mapping.get(name)
