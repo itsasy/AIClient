@@ -874,17 +874,35 @@ class ExecutionEngine:
                     return result
 
                 if retries >= max_retries:
+                    # No devolver status transitorio "retry" como resultado final.
+                    if result.status == "retry" or getattr(result, "is_retry", False):
+                        return ExecutionResult.fail(
+                            plan_id=plan.id,
+                            error=(
+                                result.error
+                                or "SelfCritic: reintentos agotados sin superar la evaluación"
+                            ),
+                            executor=result.executor or self.name,
+                            metadata={
+                                **dict(result.metadata or {}),
+                                "retry_exhausted": True,
+                                "retry_count": retries,
+                            },
+                        )
                     return result
 
                 retries += 1
                 self.metrics["retries"] += 1
                 result.metadata["retry_count"] = retries
 
+                retry_data = self._retry_context.get(plan.id) or {}
                 logger.info(
-                    "Retry plan=%s intento=%s/%s",
+                    "Retry plan=%s intento=%s/%s | corrections=%s | issues=%s",
                     plan.id,
                     retries,
                     max_retries,
+                    len(retry_data.get("corrections") or []),
+                    len(retry_data.get("issues") or []),
                 )
 
                 self._reset_execution_context(

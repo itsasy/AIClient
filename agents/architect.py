@@ -138,9 +138,17 @@ class ArchitectAgent(Agent):
             "architecture": architecture or {},
         }
 
+        if context.get("retry_corrections"):
+            agent_context["retry_corrections"] = context["retry_corrections"]
+
+        if context.get("retry_issues"):
+            agent_context["retry_issues"] = context["retry_issues"]
+
         logger.info(
-            "ArchitectAgent | architecture_context=%s",
+            "ArchitectAgent | architecture=%s | retry_corrections=%s | retry_issues=%s",
             bool(architecture),
+            len(context.get("retry_corrections") or []),
+            len(context.get("retry_issues") or []),
         )
 
         return LLMRouter().generate(
