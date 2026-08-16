@@ -481,51 +481,149 @@ Comandos principales:
     # ============================================================
 
     if args.command == "status":
+        from core.analytics.metrics_store import MetricsStore
         from core.engram_memory import EngramMemory
 
         eng = EngramMemory()
         stats = eng.stats()
+        metrics_store = MetricsStore()
+
+        try:
+            agg = metrics_store.get_aggregated()
+        except Exception:
+            agg = {}
+
+        latest = agg.get("latest") if isinstance(agg, dict) else None
+        recent = []
+        try:
+            recent = metrics_store.list(limit=5)
+        except Exception:
+            recent = []
+
+        def _fmt_metric(m) -> str:
+            if m is None:
+                return "N/A"
+            if isinstance(m, dict):
+                plan_id = m.get("plan_id", "?")
+                intent = m.get("intent", "?")
+                status = m.get("status", "?")
+                duration = m.get("duration", 0)
+                retries = m.get("retry_count", 0)
+                steps = m.get("step_count", 0)
+                error = m.get("error")
+                started = m.get("started_at", "")
+            else:
+                plan_id = getattr(m, "plan_id", "?")
+                intent = getattr(m, "intent", "?")
+                status = getattr(m, "status", "?")
+                duration = getattr(m, "duration", 0)
+                retries = getattr(m, "retry_count", 0)
+                steps = getattr(m, "step_count", 0)
+                error = getattr(m, "error", None)
+                started = getattr(m, "started_at", "")
+                if hasattr(started, "isoformat"):
+                    started = started.isoformat()
+
+            line = (
+                f"plan={plan_id} | intent={intent} | status={status} | "
+                f"duration={duration}s | retries={retries} | steps={steps}"
+            )
+            if started:
+                line += f" | started={started}"
+            if error:
+                err = str(error).replace("\n", " ")[:120]
+                line += f" | error={err}"
+            return line
 
         if RICH_AVAILABLE:
             console.print("[bold]📊 Estadísticas del sistema[/bold]")
 
             if stats:
-                console.print(f"• Memorias totales: " f"{stats.get('total_memories', 0)}")
-
-                console.print(f"• Última memoria: " f"{stats.get('last_created', 'N/A')}")
-
-                console.print(f"• Tamaño DB: " f"{stats.get('db_size_mb', 0):.2f} MB")
-
+                console.print(f"• Memorias totales: {stats.get('total_memories', 0)}")
+                console.print(f"• Última memoria: {stats.get('last_created', 'N/A')}")
+                console.print(f"• Tamaño DB: {stats.get('db_size_mb', 0):.2f} MB")
             else:
-                console.print("[yellow]No se pudieron obtener estadísticas.[/yellow]")
+                console.print("[yellow]No se pudieron obtener estadísticas de Engram.[/yellow]")
 
             console.print("\n[bold]⚙️ Configuración activa:[/bold]")
-
             console.print(f"• Proveedor código: {Config.CODE_PROVIDER}")
+            console.print(f"• Proveedor arquitectura: {Config.ARCHITECTURE_PROVIDER}")
 
-            console.print(f"• Proveedor arquitectura: " f"{Config.ARCHITECTURE_PROVIDER}")
+            console.print("\n[bold]🚀 Ejecuciones (métricas)[/bold]")
+            if agg:
+                console.print(f"• Total: {agg.get('total', 0)}")
+                console.print(f"• Éxito: {agg.get('success', 0)}")
+                console.print(f"• Fallidas: {agg.get('failed', 0)}")
+                console.print(f"• Parciales: {agg.get('partial', 0)}")
+                console.print(f"• Tasa de éxito: {agg.get('success_rate', 0):.1f}%")
+                console.print(f"• Duración promedio: {agg.get('avg_duration', 0):.2f}s")
+            else:
+                console.print("[dim]Sin métricas aún (.metrics vacío).[/dim]")
+
+            console.print("\n[bold]📌 Última ejecución[/bold]")
+            console.print(_fmt_metric(latest))
+
+            if recent:
+                console.print("\n[bold]📜 Recientes (hasta 5)[/bold]")
+                for item in reversed(list(recent)[-5:]):
+                    console.print(f"  • {_fmt_metric(item)}")
+
+            # Learning candidates pendientes (Fase B)
+            try:
+                from core.learner import ContinuousLearner
+
+                pending = ContinuousLearner().list_pending()
+                console.print(f"\n[bold]🧠 Learning pendientes[/bold]: {len(pending)}")
+                for c in pending[:5]:
+                    console.print(
+                        f"  • {c.get('id', '?')[:8]}… | {c.get('key')} = {c.get('value')}"
+                    )
+            except Exception:
+                pass
 
         else:
             print("📊 Estadísticas del sistema")
-
             if stats:
-                print(f"• Memorias totales: " f"{stats.get('total_memories', 0)}")
-
-                print(f"• Última memoria: " f"{stats.get('last_created', 'N/A')}")
-
-                print(f"• Tamaño DB: " f"{stats.get('db_size_mb', 0):.2f} MB")
-
+                print(f"• Memorias totales: {stats.get('total_memories', 0)}")
+                print(f"• Última memoria: {stats.get('last_created', 'N/A')}")
+                print(f"• Tamaño DB: {stats.get('db_size_mb', 0):.2f} MB")
             else:
-                print("No se pudieron obtener estadísticas.")
+                print("No se pudieron obtener estadísticas de Engram.")
 
             print("\n⚙️ Configuración activa:")
-
             print(f"• Proveedor código: {Config.CODE_PROVIDER}")
+            print(f"• Proveedor arquitectura: {Config.ARCHITECTURE_PROVIDER}")
 
-            print(f"• Proveedor arquitectura: " f"{Config.ARCHITECTURE_PROVIDER}")
+            print("\n🚀 Ejecuciones (métricas)")
+            if agg:
+                print(f"• Total: {agg.get('total', 0)}")
+                print(f"• Éxito: {agg.get('success', 0)}")
+                print(f"• Fallidas: {agg.get('failed', 0)}")
+                print(f"• Parciales: {agg.get('partial', 0)}")
+                print(f"• Tasa de éxito: {agg.get('success_rate', 0):.1f}%")
+                print(f"• Duración promedio: {agg.get('avg_duration', 0):.2f}s")
+            else:
+                print("Sin métricas aún (.metrics vacío).")
+
+            print("\n📌 Última ejecución")
+            print(_fmt_metric(latest))
+
+            if recent:
+                print("\n📜 Recientes (hasta 5)")
+                for item in reversed(list(recent)[-5:]):
+                    print(f"  • {_fmt_metric(item)}")
+
+            try:
+                from core.learner import ContinuousLearner
+
+                pending = ContinuousLearner().list_pending()
+                print(f"\n🧠 Learning pendientes: {len(pending)}")
+                for c in pending[:5]:
+                    print(f"  • {c.get('id', '?')[:8]}… | {c.get('key')} = {c.get('value')}")
+            except Exception:
+                pass
 
         return
-
     # ============================================================
     # Specs
     # ============================================================
