@@ -207,7 +207,6 @@ class ProjectInspector:
 
         result: list[Path] = []
         seen: set[Path] = set()
-        root = Path(root).expanduser().resolve()
 
         # ------------------------------------------------------
         # Archivos prioritarios
@@ -264,17 +263,18 @@ class ProjectInspector:
         """
 
         files: list[Path] = []
-        root = Path(root).resolve()
-        directory = Path(directory).resolve()
-
-        if not directory.is_dir():
-            return files
 
         for current, dirs, filenames in os.walk(directory):
-            dirs[:] = [d for d in dirs if d not in self.EXCLUDED_DIRS]
+
+            dirs[:] = [
+                directory_name
+                for directory_name in dirs
+                if directory_name not in self.EXCLUDED_DIRS
+            ]
 
             for filename in filenames:
-                path = (Path(current) / filename).resolve()
+
+                path = Path(current) / filename
 
                 try:
                     relative = path.relative_to(root)
