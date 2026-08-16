@@ -293,40 +293,26 @@ Reglas:
         analysis: Any,
     ) -> Any:
         """
-        Evita duplicar la evidencia arquitectónica.
+        Conserva únicamente metadata/resumen.
 
-        project_analysis puede contener architecture_context,
-        pero architecture es la representación canónica que se
-        envía al agente.
+        La arquitectura completa se transporta mediante
+        `architecture`, que es la representación canónica.
         """
 
-        if not isinstance(
-            analysis,
-            dict,
-        ):
+        if not isinstance(analysis, dict):
             return analysis
 
-        result = dict(analysis)
+        nested = analysis.get("result")
 
-        result.pop(
-            "architecture_context",
-            None,
-        )
-
-        serialized = self._serialize(result)
-
-        if len(serialized) <= self.MAX_PROJECT_ANALYSIS_CHARS:
-            return result
+        if isinstance(nested, dict):
+            return {
+                "ok": analysis.get("ok"),
+                "summary": nested.get("summary"),
+                "error": nested.get("error"),
+            }
 
         return {
-            "summary": result.get("summary") or result.get("project_summary"),
-            "structure": result.get("structure"),
-            "findings": result.get("findings"),
-            "components": result.get("components"),
-            "limitations": result.get("limitations"),
-            "truncated": True,
-            "original_chars": len(serialized),
-            "content": serialized[: self.MAX_PROJECT_ANALYSIS_CHARS],
+            "ok": analysis.get("ok"),
         }
 
     # ==========================================================
