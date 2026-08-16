@@ -325,6 +325,7 @@ Reglas:
                         "language",
                         "lines",
                         "size",
+                        "content",
                     )
                     if key in file_data
                 }
@@ -332,11 +333,6 @@ Reglas:
                 clean_files.append(clean_file)
 
             result["files"] = clean_files
-
-        result.pop(
-            "content",
-            None,
-        )
 
         return result
 

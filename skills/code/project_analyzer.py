@@ -60,7 +60,7 @@ class ProjectAnalyzerSkill(Skill):
                     "type": "project_analysis",
                     # Resumen humano.
                     "summary": snapshot.summary(),
-                    # Contexto compacto para Agents.
+                    # # Evidencia arquitectónica estructurada para Agents.
                     "architecture_context": architecture_context,
                     # Snapshot estructural.
                     #
