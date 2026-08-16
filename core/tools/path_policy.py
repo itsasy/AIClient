@@ -7,15 +7,25 @@ from core.config import Config
 
 
 class PathPolicy:
-    """Valida rutas para prevenir path traversal."""
+    """Valida rutas para prevenir path traversal.
+
+    Raíz de producto = Config.TARGET_PROJECT_ROOT.
+    Rutas relativas se resuelven contra esa raíz, no contra cwd.
+    """
 
     @staticmethod
     def project_root() -> Path:
-        return Config.TARGET_PROJECT_ROOT.resolve()
+        return Path(Config.TARGET_PROJECT_ROOT).expanduser().resolve()
 
     @staticmethod
     def normalize(path: str | Path) -> Path:
-        return Path(path).expanduser().resolve()
+        root = PathPolicy.project_root()
+        candidate = Path(path).expanduser()
+
+        if candidate.is_absolute():
+            return candidate.resolve()
+
+        return (root / candidate).resolve()
 
     @staticmethod
     def is_within_project(path: str | Path) -> bool:

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-
 from typing import Any
 
 from core.config import Config
-
 from core.tools.base import Tool
 
 
@@ -22,6 +20,21 @@ class FileTool(Tool):
         "filesystem_operation",
     )
 
+    @staticmethod
+    def _resolve_target(path: str | Path) -> Path:
+        root = Path(Config.TARGET_PROJECT_ROOT).expanduser().resolve()
+        candidate = Path(path).expanduser()
+
+        if candidate.is_absolute():
+            filepath = candidate.resolve()
+        else:
+            filepath = (root / candidate).resolve()
+
+        if not filepath.is_relative_to(root):
+            raise ValueError(f"Ruta fuera del proyecto bloqueada: {filepath}")
+
+        return filepath
+
     def execute(
         self,
         operation: str,
@@ -31,15 +44,13 @@ class FileTool(Tool):
     ) -> dict[str, Any]:
 
         if operation != "write":
-
             return {
                 "ok": False,
                 "result": None,
-                "error": (f"Operación no soportada: {operation}"),
+                "error": f"Operación no soportada: {operation}",
             }
 
         if not path:
-
             return {
                 "ok": False,
                 "result": None,
@@ -47,7 +58,6 @@ class FileTool(Tool):
             }
 
         if not content:
-
             return {
                 "ok": False,
                 "result": None,
@@ -55,18 +65,7 @@ class FileTool(Tool):
             }
 
         try:
-
-            root = Path(Config.TARGET_PROJECT_ROOT).resolve()
-
-            filepath = (root / path).resolve()
-
-            if not str(filepath).startswith(str(root)):
-
-                return {
-                    "ok": False,
-                    "result": None,
-                    "error": ("Ruta fuera del proyecto bloqueada."),
-                }
+            filepath = self._resolve_target(path)
 
             filepath.parent.mkdir(
                 parents=True,
@@ -87,7 +86,6 @@ class FileTool(Tool):
             }
 
         except Exception as exc:
-
             return {
                 "ok": False,
                 "result": None,
