@@ -32,6 +32,7 @@ class PromptBuilder:
         - Separar instrucciones, tarea, plan y evidencia.
         - Preservar la distinción entre hechos e inferencias.
         - Construir variantes semánticas del prompt.
+        - Garantizar que el prompt final no supere el límite configurado.
 
     No:
         - Selecciona proveedores.
@@ -42,6 +43,12 @@ class PromptBuilder:
     """
 
     MAX_CONTEXT_CHARS = 30_000
+
+    MAX_ARCHITECTURE_FILES = 50
+    MAX_FILE_CONTENT_CHARS = 2_500
+    MAX_ARCHITECTURE_CONTENT_CHARS = 16_000
+
+    MAX_PROJECT_ANALYSIS_CHARS = 6_000
 
     SYSTEM_INSTRUCTIONS = """
 Eres un ingeniero de software senior y arquitecto de sistemas.
@@ -228,10 +235,6 @@ Reglas:
         prepared: dict[str, Any] = {}
         processed_keys: set[str] = set()
 
-        # ------------------------------------------------------
-        # Contexto prioritario
-        # ------------------------------------------------------
-
         for key in self.CONTEXT_PRIORITY:
             if key not in context:
                 continue
@@ -248,10 +251,6 @@ Reglas:
 
             prepared[key] = value
             processed_keys.add(key)
-
-        # ------------------------------------------------------
-        # Contexto adicional
-        # ------------------------------------------------------
 
         for key, value in context.items():
             if key in processed_keys:
@@ -298,10 +297,7 @@ Reglas:
 
         project_analysis puede contener architecture_context,
         pero architecture es la representación canónica que se
-        envía al agente. Por tanto, no se debe serializar dos veces.
-
-        Conserva el resto del análisis para no perder información
-        potencialmente útil.
+        envía al agente.
         """
 
         if not isinstance(
@@ -317,7 +313,21 @@ Reglas:
             None,
         )
 
-        return result
+        serialized = self._serialize(result)
+
+        if len(serialized) <= self.MAX_PROJECT_ANALYSIS_CHARS:
+            return result
+
+        return {
+            "summary": result.get("summary") or result.get("project_summary"),
+            "structure": result.get("structure"),
+            "findings": result.get("findings"),
+            "components": result.get("components"),
+            "limitations": result.get("limitations"),
+            "truncated": True,
+            "original_chars": len(serialized),
+            "content": serialized[: self.MAX_PROJECT_ANALYSIS_CHARS],
+        }
 
     # ==========================================================
     # Architecture sanitization
@@ -337,36 +347,77 @@ Reglas:
 
         files = result.get("files")
 
-        if isinstance(
+        if not isinstance(
             files,
             list,
         ):
-            clean_files = []
+            serialized = self._serialize(result)
 
-            for file_data in files:
-                if not isinstance(
-                    file_data,
-                    dict,
-                ):
-                    continue
-
-                clean_file = {
-                    key: file_data.get(key)
-                    for key in (
-                        "path",
-                        "filename",
-                        "extension",
-                        "language",
-                        "lines",
-                        "size",
-                        "content",
-                    )
-                    if key in file_data
+            if len(serialized) > self.MAX_ARCHITECTURE_CONTENT_CHARS:
+                return {
+                    "summary": result.get("summary") or result.get("project_summary"),
+                    "structure": result.get("structure"),
+                    "files_truncated": True,
+                    "original_chars": len(serialized),
+                    "content": serialized[: self.MAX_ARCHITECTURE_CONTENT_CHARS],
                 }
 
-                clean_files.append(clean_file)
+            return result
 
-            result["files"] = clean_files
+        clean_files: list[dict[str, Any]] = []
+        remaining_chars = self.MAX_ARCHITECTURE_CONTENT_CHARS
+
+        for file_data in files[: self.MAX_ARCHITECTURE_FILES]:
+            if not isinstance(
+                file_data,
+                dict,
+            ):
+                continue
+
+            clean_file = {
+                key: file_data.get(key)
+                for key in (
+                    "path",
+                    "filename",
+                    "extension",
+                    "language",
+                    "lines",
+                    "size",
+                )
+                if key in file_data
+            }
+
+            content = file_data.get("content")
+
+            if content is not None and remaining_chars > 0:
+                content = str(content)
+
+                allowed = min(
+                    self.MAX_FILE_CONTENT_CHARS,
+                    remaining_chars,
+                )
+
+                if len(content) > allowed:
+                    content = content[:allowed] + "\n" + "[CONTENIDO DEL ARCHIVO REDUCIDO]"
+
+                clean_file["content"] = content
+
+                remaining_chars -= len(content)
+
+            elif content is not None:
+                clean_file["content"] = "[CONTENIDO OMITIDO POR LÍMITE DE CONTEXTO]"
+
+            clean_files.append(clean_file)
+
+        result["files"] = clean_files
+
+        if len(files) > self.MAX_ARCHITECTURE_FILES:
+            result["files_truncated"] = True
+            result["files_available"] = len(files)
+            result["files_included"] = len(clean_files)
+
+        if remaining_chars <= 0:
+            result["content_truncated"] = True
 
         return result
 
@@ -454,7 +505,7 @@ Reglas:
         self,
         plan: ExecutionPlan,
     ) -> str:
-        plan_data = {
+        plan_data: dict[str, Any] = {
             "plan_id": plan.id,
             "original_task": plan.original_task,
             "intent": plan.intent,
@@ -499,10 +550,6 @@ Reglas:
         if prompt_type is PromptType.CRITIQUE:
             sections.append(self.CRITIQUE_INSTRUCTIONS)
 
-        # ------------------------------------------------------
-        # Agent role
-        # ------------------------------------------------------
-
         agent_role = context.get("agent_role")
 
         if agent_role:
@@ -513,10 +560,6 @@ Reglas:
                 )
             )
 
-        # ------------------------------------------------------
-        # Task
-        # ------------------------------------------------------
-
         sections.append(
             self._section(
                 "Tarea del usuario",
@@ -524,20 +567,12 @@ Reglas:
             )
         )
 
-        # ------------------------------------------------------
-        # Plan
-        # ------------------------------------------------------
-
         sections.append(
             self._section(
                 "ExecutionPlan",
                 self._build_plan_section(plan),
             )
         )
-
-        # ------------------------------------------------------
-        # Requirements
-        # ------------------------------------------------------
 
         analysis_requirements = context.get("analysis_requirements")
 
@@ -559,10 +594,6 @@ Reglas:
                 )
             )
 
-        # ------------------------------------------------------
-        # General evidence
-        # ------------------------------------------------------
-
         general_context = {
             key: value for key, value in context.items() if key not in self.SPECIALIZED_CONTEXT_KEYS
         }
@@ -574,10 +605,6 @@ Reglas:
                     self._serialize(general_context),
                 )
             )
-
-        # ------------------------------------------------------
-        # Retry information
-        # ------------------------------------------------------
 
         retry_issues = context.get("retry_issues")
 
@@ -596,10 +623,6 @@ Reglas:
                 )
             )
 
-        # ------------------------------------------------------
-        # Execution evidence
-        # ------------------------------------------------------
-
         execution = context.get("execution")
 
         if execution:
@@ -610,10 +633,6 @@ Reglas:
                 )
             )
 
-        # ------------------------------------------------------
-        # Additional instructions
-        # ------------------------------------------------------
-
         additional_instructions = context.get("additional_instructions")
 
         if additional_instructions:
@@ -623,10 +642,6 @@ Reglas:
                     str(additional_instructions),
                 )
             )
-
-        # ------------------------------------------------------
-        # Final instructions
-        # ------------------------------------------------------
 
         if prompt_type is PromptType.CRITIQUE:
             sections.append(
@@ -691,6 +706,19 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
         self,
         prompt: str,
     ) -> str:
+        """
+        Reduce el prompt sin eliminar las instrucciones finales.
+
+        La estrategia es:
+
+            1. conservar el prefijo;
+            2. conservar las instrucciones finales;
+            3. reducir primero el contexto/evidencia;
+            4. si todavía no alcanza, reducir secciones no críticas;
+            5. como último recurso truncar el cuerpo manteniendo
+               explícitamente el inicio y el final.
+        """
+
         limit = self.max_context_chars
 
         if len(prompt) <= limit:
@@ -702,43 +730,130 @@ La respuesta debe ser concreta, técnica y específica para el proyecto.
             "No inferir información ausente."
         )
 
-        marker = "## Contexto y evidencia disponible"
+        final_marker = "\n## Instrucciones finales"
 
-        context_index = prompt.find(marker)
+        final_index = prompt.find(
+            final_marker,
+        )
 
-        if context_index != -1:
-            before = prompt[:context_index]
+        if final_index != -1:
+            before_final = prompt[:final_index]
+            final_section = prompt[final_index:]
 
-            final_marker = "\n## Instrucciones finales"
-
-            final_index = prompt.find(
-                final_marker,
-                context_index,
-            )
-
-            after = prompt[final_index:] if final_index != -1 else ""
-
-            available = limit - len(before) - len(after) - len(notice)
+            available = limit - len(final_section) - len(notice)
 
             if available > 0:
-                context_content = prompt[context_index + len(marker) :].strip()
-
-                if len(context_content) > available:
-                    context_content = context_content[:available] + "\n[CONTEXTO REDUCIDO]"
-
-                result = before + marker + "\n\n" + context_content + after + notice
-
-                return result[:limit]
-
-        return (
-            prompt[
-                : max(
-                    0,
-                    limit - len(notice),
+                reduced_before = self._reduce_context_sections(
+                    before_final,
+                    available,
                 )
-            ]
-            + notice
+
+                result = reduced_before + notice + final_section
+
+                if len(result) <= limit:
+                    return result
+
+                # Protección contra diferencias de separadores.
+                remaining = limit - len(final_section) - len(notice)
+
+                if remaining > 0:
+                    return before_final[:remaining] + notice + final_section
+
+                return final_section[:limit]
+
+        # Fallback: no se encontró la sección final.
+        # Conservamos el principio y añadimos el aviso.
+        available = max(
+            0,
+            limit - len(notice),
         )
+
+        return (prompt[:available] + notice)[:limit]
+
+    def _reduce_context_sections(
+        self,
+        prompt: str,
+        available: int,
+    ) -> str:
+        """
+        Reduce el bloque previo a las instrucciones finales.
+
+        Prioridad:
+
+            - sistema
+            - rol
+            - tarea
+            - ExecutionPlan
+            - requisitos
+            - output
+            - evidencia/contexto
+
+        La sección de evidencia es la primera candidata a reducción.
+        """
+
+        if len(prompt) <= available:
+            return prompt
+
+        marker = "## Contexto y evidencia disponible"
+
+        context_index = prompt.find(
+            marker,
+        )
+
+        if context_index == -1:
+            return self._compact_text(
+                prompt,
+                available,
+            )
+
+        prefix = prompt[:context_index]
+
+        if len(prefix) >= available:
+            return self._compact_text(
+                prefix,
+                available,
+            )
+
+        remaining = available - len(prefix)
+
+        context = prompt[context_index:]
+
+        reduced_context = self._compact_text(
+            context,
+            remaining,
+            marker=marker,
+        )
+
+        return prefix + reduced_context
+
+    @staticmethod
+    def _compact_text(
+        text: str,
+        limit: int,
+        marker: str | None = None,
+    ) -> str:
+        if limit <= 0:
+            return ""
+
+        if len(text) <= limit:
+            return text
+
+        notice = "\n[CONTEXTO REDUCIDO]"
+
+        if marker and text.startswith(marker):
+            available = limit - len(marker) - len(notice)
+
+            if available <= 0:
+                return marker[:limit]
+
+            return (marker + "\n\n" + text[len(marker) : len(marker) + available] + notice)[:limit]
+
+        available = limit - len(notice)
+
+        if available <= 0:
+            return text[:limit]
+
+        return (text[:available] + notice)[:limit]
 
     # ==========================================================
     # Inspection

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -136,7 +137,7 @@ class ExecutionEngine:
             user_input[:100],
         )
 
-        # 0. Slash commands (/spec, /plan, …) antes del IntentAnalyzer
+        # Slash commands (/spec, /plan, …) antes del IntentAnalyzer
         if self.command_router is not None:
             try:
                 slash_plan = self.command_router.process(user_input)
@@ -182,6 +183,7 @@ class ExecutionEngine:
                     plan,
                     "; ".join(errors),
                 )
+
                 return self._finalize(
                     plan,
                     result,
@@ -191,6 +193,7 @@ class ExecutionEngine:
             plan.mark_validated()
 
             context = self.context_manager.build(plan) or {}
+
             plan.loaded_context = dict(context)
 
             plan.mark_running()
@@ -349,6 +352,14 @@ class ExecutionEngine:
         context: dict[str, Any],
         step: ExecutionStep,
     ) -> dict[str, Any]:
+        """
+        Construye un contexto aislado para el step.
+
+        No modifica directamente el contexto raíz salvo a través
+        de record_step_result(), que es responsabilidad del
+        ContextManager.
+        """
+
         step_context = dict(context)
 
         dependencies = self.context_manager.get_dependency_results(
@@ -357,12 +368,16 @@ class ExecutionEngine:
         )
 
         if dependencies:
-            execution = step_context.setdefault(
-                "execution",
-                {},
+            execution = dict(
+                step_context.get(
+                    "execution",
+                    {},
+                )
+                or {}
             )
 
             execution["dependencies"] = dependencies
+            step_context["execution"] = execution
 
         self._materialize_dependency_outputs(
             step=step,
@@ -370,9 +385,12 @@ class ExecutionEngine:
             step_context=step_context,
         )
 
-        execution = step_context.setdefault(
-            "execution",
-            {},
+        execution = dict(
+            step_context.get(
+                "execution",
+                {},
+            )
+            or {}
         )
 
         execution["current_step"] = {
@@ -385,19 +403,27 @@ class ExecutionEngine:
             ),
         }
 
+        step_context["execution"] = execution
+
         retry_data = self._retry_context.get(
             plan.id,
         )
 
         if retry_data:
-            step_context["retry_corrections"] = retry_data.get(
-                "corrections",
-                [],
+            step_context["retry_corrections"] = list(
+                retry_data.get(
+                    "corrections",
+                    [],
+                )
+                or []
             )
 
-            step_context["retry_issues"] = retry_data.get(
-                "issues",
-                [],
+            step_context["retry_issues"] = list(
+                retry_data.get(
+                    "issues",
+                    [],
+                )
+                or []
             )
 
         return step_context
@@ -417,9 +443,10 @@ class ExecutionEngine:
         Contratos:
 
           - code_artifact → write_file (path, content)
-          - texto plano   → write_file.content (fallback /spec)
+          - texto plano   → write_file.content
           - architecture_evidence / project_analysis → architect
         """
+
         if not dependencies:
             return
 
@@ -428,7 +455,10 @@ class ExecutionEngine:
         plain_texts: list[str] = []
 
         for dep_id, dep_data in dependencies.items():
-            if not isinstance(dep_data, dict):
+            if not isinstance(
+                dep_data,
+                dict,
+            ):
                 continue
 
             status = dep_data.get(
@@ -436,7 +466,7 @@ class ExecutionEngine:
             )
 
             if status is not None and status not in self.SUCCESS_STATUSES:
-                pass
+                continue
 
             raw = dep_data.get(
                 "result",
@@ -455,13 +485,21 @@ class ExecutionEngine:
                     "result",
                 )
 
-            if isinstance(payload, str) and payload.strip():
-                plain_texts.append(
-                    payload,
-                )
+            if isinstance(
+                payload,
+                str,
+            ):
+                if payload.strip():
+                    plain_texts.append(
+                        payload,
+                    )
+
                 continue
 
-            if not isinstance(payload, dict):
+            if not isinstance(
+                payload,
+                dict,
+            ):
                 continue
 
             payload_type = payload.get(
@@ -546,19 +584,27 @@ class ExecutionEngine:
 
                     step.params = params
 
-                    current = step_context.setdefault(
-                        "execution",
-                        {},
+                    current = dict(
+                        step_context.get(
+                            "execution",
+                            {},
+                        )
+                        or {}
                     )
 
-                    current_step = current.setdefault(
-                        "current_step",
-                        {},
+                    current_step = dict(
+                        current.get(
+                            "current_step",
+                            {},
+                        )
+                        or {}
                     )
 
-                    current_step["params"] = dict(
-                        params,
-                    )
+                    current_step["params"] = dict(params)
+
+                    current["current_step"] = current_step
+
+                    step_context["execution"] = current
 
                     logger.info(
                         "Materializado write_file | path=%s | content_len=%s",
@@ -580,7 +626,6 @@ class ExecutionEngine:
                     needs_content = params.get("content") is None
 
             # Fallback: texto plano de task_agent / multi_turn
-
             if needs_content and plain_texts:
                 params = dict(
                     step.params or {},
@@ -593,8 +638,6 @@ class ExecutionEngine:
                 stripped = text.strip()
 
                 if "code_artifact" in stripped and "{" in stripped:
-                    import json
-
                     candidate = stripped
 
                     if candidate.startswith("```"):
@@ -680,19 +723,27 @@ class ExecutionEngine:
 
                 step.params = params
 
-                current = step_context.setdefault(
-                    "execution",
-                    {},
+                current = dict(
+                    step_context.get(
+                        "execution",
+                        {},
+                    )
+                    or {}
                 )
 
-                current_step = current.setdefault(
-                    "current_step",
-                    {},
+                current_step = dict(
+                    current.get(
+                        "current_step",
+                        {},
+                    )
+                    or {}
                 )
 
-                current_step["params"] = dict(
-                    params,
-                )
+                current_step["params"] = dict(params)
+
+                current["current_step"] = current_step
+
+                step_context["execution"] = current
 
                 logger.info(
                     "Materializado write_file desde texto | path=%s | content_len=%s",
@@ -712,51 +763,75 @@ class ExecutionEngine:
         # ----------------------------------------------------------
 
         if step.unit_type == "agent":
-            if "architecture_evidence" in evidence_by_type:
-                evidence = evidence_by_type["architecture_evidence"]
 
-                step_context["architecture"] = evidence
+            architecture_evidence = evidence_by_type.get(
+                "architecture_evidence",
+            )
 
-                if not step_context.get(
-                    "project_summary",
-                ):
-                    step_context["project_summary"] = evidence.get(
-                        "summary",
-                        "",
-                    )
-
-            if "project_analysis" in evidence_by_type:
-                analysis = evidence_by_type["project_analysis"]
-
-                architecture = analysis.get(
-                    "architecture_context",
-                )
-
-                if isinstance(architecture, dict):
-                    step_context["architecture"] = architecture
+            if isinstance(
+                architecture_evidence,
+                dict,
+            ):
+                step_context["architecture"] = architecture_evidence
 
                 if not step_context.get("project_summary"):
                     step_context["project_summary"] = (
-                        analysis.get("summary") or analysis.get("project_summary") or ""
+                        architecture_evidence.get("summary")
+                        or architecture_evidence.get("project_summary")
+                        or ""
                     )
 
-                step_context.pop(
-                    "project_analysis",
-                    None,
+            project_analysis = evidence_by_type.get(
+                "project_analysis",
+            )
+
+            if isinstance(
+                project_analysis,
+                dict,
+            ):
+                architecture = project_analysis.get(
+                    "architecture_context",
                 )
+
+                if isinstance(
+                    architecture,
+                    dict,
+                ):
+                    # architecture es la representación canónica.
+                    # project_analysis queda como evidencia adicional;
+                    # PromptBuilder elimina architecture_context para
+                    # evitar serializar la misma evidencia dos veces.
+                    step_context["architecture"] = architecture
+
+                summary = (
+                    project_analysis.get("summary") or project_analysis.get("project_summary") or ""
+                )
+
+                if summary and not step_context.get("project_summary"):
+                    step_context["project_summary"] = summary
+
+                step_context["project_analysis"] = project_analysis
 
             for key in (
                 "quality_evidence",
                 "security_evidence",
                 "performance_evidence",
             ):
-                if key in evidence_by_type:
-                    step_context[key] = evidence_by_type[key]
+                evidence = evidence_by_type.get(key)
+
+                if isinstance(
+                    evidence,
+                    dict,
+                ):
+                    step_context[key] = evidence
 
             if artifacts:
                 step_context["code_artifacts"] = artifacts
 
-            if plain_texts:
+            # Solo exponemos texto plano si no existe una evidencia
+            # estructurada equivalente. Esto evita duplicar respuestas
+            # completas dentro del prompt.
+            if plain_texts and not (architecture_evidence or project_analysis or artifacts):
                 step_context["dependency_text"] = plain_texts[0]
 
     # =========================================================
@@ -918,15 +993,15 @@ class ExecutionEngine:
 
         return result
 
+    # =========================================================
+    # Scaffold aggregation
+    # =========================================================
+
     def _aggregate_scaffold_results(
         self,
         plan: ExecutionPlan,
         results: list[ExecutionResult],
     ) -> dict[str, Any]:
-        """
-        Resume scaffolds multi-step
-        (pos-stack / from-spec / ui multi-file).
-        """
         modules: list[str] = []
         created: list[str] = []
         adapters: list[str] = []
@@ -954,7 +1029,10 @@ class ExecutionEngine:
                     "result",
                 )
 
-            if not isinstance(raw, dict):
+            if not isinstance(
+                raw,
+                dict,
+            ):
                 continue
 
             mod = raw.get(
@@ -1024,17 +1102,12 @@ class ExecutionEngine:
         }:
             return True
 
-        names = []
-
-        for step in plan.steps:
-            names.append(
-                f"{step.unit_type}:{step.unit_name}",
-            )
+        names = [f"{step.unit_type}:{step.unit_name}" for step in plan.steps]
 
         scaffoldish = sum(
             1
-            for n in names
-            if n
+            for name in names
+            if name
             in {
                 "skill:scaffold_module",
                 "skill:scaffold_ui_shell",
@@ -1160,7 +1233,7 @@ class ExecutionEngine:
                     {
                         "step": step.description,
                         "unit": step.unit_name,
-                        "error": result.error or "Error desconocido",
+                        "error": (result.error or "Error desconocido"),
                     }
                 )
 
@@ -1458,9 +1531,7 @@ class ExecutionEngine:
             self.metrics["cancelled"] += 1
 
     def get_metrics(self) -> dict[str, int]:
-        return dict(
-            self.metrics,
-        )
+        return dict(self.metrics)
 
     def _fail(
         self,
