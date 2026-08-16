@@ -128,6 +128,7 @@ Reglas:
         "agent_role",
         "analysis_requirements",
         "requested_output",
+        "project_analysis",
         "retry_issues",
         "retry_corrections",
         "execution",
@@ -274,6 +275,9 @@ Reglas:
         if key == "architecture":
             return self._sanitize_architecture(value)
 
+        if key == "project_analysis":
+            return self._sanitize_project_analysis(value)
+
         if key == "execution":
             return self._sanitize_execution(value)
 
@@ -284,6 +288,36 @@ Reglas:
             return self._sanitize_list(value)
 
         return value
+
+    def _sanitize_project_analysis(
+        self,
+        analysis: Any,
+    ) -> Any:
+        """
+        Evita duplicar la evidencia arquitectónica.
+
+        project_analysis puede contener architecture_context,
+        pero architecture es la representación canónica que se
+        envía al agente. Por tanto, no se debe serializar dos veces.
+
+        Conserva el resto del análisis para no perder información
+        potencialmente útil.
+        """
+
+        if not isinstance(
+            analysis,
+            dict,
+        ):
+            return analysis
+
+        result = dict(analysis)
+
+        result.pop(
+            "architecture_context",
+            None,
+        )
+
+        return result
 
     # ==========================================================
     # Architecture sanitization

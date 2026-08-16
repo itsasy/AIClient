@@ -728,20 +728,22 @@ class ExecutionEngine:
             if "project_analysis" in evidence_by_type:
                 analysis = evidence_by_type["project_analysis"]
 
-                step_context["project_analysis"] = analysis
+                architecture = analysis.get(
+                    "architecture_context",
+                )
 
-                if "architecture" not in step_context:
-                    step_context["architecture"] = analysis.get(
-                        "architecture_context",
-                        {},
-                    )
+                if isinstance(architecture, dict):
+                    step_context["architecture"] = architecture
 
-                if not step_context.get(
-                    "project_summary",
-                ):
+                if not step_context.get("project_summary"):
                     step_context["project_summary"] = (
                         analysis.get("summary") or analysis.get("project_summary") or ""
                     )
+
+                step_context.pop(
+                    "project_analysis",
+                    None,
+                )
 
             for key in (
                 "quality_evidence",
