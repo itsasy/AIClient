@@ -71,6 +71,7 @@ class ProjectFile:
             "language": self.language,
             "size": self.size,
             "lines": self.lines,
+            "content": self.content,
             "metadata": dict(self.metadata),
         }
 
