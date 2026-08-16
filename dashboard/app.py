@@ -6,22 +6,40 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request
 
+from container import build_container
 from core.config import Config
 from core.document_ingestor import DocumentIngestor
 from core.engram_memory import EngramMemory
-from core.commands.router import CommandRouter
-from runtime.execution_engine import ExecutionEngine
 from core.spec_manager import SpecManager
 from core.standards_learner import StandardsLearner
 
 logger = logging.getLogger(__name__)
 
+
+# ================================================================
+# Aplicación
+# ================================================================
+
 app = Flask(__name__)
-engine = ExecutionEngine(command_router=CommandRouter())
+
+
+# ================================================================
+# Composition Root
+# ================================================================
+
+container = build_container()
+
+engine = container.get_engine()
+
 learner = StandardsLearner()
 engram_memory = EngramMemory()
 spec_manager = SpecManager()
 ingestor = DocumentIngestor()
+
+
+# ================================================================
+# API Key
+# ================================================================
 
 
 def require_api_key(f):
@@ -41,16 +59,26 @@ def require_api_key(f):
                 "Intento de acceso no autorizado desde %s",
                 request.remote_addr,
             )
-            abort(401, description="API Key inválida o no proporcionada.")
+
+            abort(
+                401,
+                description="API Key inválida o no proporcionada.",
+            )
 
         return f(*args, **kwargs)
 
     return decorated
 
 
+# ================================================================
+# Health
+# ================================================================
+
+
 @app.route("/api/health", methods=["GET"])
 def health():
     """Endpoint público para verificar que el servidor está vivo."""
+
     return jsonify(
         {
             "status": "ok",
@@ -59,28 +87,66 @@ def health():
     )
 
 
+# ================================================================
+# Ask
+# ================================================================
+
+
 @app.route("/api/ask", methods=["POST"])
 @require_api_key
 def ask():
     data = request.get_json(silent=True) or {}
+
     query = data.get("query", "")
 
     if not query:
-        return jsonify({"error": "El campo 'query' es obligatorio."}), 400
+        return (
+            jsonify(
+                {
+                    "error": "El campo 'query' es obligatorio.",
+                }
+            ),
+            400,
+        )
 
     try:
         result = engine.execute_from_input(query)
+
         if result.is_success:
-            return jsonify({"response": result.result})
-        else:
-            return jsonify({"error": result.error}), 500
+            return jsonify(
+                {
+                    "response": result.result,
+                }
+            )
+
+        return (
+            jsonify(
+                {
+                    "error": result.error,
+                }
+            ),
+            500,
+        )
 
     except Exception:
         logger.exception(
             "Error procesando consulta: %s",
             query[:50],
         )
-        return jsonify({"error": "Error interno procesando consulta."}), 500
+
+        return (
+            jsonify(
+                {
+                    "error": "Error interno procesando consulta.",
+                }
+            ),
+            500,
+        )
+
+
+# ================================================================
+# Learn
+# ================================================================
 
 
 @app.route("/api/learn", methods=["POST"])
@@ -92,7 +158,14 @@ def learn():
     value = data.get("value")
 
     if not key or not value:
-        return jsonify({"error": "Faltan 'key' o 'value'."}), 400
+        return (
+            jsonify(
+                {
+                    "error": "Faltan 'key' o 'value'.",
+                }
+            ),
+            400,
+        )
 
     try:
         learner.learn(key, value)
@@ -109,47 +182,102 @@ def learn():
             "Error aprendiendo estándar: %s",
             key,
         )
-        return jsonify({"error": "Error interno aprendiendo estándar."}), 500
+
+        return (
+            jsonify(
+                {
+                    "error": "Error interno aprendiendo estándar.",
+                }
+            ),
+            500,
+        )
+
+
+# ================================================================
+# Memory search
+# ================================================================
 
 
 @app.route("/api/memory/search", methods=["GET"])
 @require_api_key
 def memory_search():
     """Busca memorias en Engram."""
+
     query = request.args.get("q", "")
 
     try:
-        limit = int(request.args.get("limit", 5))
+        limit = int(
+            request.args.get(
+                "limit",
+                5,
+            )
+        )
+
     except ValueError:
         limit = 5
 
     if not query:
-        return jsonify({"error": "Falta el parámetro 'q'"}), 400
+        return (
+            jsonify(
+                {
+                    "error": "Falta el parámetro 'q'",
+                }
+            ),
+            400,
+        )
 
     results = engram_memory.recall(
         query,
         limit=limit,
     )
 
-    return jsonify({"results": results})
+    return jsonify(
+        {
+            "results": results,
+        }
+    )
+
+
+# ================================================================
+# Specs list
+# ================================================================
 
 
 @app.route("/api/specs/list", methods=["GET"])
 @require_api_key
 def specs_list():
     """Lista todas las especificaciones."""
+
     specs = spec_manager.list_specs()
-    return jsonify({"specs": specs})
+
+    return jsonify(
+        {
+            "specs": specs,
+        }
+    )
+
+
+# ================================================================
+# Specs load
+# ================================================================
 
 
 @app.route("/api/specs/load", methods=["GET"])
 @require_api_key
 def specs_load():
     """Carga una especificación por nombre."""
+
     name = request.args.get("name")
 
     if not name:
-        return jsonify({"error": "Falta el parámetro 'name'"}), 400
+        return (
+            jsonify(
+                {
+                    "error": "Falta el parámetro 'name'",
+                }
+            ),
+            400,
+        )
 
     spec = spec_manager.load_spec_by_name(name)
 
@@ -166,10 +294,16 @@ def specs_load():
     return jsonify(spec)
 
 
+# ================================================================
+# Stats
+# ================================================================
+
+
 @app.route("/api/stats", methods=["GET"])
 @require_api_key
 def stats():
     """Devuelve estadísticas del sistema."""
+
     stats_data = engram_memory.stats()
 
     if not stats_data:
@@ -185,10 +319,19 @@ def stats():
     stats_data["providers"] = {
         "code": Config.CODE_PROVIDER,
         "architecture": Config.ARCHITECTURE_PROVIDER,
-        "fast": getattr(Config, "FAST_PROVIDER", "None"),
+        "fast": getattr(
+            Config,
+            "FAST_PROVIDER",
+            "None",
+        ),
     }
 
     return jsonify(stats_data)
+
+
+# ================================================================
+# Ingest
+# ================================================================
 
 
 @app.route("/api/ingest", methods=["POST"])
@@ -197,12 +340,26 @@ def ingest_file():
     """Ingiere un documento enviado en multipart/form-data."""
 
     if "file" not in request.files:
-        return jsonify({"error": "No se envió ningún archivo"}), 400
+        return (
+            jsonify(
+                {
+                    "error": "No se envió ningún archivo",
+                }
+            ),
+            400,
+        )
 
     file = request.files["file"]
 
     if file.filename == "":
-        return jsonify({"error": "Nombre de archivo vacío"}), 400
+        return (
+            jsonify(
+                {
+                    "error": "Nombre de archivo vacío",
+                }
+            ),
+            400,
+        )
 
     tmp_path = None
 
@@ -231,7 +388,7 @@ def ingest_file():
             jsonify(
                 {
                     "status": "error",
-                    "message": (f"No se pudo ingerir '{file.filename}'"),
+                    "message": (f"No se pudo ingerir " f"'{file.filename}'"),
                 }
             ),
             500,
@@ -241,11 +398,17 @@ def ingest_file():
         if tmp_path and tmp_path.exists():
             try:
                 tmp_path.unlink()
+
             except Exception:
                 logger.warning(
                     "No se pudo eliminar archivo temporal: %s",
                     tmp_path,
                 )
+
+
+# ================================================================
+# Entry point
+# ================================================================
 
 
 if __name__ == "__main__":
@@ -256,6 +419,7 @@ if __name__ == "__main__":
         Config.DASHBOARD_HOST,
         Config.DASHBOARD_PORT,
     )
+
     logger.info("🔑 API Key requerida en header: X-API-Key")
 
     app.run(

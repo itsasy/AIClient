@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
-# cli/ai.py – Punto de entrada principal con subcomandos y TUI
+"""
+cli/ai.py – Punto de entrada principal con subcomandos y TUI
+"""
 
 import argparse
 import logging
@@ -11,9 +13,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
+from container import build_container
 from core.config import Config
-from runtime.execution_engine import ExecutionEngine
-from core.commands.router import CommandRouter
 
 # ================================================================
 # Rich
@@ -78,8 +79,8 @@ def handle_direct_query(
     if not query.strip():
         return
 
-    router = CommandRouter()
-    engine = ExecutionEngine(command_router=router)
+    container = build_container()
+    engine = container.get_engine()
 
     result = engine.execute_from_input(query)
 
@@ -104,22 +105,6 @@ def main():
 
     # ============================================================
     # Detectar consulta directa ANTES de argparse
-    # ============================================================
-    #
-    # Esto permite:
-    #
-    #   ai "hola"
-    #   ai "crea un proyecto Python"
-    #
-    # sin que argparse intente interpretar "hola" como un
-    # subcomando.
-    #
-    # Los comandos conocidos siguen pasando por argparse:
-    #
-    #   ai status
-    #   ai memory "python"
-    #   ai skill search github
-    #
     # ============================================================
 
     argv = sys.argv[1:]
@@ -150,7 +135,6 @@ def main():
             }
         ]
 
-        # TUI y chat deben seguir el flujo normal de argparse.
         if not chat_mode and not tui_mode:
             query = " ".join(query_args).strip()
 
@@ -430,7 +414,7 @@ Comandos principales:
     args = parser.parse_args()
 
     # ============================================================
-    # 0. TUI
+    # TUI
     # ============================================================
 
     if args.tui:
@@ -448,7 +432,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 1. Subcomando memory
+    # Memory
     # ============================================================
 
     if args.command == "memory":
@@ -470,40 +454,17 @@ Comandos principales:
         if RICH_AVAILABLE:
             table = Table(title="🧠 Memoria recuperada")
 
-            table.add_column(
-                "ID",
-                style="dim",
-            )
-
-            table.add_column(
-                "Contenido",
-                style="white",
-            )
+            table.add_column("ID", style="dim")
+            table.add_column("Contenido", style="white")
 
             for r in results:
-                content = r.get(
-                    "content",
-                    "",
-                )[:100]
+                content = r.get("content", "")[:100]
 
-                if (
-                    len(
-                        r.get(
-                            "content",
-                            "",
-                        )
-                    )
-                    > 100
-                ):
+                if len(r.get("content", "")) > 100:
                     content += "..."
 
                 table.add_row(
-                    str(
-                        r.get(
-                            "id",
-                            "N/A",
-                        )
-                    ),
+                    str(r.get("id", "N/A")),
                     content,
                 )
 
@@ -516,14 +477,13 @@ Comandos principales:
         return
 
     # ============================================================
-    # 2. Status
+    # Status
     # ============================================================
 
     if args.command == "status":
         from core.engram_memory import EngramMemory
 
         eng = EngramMemory()
-
         stats = eng.stats()
 
         if RICH_AVAILABLE:
@@ -541,7 +501,7 @@ Comandos principales:
 
             console.print("\n[bold]⚙️ Configuración activa:[/bold]")
 
-            console.print(f"• Proveedor código: " f"{Config.CODE_PROVIDER}")
+            console.print(f"• Proveedor código: {Config.CODE_PROVIDER}")
 
             console.print(f"• Proveedor arquitectura: " f"{Config.ARCHITECTURE_PROVIDER}")
 
@@ -560,24 +520,20 @@ Comandos principales:
 
             print("\n⚙️ Configuración activa:")
 
-            print(f"• Proveedor código: " f"{Config.CODE_PROVIDER}")
+            print(f"• Proveedor código: {Config.CODE_PROVIDER}")
 
             print(f"• Proveedor arquitectura: " f"{Config.ARCHITECTURE_PROVIDER}")
 
         return
 
     # ============================================================
-    # 3. Specs
+    # Specs
     # ============================================================
 
-    if args.command in (
-        "specs",
-        "list-specs",
-    ):
+    if args.command in ("specs", "list-specs"):
         from core.spec_manager import SpecManager
 
         spec_mgr = SpecManager()
-
         specs = spec_mgr.list_specs()
 
         if not specs:
@@ -587,57 +543,22 @@ Comandos principales:
         if RICH_AVAILABLE:
             table = Table(title="📋 Especificaciones (Specs)")
 
-            table.add_column(
-                "Nombre",
-                style="cyan",
-            )
-
-            table.add_column(
-                "Descripción",
-                style="white",
-            )
-
-            table.add_column(
-                "Estado",
-                style="green",
-            )
-
-            table.add_column(
-                "Creada",
-                style="dim",
-            )
+            table.add_column("Nombre", style="cyan")
+            table.add_column("Descripción", style="white")
+            table.add_column("Estado", style="green")
+            table.add_column("Creada", style="dim")
 
             for s in specs:
-                desc = s.get(
-                    "description",
-                    "",
-                )[:50]
+                description = s.get("description", "")[:50]
 
-                if (
-                    len(
-                        s.get(
-                            "description",
-                            "",
-                        )
-                    )
-                    > 50
-                ):
-                    desc += "..."
+                if len(s.get("description", "")) > 50:
+                    description += "..."
 
                 table.add_row(
-                    s.get(
-                        "name",
-                        "N/A",
-                    ),
-                    desc,
-                    s.get(
-                        "status",
-                        "draft",
-                    ),
-                    s.get(
-                        "created_at",
-                        "",
-                    )[:16],
+                    s.get("name", "N/A"),
+                    description,
+                    s.get("status", "draft"),
+                    s.get("created_at", "")[:16],
                 )
 
             console.print(table)
@@ -653,7 +574,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 4. Ingest
+    # Ingest
     # ============================================================
 
     if args.command == "ingest":
@@ -675,14 +596,14 @@ Comandos principales:
         )
 
         if success:
-            print(f"✅ Documento ingerido: " f"{filepath.name}")
+            print(f"✅ Documento ingerido: {filepath.name}")
         else:
-            print(f"❌ Error al ingerir: " f"{filepath.name}")
+            print(f"❌ Error al ingerir: {filepath.name}")
 
         return
 
     # ============================================================
-    # 5. Forget
+    # Forget
     # ============================================================
 
     if args.command == "forget":
@@ -700,7 +621,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 6. Consolidate
+    # Consolidate
     # ============================================================
 
     if args.command == "consolidate":
@@ -710,7 +631,9 @@ Comandos principales:
 
         consolidator = DailyConsolidator()
 
-        report = consolidator.generate_report(days=args.days)
+        report = consolidator.generate_report(
+            days=args.days,
+        )
 
         print(
             "✅ Informe de consolidación generado en "
@@ -722,7 +645,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 7. Review
+    # Review
     # ============================================================
 
     if args.command == "review":
@@ -731,7 +654,6 @@ Comandos principales:
         )
 
         consolidator = DailyConsolidator()
-
         pending = consolidator.list_pending()
 
         if not pending:
@@ -741,12 +663,12 @@ Comandos principales:
         print(f"📋 Revisando {len(pending)} " "informe(s) pendiente(s)...\n")
 
         for report_path in pending:
-            content = report_path.read_text(encoding="utf-8")
+            content = report_path.read_text(
+                encoding="utf-8",
+            )
 
             print(f"=== {report_path.name} ===")
-
             print(content)
-
             print("\n" + "=" * 60 + "\n")
 
             response = input("¿Aplicar propuestas de este informe? (s/n): ").strip().lower()
@@ -762,7 +684,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 8. Rollback
+    # Rollback
     # ============================================================
 
     if args.command == "rollback":
@@ -792,7 +714,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 9. Snapshots
+    # Snapshots
     # ============================================================
 
     if args.command == "snapshots":
@@ -801,7 +723,6 @@ Comandos principales:
         )
 
         snap_mgr = SnapshotManager()
-
         snapshots = snap_mgr.list_snapshots()
 
         if not snapshots:
@@ -810,30 +731,28 @@ Comandos principales:
 
         print("📸 Snapshots disponibles:")
 
-        for s in snapshots:
-            label = f" ({s.get('label', '')})" if s.get("label") else ""
+        for snapshot in snapshots:
+            label = f" ({snapshot.get('label', '')})" if snapshot.get("label") else ""
 
-            print(f"- {s['id']}{label} - " f"{s['created_at']}")
+            print(f"- {snapshot['id']}{label} - " f"{snapshot['created_at']}")
 
         return
 
     # ============================================================
-    # 10. Analyze
+    # Analyze
     # ============================================================
 
     if args.command == "analyze":
         from core.analytics.analyzer import Analyzer
 
         analyzer = Analyzer()
-
         report = analyzer.analyze()
 
         print("📊 **Informe de análisis**\n")
 
         agg = report["summary"]
 
-        print(f"Total ejecuciones: " f"{agg['total']}")
-
+        print(f"Total ejecuciones: {agg['total']}")
         print(f"Tasa de éxito: " f"{agg['success_rate']:.1f}%")
 
         print(f"Tiempo promedio: " f"{agg['avg_duration']:.2f}s")
@@ -865,14 +784,13 @@ Comandos principales:
         return
 
     # ============================================================
-    # 11. Optimize
+    # Optimize
     # ============================================================
 
     if args.command == "optimize":
         from core.analytics.analyzer import Analyzer
 
         analyzer = Analyzer()
-
         report = analyzer.analyze()
 
         recommendations = report.get(
@@ -904,12 +822,12 @@ Comandos principales:
             )
 
         else:
-            print("ℹ️  Puedes aplicar manualmente " "las sugerencias editando .env.")
+            print("ℹ️ Puedes aplicar manualmente " "las sugerencias editando .env.")
 
         return
 
     # ============================================================
-    # 12. Export memory
+    # Export memory
     # ============================================================
 
     if args.command == "export-memory":
@@ -927,7 +845,7 @@ Comandos principales:
         return
 
     # ============================================================
-    # 13. Skills
+    # Skills
     # ============================================================
 
     if args.command == "skill":
@@ -937,13 +855,9 @@ Comandos principales:
             url = "https://api.github.com/search/repositories" f"?q={args.query}+SKILL.md"
 
             response = requests.get(url)
-
             data = response.json()
 
-            items = data.get(
-                "items",
-                [],
-            )[:5]
+            items = data.get("items", [])[:5]
 
             if not items:
                 print("No se encontraron skills.")
@@ -960,7 +874,7 @@ Comandos principales:
             target = Path.home() / ".engram" / "skills" / args.repo.split("/")[-1]
 
             if target.exists():
-                print(f"⚠️  La skill ya existe en " f"{target}")
+                print(f"⚠️ La skill ya existe en " f"{target}")
                 return
 
             print(f"📦 Instalando {args.repo}...")
@@ -979,15 +893,16 @@ Comandos principales:
         return
 
     # ============================================================
-    # 14. Chat / consulta interactiva
+    # Chat
     # ============================================================
 
     if args.command is None:
         if args.chat:
             print("🤖 Modo Chat " "(escribe 'exit' para salir)\n")
 
-            engine = ExecutionEngine()
-            router = CommandRouter()
+            container = build_container()
+            engine = container.get_engine()
+            router = container.resolve("command_router")
 
             while True:
                 try:
@@ -1030,15 +945,10 @@ Comandos principales:
         # --------------------------------------------------------
 
         print("🤖 Uso: ai 'tu instrucción'")
-
         print("    ai --chat")
-
         print("    ai --tui")
-
         print("    ai --auto 'tu instrucción'")
-
         print("    ai memory 'término'")
-
         print("    ai status")
 
         return
