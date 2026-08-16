@@ -11,6 +11,8 @@ from typing import Any
 from core.config import Config
 from core.engram_memory import EngramMemory
 from core.standards_learner import StandardsLearner
+from core.execution_plan import ExecutionPlan
+from llm.provider_selector import ProviderSelector
 from llm.provider_manager import ProviderManager
 
 logger = logging.getLogger(__name__)
@@ -234,8 +236,8 @@ class ContinuousLearner:
 
     def _extract_key_value(self, text: str) -> dict[str, str] | None:
         """
-        Usa el LLM para extraer clave y valor.
-        Debe devolver {"key": "...", "value": "..."} o None.
+        Usa el LLM para extraer clave y valor del texto del usuario.
+        Devuelve {"key": "...", "value": "..."} o None.
         """
         prompt = f"""
 Extrae un estándar o preferencia de aprendizaje del siguiente texto del usuario.
@@ -243,37 +245,71 @@ Extrae un estándar o preferencia de aprendizaje del siguiente texto del usuario
 Texto: "{text}"
 
 Devuelve SOLO un JSON válido con dos campos: "key" y "value".
-Sin markdown ni texto extra.
+
+Ejemplo:
+{{"key": "framework_preferido", "value": "Vue"}}
+
+Si no se puede extraer, devuelve:
+{{"key": null, "value": null}}
+
+REGLAS:
+- La "key" debe ser una etiqueta corta y descriptiva (minúsculas, guiones bajos).
+- El "value" debe ser el contenido concreto de la preferencia.
+- No inventes información que no esté en el texto.
+- No uses markdown ni bloques de código.
 """.strip()
 
         try:
-            # Ajustá esta llamada a la API real de tu ProviderManager
-            raw = self.provider_manager.generate(
-                prompt,
-                # task_type / purpose barato si existe en tu selector
+            plan = ExecutionPlan(
+                original_task="learn_extraction",
+                intent="learning",
+                skills=["learning"],
             )
-            if not isinstance(raw, str):
-                raw = str(raw)
 
-            raw = raw.strip()
-            if raw.startswith("```"):
-                lines = raw.split("\n")
-                if lines and lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip().startswith("```"):
-                    lines = lines[:-1]
-                raw = "\n".join(lines).strip()
+            provider, fallback = ProviderSelector.select(plan)
 
-            data = json.loads(raw)
-            if isinstance(data, dict) and data.get("key") and data.get("value"):
-                return {
-                    "key": str(data["key"]).strip(),
-                    "value": str(data["value"]).strip(),
-                }
+            response = self.provider_manager.generate(
+                prompt,
+                provider_name=provider,
+                fallback_chain=fallback,
+            )
+
+            if not isinstance(response, str):
+                response = str(response)
+
+            response = response.strip()
+
+            start = response.find("{")
+            end = response.rfind("}") + 1
+
+            if start == -1 or end <= start:
+                logger.warning(
+                    "Respuesta de extracción sin JSON | raw=%s",
+                    response[:200],
+                )
+                return None
+
+            data = json.loads(response[start:end])
+
+            if not isinstance(data, dict):
+                return None
+
+            key = data.get("key")
+            value = data.get("value")
+
+            if not key or not value:
+                return None
+
+            return {
+                "key": str(key).strip(),
+                "value": str(value).strip(),
+            }
+
         except Exception:
-            logger.exception("No se pudo extraer key/value del texto de aprendizaje")
-
-        return None
+            logger.exception(
+                "No se pudo extraer key/value del texto de aprendizaje",
+            )
+            return None
 
     def get_context(self) -> str:
         """
