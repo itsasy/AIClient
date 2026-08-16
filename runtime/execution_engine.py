@@ -789,28 +789,37 @@ class ExecutionEngine:
                 project_analysis,
                 dict,
             ):
-                architecture = project_analysis.get(
-                    "architecture_context",
-                )
+                # Solo usamos architecture_context como fallback.
+                # Si ya existe architecture_evidence, esa es la evidencia canónica.
+                if "architecture" not in step_context:
+                    architecture = project_analysis.get(
+                        "architecture_context",
+                    )
 
-                if isinstance(
-                    architecture,
-                    dict,
-                ):
-                    # architecture es la representación canónica.
-                    # project_analysis queda como evidencia adicional;
-                    # PromptBuilder elimina architecture_context para
-                    # evitar serializar la misma evidencia dos veces.
-                    step_context["architecture"] = architecture
+                    if isinstance(
+                        architecture,
+                        dict,
+                    ):
+                        step_context["architecture"] = architecture
 
                 summary = (
-                    project_analysis.get("summary") or project_analysis.get("project_summary") or ""
+                    project_analysis.get("summary")
+                    or project_analysis.get("project_summary")
+                    or ""
                 )
 
                 if summary and not step_context.get("project_summary"):
                     step_context["project_summary"] = summary
 
-                step_context["project_analysis"] = project_analysis
+                # Solo información analítica mínima.
+                # NO transportar snapshot ni architecture_context.
+                step_context["project_analysis"] = {
+                    "summary": summary,
+                    "type": project_analysis.get(
+                        "type",
+                        "project_analysis",
+                    ),
+                }
 
             for key in (
                 "quality_evidence",
@@ -831,7 +840,11 @@ class ExecutionEngine:
             # Solo exponemos texto plano si no existe una evidencia
             # estructurada equivalente. Esto evita duplicar respuestas
             # completas dentro del prompt.
-            if plain_texts and not (architecture_evidence or project_analysis or artifacts):
+            if plain_texts and not (
+                architecture_evidence
+                or project_analysis
+                or artifacts
+            ):
                 step_context["dependency_text"] = plain_texts[0]
 
     # =========================================================

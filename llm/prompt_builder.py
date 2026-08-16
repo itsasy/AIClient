@@ -44,11 +44,10 @@ class PromptBuilder:
 
     MAX_CONTEXT_CHARS = 30_000
 
-    MAX_ARCHITECTURE_FILES = 50
-    MAX_FILE_CONTENT_CHARS = 2_500
-    MAX_ARCHITECTURE_CONTENT_CHARS = 16_000
-
-    MAX_PROJECT_ANALYSIS_CHARS = 6_000
+    MAX_PROJECT_ANALYSIS_CHARS = 2_000
+    MAX_ARCHITECTURE_FILES = 40
+    MAX_FILE_CONTENT_CHARS = 1_200
+    MAX_ARCHITECTURE_CONTENT_CHARS = 12_000
 
     SYSTEM_INSTRUCTIONS = """
 Eres un ingeniero de software senior y arquitecto de sistemas.
@@ -187,9 +186,17 @@ Reglas:
             list(raw_context.keys()),
         )
 
-        prepared_context = self._prepare_context(
-            raw_context,
-        )
+        prepared_context = self._prepare_context(raw_context)
+
+        try:
+            sizes = {key: len(self._serialize(value)) for key, value in prepared_context.items()}
+            logger.info(
+                "PromptBuilder | prepared_context_chars=%s | total=%s",
+                sizes,
+                sum(sizes.values()),
+            )
+        except Exception:
+            logger.debug("No se pudo medir tamaños de prepared_context", exc_info=True)
 
         prompt = self._compose(
             plan=plan,
@@ -293,26 +300,35 @@ Reglas:
         analysis: Any,
     ) -> Any:
         """
-        Conserva únicamente metadata/resumen.
+        Evita duplicar la evidencia arquitectónica.
 
-        La arquitectura completa se transporta mediante
-        `architecture`, que es la representación canónica.
+        architecture es la representación canónica enviada por separado.
+        project_analysis solo conserva resumen / hallazgos, no snapshot crudo.
         """
-
         if not isinstance(analysis, dict):
             return analysis
 
-        nested = analysis.get("result")
+        result = dict(analysis)
 
-        if isinstance(nested, dict):
-            return {
-                "ok": analysis.get("ok"),
-                "summary": nested.get("summary"),
-                "error": nested.get("error"),
-            }
+        # Evidencia canónica: va en context["architecture"]
+        result.pop("architecture_context", None)
+
+        # Estructura cruda duplicada (aunque sea sin content)
+        result.pop("snapshot", None)
+
+        serialized = self._serialize(result)
+
+        if len(serialized) <= self.MAX_PROJECT_ANALYSIS_CHARS:
+            return result
 
         return {
-            "ok": analysis.get("ok"),
+            "summary": result.get("summary") or result.get("project_summary"),
+            "structure": result.get("structure"),
+            "findings": result.get("findings"),
+            "components": result.get("components"),
+            "limitations": result.get("limitations"),
+            "truncated": True,
+            "original_chars": len(serialized),
         }
 
     # ==========================================================
@@ -323,44 +339,30 @@ Reglas:
         self,
         architecture: Any,
     ) -> Any:
-        if not isinstance(
-            architecture,
-            dict,
-        ):
+        """
+        Compacta evidencia arquitectónica para el LLM.
+
+        - Limita cantidad de archivos.
+        - Recorta content por archivo.
+        - Recorta content total del bloque architecture.
+        """
+        if not isinstance(architecture, dict):
             return architecture
 
         result = dict(architecture)
 
         files = result.get("files")
-
-        if not isinstance(
-            files,
-            list,
-        ):
-            serialized = self._serialize(result)
-
-            if len(serialized) > self.MAX_ARCHITECTURE_CONTENT_CHARS:
-                return {
-                    "summary": result.get("summary") or result.get("project_summary"),
-                    "structure": result.get("structure"),
-                    "files_truncated": True,
-                    "original_chars": len(serialized),
-                    "content": serialized[: self.MAX_ARCHITECTURE_CONTENT_CHARS],
-                }
-
+        if not isinstance(files, list):
             return result
 
         clean_files: list[dict[str, Any]] = []
-        remaining_chars = self.MAX_ARCHITECTURE_CONTENT_CHARS
+        total_content_chars = 0
 
         for file_data in files[: self.MAX_ARCHITECTURE_FILES]:
-            if not isinstance(
-                file_data,
-                dict,
-            ):
+            if not isinstance(file_data, dict):
                 continue
 
-            clean_file = {
+            clean_file: dict[str, Any] = {
                 key: file_data.get(key)
                 for key in (
                     "path",
@@ -374,36 +376,23 @@ Reglas:
             }
 
             content = file_data.get("content")
-
-            if content is not None and remaining_chars > 0:
-                content = str(content)
-
-                allowed = min(
-                    self.MAX_FILE_CONTENT_CHARS,
-                    remaining_chars,
-                )
-
-                if len(content) > allowed:
-                    content = content[:allowed] + "\n" + "[CONTENIDO DEL ARCHIVO REDUCIDO]"
-
-                clean_file["content"] = content
-
-                remaining_chars -= len(content)
-
-            elif content is not None:
-                clean_file["content"] = "[CONTENIDO OMITIDO POR LÍMITE DE CONTEXTO]"
+            if isinstance(content, str) and content:
+                remaining = self.MAX_ARCHITECTURE_CONTENT_CHARS - total_content_chars
+                if remaining <= 0:
+                    clean_file["content_omitted"] = True
+                else:
+                    clipped = content[: min(self.MAX_FILE_CONTENT_CHARS, remaining)]
+                    clean_file["content"] = clipped
+                    if len(content) > len(clipped):
+                        clean_file["content_truncated"] = True
+                    total_content_chars += len(clipped)
 
             clean_files.append(clean_file)
 
         result["files"] = clean_files
-
-        if len(files) > self.MAX_ARCHITECTURE_FILES:
-            result["files_truncated"] = True
-            result["files_available"] = len(files)
-            result["files_included"] = len(clean_files)
-
-        if remaining_chars <= 0:
-            result["content_truncated"] = True
+        result["files_included"] = len(clean_files)
+        result["files_total"] = len(files)
+        result["content_chars_included"] = total_content_chars
 
         return result
 
