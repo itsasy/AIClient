@@ -4,6 +4,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+_EXT_TO_LANGUAGE: dict[str, str] = {
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".tsx": "typescript",
+    ".jsx": "javascript",
+    ".vue": "vue",
+    ".php": "php",
+    ".html": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".md": "markdown",
+    ".json": "json",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    ".toml": "toml",
+    ".sh": "shell",
+    ".xml": "xml",
+    ".sql": "sql",
+    ".ini": "ini",
+    ".env": "dotenv",
+    ".lock": "lock",
+}
+
 
 @dataclass(slots=True)
 class ProjectFile:
@@ -35,6 +59,9 @@ class ProjectFile:
 
         if not self.extension:
             self.extension = path.suffix.lower()
+
+        if self.language is None and self.extension:
+            self.language = _EXT_TO_LANGUAGE.get(self.extension)
 
         if self.content is not None:
             self.size = len(self.content)
