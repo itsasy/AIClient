@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 from core.config import Config
-from core.project_snapshot import ProjectSnapshot
+from core.project_snapshot import ProjectDirectory, ProjectSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -171,6 +171,11 @@ class ProjectInspector:
         if not root.exists():
             return snapshot
 
+        directories = self._collect_directories(root)
+
+        for directory in directories:
+            snapshot.directories.append(directory)
+
         files = self._collect_all_files(root)
 
         for path in files[: self.MAX_SOURCE_FILES]:
@@ -251,6 +256,54 @@ class ProjectInspector:
                     continue
                 result.append(path)
                 seen.add(path)
+
+        return result
+
+    def _collect_directories(
+        self,
+        root: Path,
+    ) -> list[ProjectDirectory]:
+        """
+        Obtiene los directorios relevantes del proyecto.
+
+        Se excluyen las carpetas definidas en EXCLUDED_DIRS.
+        No incluye el directorio raíz del proyecto.
+        """
+
+        result: list[ProjectDirectory] = []
+
+        root = Path(root).expanduser().resolve()
+
+        if not root.is_dir():
+            return result
+
+        for current, dirs, filenames in os.walk(root):
+            current_path = Path(current).resolve()
+
+            # Evitar directorios pesados/irrelevantes.
+            dirs[:] = [directory for directory in dirs if directory not in self.EXCLUDED_DIRS]
+
+            # No registrar el root.
+            if current_path == root:
+                continue
+
+            try:
+                relative = current_path.relative_to(root)
+            except ValueError:
+                continue
+
+            # Seguridad adicional.
+            if any(part in self.EXCLUDED_DIRS for part in relative.parts):
+                continue
+
+            result.append(
+                ProjectDirectory(
+                    path=str(relative),
+                    name=current_path.name,
+                    files_count=len(filenames),
+                    directories_count=len(dirs),
+                )
+            )
 
         return result
 
