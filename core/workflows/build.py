@@ -417,14 +417,21 @@ LOCALE:
             def score(p: Path) -> tuple[int, float]:
                 stem = p.stem.lower()
                 s = 0
+
                 if module in stem:
-                    s += 8
-                if "pos" in stem:
+                    s += 20
+
+                if module == "pos" and "pos" in stem:
                     s += 5
+
+                if module != "pos" and "pos" in stem and module not in stem:
+                    s -= 10
+
                 try:
                     mtime = p.stat().st_mtime
                 except OSError:
                     mtime = 0.0
+
                 return (s, mtime)
 
             ranked = sorted(files, key=score, reverse=True)
@@ -445,26 +452,70 @@ LOCALE:
             except Exception:
                 locale_block = f"locale={locale_code}"
 
+        module_hints = {
+            "pos": (
+                "Dominio POS: pedidos/tickets/líneas/estados en memoria; "
+                "create/add_line/pay/close. Sin catálogo de productos completo."
+            ),
+            "catalog": (
+                "Dominio CATÁLOGO: productos/SKU/nombre/precio/activo en memoria; "
+                "add/update/get/list/deactivate. NO implementes órdenes ni pagos."
+            ),
+            "cash": (
+                "Dominio CAJA: apertura/cierre, movimientos, saldo; " "sin facturación fiscal."
+            ),
+            "auth": (
+                "Dominio AUTH: usuarios, login, hash de password en memoria; "
+                "sin JWT de frameworks."
+            ),
+            "payments": (
+                "Dominio PAYMENTS: delega en PaymentsService/factory; "
+                "no reimplementes el Protocol."
+            ),
+            "invoicing": (
+                "Dominio INVOICING: delega en InvoicingService/factory; " "sin AFIP SDK."
+            ),
+            "delivery": ("Dominio DELIVERY: envíos y estados; sin cobros."),
+            "reports": ("Dominio REPORTS: agregaciones simples sobre listas en memoria."),
+        }
+
+        domain_hint = module_hints.get(
+            module,
+            f"Dominio del módulo {module}: " "lógica de negocio en memoria, sin orquestador.",
+        )
+
         target = f"src/modules/{module}/service.py"
+
         prompt = f"""Implementa la lógica de dominio del módulo "{module}" del POS.
 
 Archivo de salida único: {target}
 
+DOMINIO OBLIGATORIO PARA ESTE ARCHIVO:
+{domain_hint}
+
 Reglas:
 - Python 3.11+, type hints.
+- Respeta el dominio indicado arriba como restricción obligatoria.
+- Usa la SPEC como fuente de requisitos del módulo, pero NO copies el dominio de otra
+  parte de la spec si contradice el dominio obligatorio.
 - NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
 - NO inventes SDKs de pago/fiscal; usa Protocols/mocks si hace falta.
-- Si el módulo es pos: implementa pedidos/tickets, líneas y estados en memoria.
-- Expón métodos claros create, add_line, pay y close.
 - Mantén el dominio autocontenido y sin dependencias del orquestador.
-- Si es payments/invoicing: delega en factory/service existentes del módulo.
-- Código listo para pegar; sin markdown fuera del JSON.
+
+Reglas específicas del módulo:
+- Si el módulo es pos: implementa pedidos/tickets, líneas y estados en memoria;
+  expón create, add_line, pay y close.
+- Si el módulo es catalog: implementa productos en memoria, con SKU/nombre/precio/activo;
+  expón add, update, get, list y deactivate. NO implementes Order, pedidos, pay ni close.
+- Si el módulo es payments/invoicing: delega en factory/service existentes del módulo.
+- Para los demás módulos: implementa únicamente las responsabilidades de su dominio.
+- No agregues responsabilidades pertenecientes a otro módulo.
 
 IMPORTANTE — aislamiento:
 - Estás generando código del PRODUCTO destino (POS), NO del orquestador AIClient.
 - PROHIBIDO importar: core.*, runtime.*, llm.*, agents.*, skills.*, ExecutionPlan, ProviderManager.
 - POS no emite facturas AFIP ni calcula régimen fiscal; eso es invoicing + adapters.
-- Dominio POS: pedidos/tickets/líneas/estados en memoria; métodos claros create/add_line/pay/close.
+- No implementes funcionalidades de otro módulo solo porque aparezcan en la spec.
 
 Devuelve SOLO JSON:
 {{
@@ -475,7 +526,7 @@ Devuelve SOLO JSON:
 }}
 
 === SPEC ({spec_name or "ninguna"}) ===
-{spec_excerpt or "(sin spec; implementa esqueleto POS razonable y documenta supuestos)"}
+{spec_excerpt or "(sin spec; implementa el esqueleto mínimo del dominio solicitado y documenta supuestos)"}
 === FIN SPEC ===
 
 === LOCALE ===
@@ -496,6 +547,7 @@ Devuelve SOLO JSON:
         plan.metadata["workflow"] = "build"
         plan.metadata["module"] = module
         plan.metadata["aggregate_results"] = False
+
         if locale_code:
             plan.metadata["locale"] = locale_code
         if spec_name:
@@ -513,15 +565,20 @@ Devuelve SOLO JSON:
             expected_output="code_artifact",
             metadata={"stage": "generation", "produces": "code_artifact"},
         )
+
         write = plan.add_step(
             description=f"Escribir {target}",
             unit_type="skill",
             unit_name="write_file",
             params={"path": target, "file_index": 0},
             expected_output=f"Archivo {target}",
-            metadata={"stage": "materialization", "consumes": "code_artifact"},
+            metadata={
+                "stage": "materialization",
+                "consumes": "code_artifact",
+            },
         )
         write.depends_on.append(gen.id)
+
         return plan
 
     def _modules_from_spec(self, text: str) -> list[str]:
