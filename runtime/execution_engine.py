@@ -731,7 +731,10 @@ class ExecutionEngine:
                 step_context["project_analysis"] = analysis
 
                 if "architecture" not in step_context:
-                    step_context["architecture"] = analysis
+                    step_context["architecture"] = analysis.get(
+                        "architecture_context",
+                        {},
+                    )
 
                 if not step_context.get(
                     "project_summary",
