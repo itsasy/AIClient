@@ -263,16 +263,22 @@ REGLAS:
             plan = ExecutionPlan(
                 original_task="learn_extraction",
                 intent="learning",
-                skills=["learning"],
+                intent_category="conversation",
             )
 
             provider, fallback = ProviderSelector.select(plan)
 
-            response = self.provider_manager.generate(
-                prompt,
-                provider_name=provider,
-                fallback_chain=fallback,
-            )
+            try:
+                response = self.provider_manager.generate(
+                    prompt,
+                    provider_name=provider,
+                    fallback_chain=fallback,
+                )
+            except TypeError:
+                response = self.provider_manager.generate(
+                    prompt,
+                    provider_name=provider,
+                )
 
             if not isinstance(response, str):
                 response = str(response)
