@@ -81,6 +81,7 @@ class ProjectInspector:
     )
 
     SOURCE_DIRS = (
+        # AIClient / libs
         "core",
         "llm",
         "skills",
@@ -88,6 +89,15 @@ class ProjectInspector:
         "obsidian",
         "cli",
         "tests",
+        # Proyectos generados (POS y otros)
+        "src",
+        "app",
+        "lib",
+        "modules",
+        "adapters",
+        "backend",
+        "frontend",
+        "api",
     )
 
     # ==========================================================
@@ -229,6 +239,15 @@ class ProjectInspector:
                 if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
                     continue
 
+                result.append(path)
+                seen.add(path)
+
+        if not result:
+            for path in self._walk_controlled(root, root):
+                if path in seen:
+                    continue
+                if path.suffix.lower() not in self.INCLUDED_EXTENSIONS:
+                    continue
                 result.append(path)
                 seen.add(path)
 
