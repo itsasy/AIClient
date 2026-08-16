@@ -379,9 +379,53 @@ class ExecutionEngine:
             # Fallback: texto plano de task_agent / multi_turn
             if needs_content and plain_texts:
                 params = dict(step.params or {})
-                params["content"] = plain_texts[0]
+                text = plain_texts[0]
+                content = text
+                path_from_json = None
+
+                stripped = text.strip()
+                if "code_artifact" in stripped and "{" in stripped:
+                    import json
+
+                    candidate = stripped
+                    if candidate.startswith("```"):
+                        lines = candidate.split("\n")
+                        if lines and lines[0].startswith("```"):
+                            lines = lines[1:]
+                        if lines and lines[-1].strip().startswith("```"):
+                            lines = lines[:-1]
+                        candidate = "\n".join(lines).strip()
+
+                    try:
+                        data = json.loads(candidate)
+                    except json.JSONDecodeError:
+                        start = candidate.find("{")
+                        end = candidate.rfind("}")
+                        data = None
+                        if start >= 0 and end > start:
+                            try:
+                                data = json.loads(candidate[start : end + 1])
+                            except json.JSONDecodeError:
+                                data = None
+
+                    if isinstance(data, dict) and data.get("type") == "code_artifact":
+                        files = data.get("files") or []
+                        file_index = 0
+                        try:
+                            file_index = int(params.get("file_index", 0) or 0)
+                        except (TypeError, ValueError):
+                            file_index = 0
+                        if 0 <= file_index < len(files):
+                            chosen = files[file_index]
+                            if isinstance(chosen, dict):
+                                if chosen.get("content") is not None:
+                                    content = chosen["content"]
+                                if chosen.get("path"):
+                                    path_from_json = chosen["path"]
+
+                params["content"] = content
                 if needs_path and not params.get("path"):
-                    params["path"] = "output.md"
+                    params["path"] = path_from_json or "output.md"
                 step.params = params
 
                 current = step_context.setdefault("execution", {})
