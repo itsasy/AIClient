@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 from core.execution_plan import ExecutionPlan
 from core.intent import IntentResult
@@ -199,9 +199,38 @@ class ExecutionPlanner:
 
     @staticmethod
     def _extract_file_path(task: str) -> str:
-        if not isinstance(task, str):
+        """
+        Extrae el path de escritura de forma segura.
+        Prioridad:
+        1. path: 'xxx' o path: "xxx" explícito en el prompt
+        2. Nombre de archivo con extensión entre comillas
+        3. Patrones clásicos de "crea el archivo X"
+        Nunca acepta URLs ni dominios.
+        """
+        if not isinstance(task, str) or not task.strip():
             return ""
 
+        # 1. path explícito (máxima prioridad)
+        explicit = re.search(
+            r"""path\s*[:=]\s*['"]([^'"]+)['"]""",
+            task,
+            re.IGNORECASE,
+        )
+        if explicit:
+            candidate = explicit.group(1).strip()
+            if candidate and not ExecutionPlanner._looks_like_url(candidate):
+                return candidate
+
+        # 2. Archivo con extensión común entre comillas
+        file_match = re.search(
+            r"""['"]([a-zA-Z0-9_\-./]+\.(html|htm|py|js|ts|tsx|jsx|css|json|md|txt|vue|php))['"]""",
+            task,
+            re.IGNORECASE,
+        )
+        if file_match:
+            return file_match.group(1)
+
+        # 3. Patrones clásicos (los que ya tenías, pero filtrados)
         patterns = (
             r"\bel\s+archivo\s+[\"']([^\"']+)[\"']",
             r"\barchivo\s+[\"']([^\"']+)[\"']",
@@ -211,7 +240,6 @@ class ExecutionPlanner:
             r"(?:un\s+|una\s+)?([^\s\"']+\.[a-zA-Z0-9]+)",
             r"\b(?:crea|crear)\s+((?:\.\./)+[^\s\"']+)",
             r"\b(?:crea|crear)\s+(/[^\s\"']+)",
-            r"\b([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)\b",
         )
 
         structural_words = {
@@ -232,9 +260,9 @@ class ExecutionPlanner:
                 continue
 
             path = match.group(1).strip()
-            if not path:
+            if not path or path.lower() in structural_words:
                 continue
-            if path.lower() in structural_words:
+            if ExecutionPlanner._looks_like_url(path):
                 continue
             return path
 
@@ -338,19 +366,20 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Crear archivo"
-
         plan.context_requirements["project"] = False
         plan.context_requirements["standards"] = True
         plan.context_requirements["gentleman"] = False
         plan.governance["allow_write"] = True
 
+        # Extraer path de forma segura
         path = ExecutionPlanner._extract_file_path(task)
         if not path:
-            path = intent.get_entity("path", "")
+            path = intent.get_entity("path", "") if hasattr(intent, "get_entity") else ""
         if not path or not str(path).strip():
             path = "archivo.txt"
         path = str(path).strip()
 
+        # Contenido explícito en el prompt
         content = ExecutionPlanner._extract_file_content(task)
 
         if content:
@@ -368,34 +397,95 @@ class ExecutionPlanner:
             )
             return
 
+        # Detectar pedido multi-fase: analiza URL + genera landing + write_file
+        task_lower = task.lower()
+        has_url = bool(re.search(r"https?://[^\s]+", task))
+        has_analyze = any(
+            w in task_lower
+            for w in ("analiza", "análisis", "analizar", "extrae", "describe", "estructura")
+        )
+        has_generate = any(
+            w in task_lower for w in ("genera", "generar", "crea", "crear", "escribe", "landing")
+        )
+        is_multi_phase = has_url and has_analyze and has_generate
+
         plan.execution_mode = "multi_step"
 
-        coder_step = plan.add_step(
-            description=f"Generar contenido para {path}",
-            unit_type="agent",
-            unit_name="coder",
-            params={"task": task, "path": path},
-            expected_output="code_artifact con path y content.",
-            metadata={
-                "stage": "generation",
-                "produces": "code_artifact",
-            },
-        )
+        if is_multi_phase:
+            # Plan de 3 steps (caso Slack → chocolate)
+            analyze_step = plan.add_step(
+                description="Analizar la landing de referencia",
+                unit_type="agent",
+                unit_name="task_agent",
+                params={
+                    "task": (
+                        "Realiza un análisis detallado de la landing page indicada en la tarea. "
+                        "Extrae estructura de secciones, copy principal, elementos de conversión "
+                        "y estilo visual. Responde solo con el análisis, sin generar código todavía."
+                    )
+                },
+                expected_output="Análisis estructurado de la landing de referencia.",
+                metadata={"stage": "analysis"},
+            )
 
-        write_step = plan.add_step(
-            description=f"Escribir archivo {path}",
-            unit_type="skill",
-            unit_name="write_file",
-            params={},
-            expected_output="Archivo creado en disco.",
-            metadata={
-                "stage": "materialization",
-                "consumes": "code_artifact",
-            },
-        )
-        write_step.depends_on.append(coder_step.id)
+            coder_step = plan.add_step(
+                description=f"Generar HTML completo para {path}",
+                unit_type="agent",
+                unit_name="coder",
+                params={"task": task, "path": path},
+                expected_output="code_artifact con el HTML completo y SEO.",
+                metadata={
+                    "stage": "generation",
+                    "produces": "code_artifact",
+                },
+            )
+            coder_step.depends_on.append(analyze_step.id)
 
-        logger.info("File creation (coder→write_file) | path=%s", path)
+            write_step = plan.add_step(
+                description=f"Escribir archivo {path}",
+                unit_type="skill",
+                unit_name="write_file",
+                params={"path": path},  # path forzado
+                expected_output="Archivo creado en disco.",
+                metadata={
+                    "stage": "materialization",
+                    "consumes": "code_artifact",
+                },
+            )
+            write_step.depends_on.append(coder_step.id)
+
+            logger.info(
+                "File creation (multi-phase: analyze→coder→write_file) | path=%s",
+                path,
+            )
+        else:
+            # Plan clásico de 2 steps
+            coder_step = plan.add_step(
+                description=f"Generar contenido para {path}",
+                unit_type="agent",
+                unit_name="coder",
+                params={"task": task, "path": path},
+                expected_output="code_artifact con path y content.",
+                metadata={
+                    "stage": "generation",
+                    "produces": "code_artifact",
+                },
+            )
+
+            write_step = plan.add_step(
+                description=f"Escribir archivo {path}",
+                unit_type="skill",
+                unit_name="write_file",
+                params={"path": path},
+                expected_output="Archivo creado en disco.",
+                metadata={
+                    "stage": "materialization",
+                    "consumes": "code_artifact",
+                },
+            )
+            write_step.depends_on.append(coder_step.id)
+
+            logger.info("File creation (coder→write_file) | path=%s", path)
 
     @staticmethod
     def _plan_module_scaffold(
@@ -1021,3 +1111,67 @@ Cada paso:
         except json.JSONDecodeError:
             logger.warning("Error parseando JSON de la respuesta del LLM.")
             return []
+
+    def _extract_write_path(self, task: str, entities: dict | None = None) -> Optional[str]:
+        """
+        Extrae el path de escritura de forma segura.
+        Prioridad:
+        1. path: 'xxx' o path: "xxx" explícito en el prompt
+        2. nombre de archivo .html / .py / etc. entre comillas
+        3. Nunca aceptar URLs ni dominios
+        """
+        if not task:
+            return None
+
+        # 1. path explícito (el caso más importante)
+        explicit = re.search(
+            r"""path\s*[:=]\s*['"]([^'"]+)['"]""",
+            task,
+            re.IGNORECASE,
+        )
+        if explicit:
+            candidate = explicit.group(1).strip()
+            if candidate and not self._looks_like_url(candidate):
+                return candidate
+
+        # 2. Archivo con extensión común entre comillas
+        file_match = re.search(
+            r"""['"]([a-zA-Z0-9_\-./]+\.(html|htm|py|js|ts|tsx|jsx|css|json|md|txt))['"]""",
+            task,
+            re.IGNORECASE,
+        )
+        if file_match:
+            return file_match.group(1)
+
+        # 3. Fallback desde entities si el IntentAnalyzer lo extrajo bien
+        if entities:
+            for key in ("path", "filepath", "file", "output_path"):
+                val = entities.get(key)
+                if isinstance(val, str) and val.strip() and not self._looks_like_url(val):
+                    return val.strip()
+
+        return None
+
+    @staticmethod
+    def _looks_like_url(value: str) -> bool:
+        """Evita que se use un dominio o URL como path de archivo."""
+        if not value:
+            return False
+        value = value.lower().strip()
+        return bool(
+            re.search(
+                r"https?://|www\.|\.com(?:/|$|\s)|\.ar(?:/|$|\s)|\.io(?:/|$|\s)|\.net(?:/|$|\s)|\.org(?:/|$|\s)",
+                value,
+            )
+        )
+
+    def _is_multi_phase_landing_request(self, task: str) -> bool:
+        """
+        Detecta el patrón: analiza una URL + genera landing + escribe archivo.
+        """
+        task_lower = task.lower()
+        has_url = bool(re.search(r"https?://[^\s]+", task))
+        has_analyze = any(w in task_lower for w in ("analiza", "análisis", "extrae", "describe"))
+        has_generate = any(w in task_lower for w in ("genera", "crea", "escribe", "landing"))
+        has_write = "write_file" in task_lower or "path:" in task_lower
+        return has_url and has_analyze and has_generate and has_write

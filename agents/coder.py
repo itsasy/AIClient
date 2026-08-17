@@ -46,15 +46,39 @@ class CoderAgent(Agent):
         if requested_paths:
             context["requested_paths"] = requested_paths
 
-        context.setdefault("agent_role", self.role)
-        context.setdefault(
-            "requested_output",
-            (
-                "Responde SOLO con JSON code_artifact. "
-                'Formato: {"type":"code_artifact","files":[{"path":"...","content":"..."}]}. '
-                "En content escapa saltos de línea como \\n (JSON válido estricto)."
-            ),
+        # Detectar si es una landing / HTML
+        is_landing = (
+            any(p.endswith(".html") or "landing" in p.lower() for p in (requested_paths or []))
+            or "landing" in task.lower()
+            or ".html" in task.lower()
         )
+
+        context.setdefault("agent_role", self.role)
+
+        if is_landing:
+            context["requested_output"] = (
+                "Responde SOLO con un JSON válido de tipo code_artifact. "
+                'Formato exacto: {"type":"code_artifact","files":[{"path":"...","content":"..."}]}. '
+                "El content debe ser el HTML completo y válido (DOCTYPE, head, body). "
+                "Incluye obligatoriamente: "
+                '- <title> y <meta name="description"> optimizados para SEO '
+                "- Open Graph (og:title, og:description, og:type) "
+                "- HTML semántico (header, main, section, footer) "
+                "- Mobile-first y accesible "
+                "- Un H1 claro "
+                "Escapa correctamente los saltos de línea como \\n. "
+                "No agregues texto fuera del JSON. No uses markdown."
+            )
+        else:
+            context.setdefault(
+                "requested_output",
+                (
+                    "Responde SOLO con JSON code_artifact. "
+                    'Formato: {"type":"code_artifact","files":[{"path":"...","content":"..."}]}. '
+                    "En content escapa saltos de línea como \\n (JSON válido estricto)."
+                ),
+            )
+
         context["coding_task"] = task
 
         raw = LLMRouter().generate(plan=plan, context=context)
@@ -64,28 +88,6 @@ class CoderAgent(Agent):
             fallback_path=params.get("path"),
         )
         return artifact
-
-    def _collect_requested_paths(
-        self,
-        plan: ExecutionPlan,
-        step: ExecutionStep,
-    ) -> list[str]:
-        paths: list[str] = []
-        for other in plan.steps:
-            if step.id in (other.depends_on or []):
-                if other.unit_name == "write_file":
-                    p = (other.params or {}).get("path")
-                    if p:
-                        paths.append(str(p))
-        if (step.params or {}).get("path"):
-            paths.insert(0, str(step.params["path"]))
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for p in paths:
-            if p not in seen:
-                seen.add(p)
-                ordered.append(p)
-        return ordered
 
     def _parse_artifact(
         self,
@@ -111,24 +113,31 @@ class CoderAgent(Agent):
             if normalized is not None:
                 return normalized
 
+        # Reparación agresiva para code_artifact
         repaired = self._try_repair_code_artifact(text)
         if repaired is not None:
             normalized = self._normalize_dict(repaired)
             if normalized is not None:
                 return normalized
 
-        logger.warning("CoderAgent no pudo parsear JSON. Fallback texto libre.")
+        logger.warning("CoderAgent no pudo parsear JSON. Usando fallback controlado.")
+
+        # Fallback inteligente: si parece HTML, lo guardamos como tal
         path = (
             (fallback_paths[0] if fallback_paths else None)
             or fallback_path
-            or "src/generated/output.txt"
+            or "src/generated/output.html"
         )
-        content = text
-        if text.lstrip().startswith("{") and "code_artifact" in text:
-            again = self._try_repair_code_artifact(text)
-            if again and again.get("files"):
-                return again
 
+        content = text
+        if text.lstrip().startswith("<!DOCTYPE") or text.lstrip().startswith("<html"):
+            # Es HTML crudo → lo envolvemos en code_artifact
+            return {
+                "type": "code_artifact",
+                "files": [{"path": path, "content": content}],
+            }
+
+        # Último recurso
         return {
             "type": "code_artifact",
             "files": [
@@ -138,6 +147,28 @@ class CoderAgent(Agent):
                 }
             ],
         }
+
+    def _collect_requested_paths(
+        self,
+        plan: ExecutionPlan,
+        step: ExecutionStep,
+    ) -> list[str]:
+        paths: list[str] = []
+        for other in plan.steps:
+            if step.id in (other.depends_on or []):
+                if other.unit_name == "write_file":
+                    p = (other.params or {}).get("path")
+                    if p:
+                        paths.append(str(p))
+        if (step.params or {}).get("path"):
+            paths.insert(0, str(step.params["path"]))
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for p in paths:
+            if p not in seen:
+                seen.add(p)
+                ordered.append(p)
+        return ordered
 
     def _try_load_json(self, text: str) -> Any | None:
         try:
