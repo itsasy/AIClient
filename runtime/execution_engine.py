@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from core.analytics.metrics_store import MetricsStore
@@ -434,6 +435,29 @@ class ExecutionEngine:
         )
         return step_context
 
+    @staticmethod
+    def _normalize_write_path(
+        path: str | None,
+        fallback: str = "output.txt",
+    ) -> str:
+        """
+        Fuerza path relativo bajo TARGET.
+        Absolutos del modelo (/home/user/..., /landing_...) → solo nombre o partes seguras.
+        """
+        from pathlib import Path
+
+        raw = (path or "").strip() or fallback
+        p = Path(raw)
+
+        if p.is_absolute():
+            raw = p.name or fallback
+
+        raw = raw.replace("\\", "/").lstrip("/")
+        parts = [x for x in Path(raw).parts if x not in ("", ".", "..")]
+        if not parts:
+            parts = [fallback]
+        return str(Path(*parts))
+
     def _materialize_dependency_outputs(
         self,
         step: ExecutionStep,
@@ -461,62 +485,35 @@ class ExecutionEngine:
         plain_texts: list[str] = []
 
         for dep_id, dep_data in dependencies.items():
-            if not isinstance(
-                dep_data,
-                dict,
-            ):
+            if not isinstance(dep_data, dict):
                 continue
 
-            status = dep_data.get(
-                "status",
-            )
-
+            status = dep_data.get("status")
             if status is not None and status not in self.SUCCESS_STATUSES:
                 continue
 
-            raw = dep_data.get(
-                "result",
-            )
-
+            raw = dep_data.get("result")
             if raw is None:
                 continue
 
             payload = raw
-
             if isinstance(raw, dict) and "ok" in raw and "result" in raw:
                 if raw.get("ok") is False:
                     continue
+                payload = raw.get("result")
 
-                payload = raw.get(
-                    "result",
-                )
-
-            if isinstance(
-                payload,
-                str,
-            ):
+            if isinstance(payload, str):
                 if payload.strip():
-                    plain_texts.append(
-                        payload,
-                    )
-
+                    plain_texts.append(payload)
                 continue
 
-            if not isinstance(
-                payload,
-                dict,
-            ):
+            if not isinstance(payload, dict):
                 continue
 
-            payload_type = payload.get(
-                "type",
-            )
+            payload_type = payload.get("type")
 
             if payload_type == "code_artifact":
-                artifacts.append(
-                    payload,
-                )
-
+                artifacts.append(payload)
             elif payload_type in (
                 "architecture_evidence",
                 "quality_evidence",
@@ -525,59 +522,32 @@ class ExecutionEngine:
                 "project_analysis",
             ):
                 evidence_by_type[payload_type] = payload
-
             elif "architecture" in payload and payload_type is None:
-                evidence_by_type.setdefault(
-                    "architecture_evidence",
-                    payload,
-                )
-
+                evidence_by_type.setdefault("architecture_evidence", payload)
             elif payload_type is None and (
                 "structure" in payload or "files" in payload or "project" in payload
             ):
-                evidence_by_type.setdefault(
-                    "project_analysis",
-                    payload,
-                )
+                evidence_by_type.setdefault("project_analysis", payload)
 
         # ----------------------------------------------------------
         # Skills: write_file
         # ----------------------------------------------------------
 
         if step.unit_type == "skill" and step.unit_name == "write_file":
-            params = dict(
-                step.params or {},
-            )
+            params = dict(step.params or {})
+            planned_path = params.get("path")  # del ExecutionPlanner
 
-            needs_path = not params.get(
-                "path",
-            )
-
+            needs_path = not params.get("path")
             needs_content = params.get("content") is None
 
             if (needs_path or needs_content) and artifacts:
                 file_index = 0
-
                 try:
-                    file_index = int(
-                        params.get(
-                            "file_index",
-                            0,
-                        )
-                        or 0
-                    )
-                except (
-                    TypeError,
-                    ValueError,
-                ):
+                    file_index = int(params.get("file_index", 0) or 0)
+                except (TypeError, ValueError):
                     file_index = 0
 
-                files = (
-                    artifacts[0].get(
-                        "files",
-                    )
-                    or []
-                )
+                files = artifacts[0].get("files") or []
 
                 if 0 <= file_index < len(files):
                     chosen = files[file_index]
@@ -588,198 +558,92 @@ class ExecutionEngine:
                     if needs_content and chosen.get("content") is not None:
                         params["content"] = chosen["content"]
 
-                    step.params = params
-
-                    current = dict(
-                        step_context.get(
-                            "execution",
-                            {},
-                        )
-                        or {}
-                    )
-
-                    current_step = dict(
-                        current.get(
-                            "current_step",
-                            {},
-                        )
-                        or {}
-                    )
-
-                    current_step["params"] = dict(params)
-
-                    current["current_step"] = current_step
-
-                    step_context["execution"] = current
-
-                    logger.info(
-                        "Materializado write_file | path=%s | content_len=%s",
-                        params.get("path"),
-                        len(
-                            str(
-                                params.get(
-                                    "content",
-                                    "",
-                                )
-                            )
-                        ),
-                    )
-
-                    needs_path = not params.get(
-                        "path",
-                    )
-
-                    needs_content = params.get("content") is None
-
             # Fallback: texto plano de task_agent / multi_turn
-            if needs_content and plain_texts:
-                params = dict(
-                    step.params or {},
-                )
+            needs_path = not params.get("path")
+            needs_content = params.get("content") is None
 
+            if needs_content and plain_texts:
                 text = plain_texts[0]
                 content = text
                 path_from_json = None
-
                 stripped = text.strip()
 
                 if "code_artifact" in stripped and "{" in stripped:
                     candidate = stripped
-
                     if candidate.startswith("```"):
-                        lines = candidate.split(
-                            "\n",
-                        )
-
+                        lines = candidate.split("\n")
                         if lines and lines[0].startswith("```"):
                             lines = lines[1:]
-
                         if lines and lines[-1].strip().startswith("```"):
                             lines = lines[:-1]
-
-                        candidate = "\n".join(
-                            lines,
-                        ).strip()
+                        candidate = "\n".join(lines).strip()
 
                     try:
-                        data = json.loads(
-                            candidate,
-                        )
-
+                        data = json.loads(candidate)
                     except json.JSONDecodeError:
-                        start = candidate.find(
-                            "{",
-                        )
-
-                        end = candidate.rfind(
-                            "}",
-                        )
-
+                        start = candidate.find("{")
+                        end = candidate.rfind("}")
                         data = None
-
                         if start >= 0 and end > start:
                             try:
-                                data = json.loads(
-                                    candidate[start : end + 1],
-                                )
+                                data = json.loads(candidate[start : end + 1])
                             except json.JSONDecodeError:
                                 data = None
 
                     if isinstance(data, dict) and data.get("type") == "code_artifact":
-                        files = (
-                            data.get(
-                                "files",
-                            )
-                            or []
-                        )
-
+                        files = data.get("files") or []
                         file_index = 0
-
                         try:
-                            file_index = int(
-                                params.get(
-                                    "file_index",
-                                    0,
-                                )
-                                or 0
-                            )
-                        except (
-                            TypeError,
-                            ValueError,
-                        ):
+                            file_index = int(params.get("file_index", 0) or 0)
+                        except (TypeError, ValueError):
                             file_index = 0
-
                         if 0 <= file_index < len(files):
                             chosen = files[file_index]
-
-                            if isinstance(
-                                chosen,
-                                dict,
-                            ):
+                            if isinstance(chosen, dict):
                                 if chosen.get("content") is not None:
                                     content = chosen["content"]
-
                                 if chosen.get("path"):
                                     path_from_json = chosen["path"]
 
                 params["content"] = content
-
                 if needs_path and not params.get("path"):
-                    params["path"] = path_from_json or "output.md"
+                    params["path"] = path_from_json or planned_path or "output.md"
 
-                step.params = params
+            # --- Normalización de path (siempre) ---
+            fallback = planned_path or "output.txt"
+            if not isinstance(fallback, str) or not fallback.strip():
+                fallback = "output.txt"
+            # Si el artifact trajo absoluto, preferir el path del plan cuando exista
+            candidate_path = params.get("path") or fallback
+            if planned_path and Path(str(candidate_path)).is_absolute():
+                candidate_path = planned_path
+            params["path"] = self._normalize_write_path(
+                str(candidate_path) if candidate_path else None,
+                fallback=str(fallback),
+            )
 
-                current = dict(
-                    step_context.get(
-                        "execution",
-                        {},
-                    )
-                    or {}
-                )
+            step.params = params
 
-                current_step = dict(
-                    current.get(
-                        "current_step",
-                        {},
-                    )
-                    or {}
-                )
+            current = dict(step_context.get("execution") or {})
+            current_step = dict(current.get("current_step") or {})
+            current_step["params"] = dict(params)
+            current["current_step"] = current_step
+            step_context["execution"] = current
 
-                current_step["params"] = dict(params)
-
-                current["current_step"] = current_step
-
-                step_context["execution"] = current
-
-                logger.info(
-                    "Materializado write_file desde texto | path=%s | content_len=%s",
-                    params.get("path"),
-                    len(
-                        str(
-                            params.get(
-                                "content",
-                                "",
-                            )
-                        )
-                    ),
-                )
+            logger.info(
+                "Materializado write_file | path=%s | content_len=%s",
+                params.get("path"),
+                len(str(params.get("content", ""))),
+            )
 
         # ----------------------------------------------------------
-        # Agents: evidencia
+        # Agents: evidencia  (igual que tu versión)
         # ----------------------------------------------------------
 
         if step.unit_type == "agent":
-
-            architecture_evidence = evidence_by_type.get(
-                "architecture_evidence",
-            )
-
-            if isinstance(
-                architecture_evidence,
-                dict,
-            ):
+            architecture_evidence = evidence_by_type.get("architecture_evidence")
+            if isinstance(architecture_evidence, dict):
                 step_context["architecture"] = architecture_evidence
-
                 if not step_context.get("project_summary"):
                     step_context["project_summary"] = (
                         architecture_evidence.get("summary")
@@ -787,42 +651,22 @@ class ExecutionEngine:
                         or ""
                     )
 
-            project_analysis = evidence_by_type.get(
-                "project_analysis",
-            )
-
-            if isinstance(
-                project_analysis,
-                dict,
-            ):
-                # Solo usamos architecture_context como fallback.
-                # Si ya existe architecture_evidence, esa es la evidencia canónica.
+            project_analysis = evidence_by_type.get("project_analysis")
+            if isinstance(project_analysis, dict):
                 if "architecture" not in step_context:
-                    architecture = project_analysis.get(
-                        "architecture_context",
-                    )
-
-                    if isinstance(
-                        architecture,
-                        dict,
-                    ):
+                    architecture = project_analysis.get("architecture_context")
+                    if isinstance(architecture, dict):
                         step_context["architecture"] = architecture
 
                 summary = (
                     project_analysis.get("summary") or project_analysis.get("project_summary") or ""
                 )
-
                 if summary and not step_context.get("project_summary"):
                     step_context["project_summary"] = summary
 
-                # Solo información analítica mínima.
-                # NO transportar snapshot ni architecture_context.
                 step_context["project_analysis"] = {
                     "summary": summary,
-                    "type": project_analysis.get(
-                        "type",
-                        "project_analysis",
-                    ),
+                    "type": project_analysis.get("type", "project_analysis"),
                 }
 
             for key in (
@@ -831,19 +675,12 @@ class ExecutionEngine:
                 "performance_evidence",
             ):
                 evidence = evidence_by_type.get(key)
-
-                if isinstance(
-                    evidence,
-                    dict,
-                ):
+                if isinstance(evidence, dict):
                     step_context[key] = evidence
 
             if artifacts:
                 step_context["code_artifacts"] = artifacts
 
-            # Solo exponemos texto plano si no existe una evidencia
-            # estructurada equivalente. Esto evita duplicar respuestas
-            # completas dentro del prompt.
             if plain_texts and not (architecture_evidence or project_analysis or artifacts):
                 step_context["dependency_text"] = plain_texts[0]
 
