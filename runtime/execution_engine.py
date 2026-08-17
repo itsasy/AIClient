@@ -426,6 +426,12 @@ class ExecutionEngine:
                 or []
             )
 
+        logger.info(
+            "step_context | keys=%s | arch=%s | summary_len=%s",
+            sorted(step_context.keys()),
+            bool(step_context.get("architecture")),
+            len(str(step_context.get("project_summary") or "")),
+        )
         return step_context
 
     def _materialize_dependency_outputs(
@@ -803,9 +809,7 @@ class ExecutionEngine:
                         step_context["architecture"] = architecture
 
                 summary = (
-                    project_analysis.get("summary")
-                    or project_analysis.get("project_summary")
-                    or ""
+                    project_analysis.get("summary") or project_analysis.get("project_summary") or ""
                 )
 
                 if summary and not step_context.get("project_summary"):
@@ -840,11 +844,7 @@ class ExecutionEngine:
             # Solo exponemos texto plano si no existe una evidencia
             # estructurada equivalente. Esto evita duplicar respuestas
             # completas dentro del prompt.
-            if plain_texts and not (
-                architecture_evidence
-                or project_analysis
-                or artifacts
-            ):
+            if plain_texts and not (architecture_evidence or project_analysis or artifacts):
                 step_context["dependency_text"] = plain_texts[0]
 
     # =========================================================
