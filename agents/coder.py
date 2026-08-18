@@ -107,6 +107,9 @@ class CoderAgent(Agent):
             )
             context["coding_task"] = generation_task
 
+            # Activar modo lean para el primer intento.
+            context["lean_prompt"] = True
+
             analysis_block = ""
             if has_analysis:
                 analysis_block = f"""
@@ -193,6 +196,8 @@ class CoderAgent(Agent):
 
         html_context: dict[str, Any] = {
             "agent_role": self.role,
+            # Activar modo lean también en el segundo intento.
+            "lean_prompt": True,
             "coding_task": (
                 f"Genera ÚNICAMENTE el HTML completo de una landing page "
                 f"para 'chocolate artesanal'. "

@@ -517,7 +517,6 @@ Reglas:
         context: dict[str, Any],
         prompt_type: PromptType,
     ) -> str:
-
         sections: list[str] = [
             self.SYSTEM_INSTRUCTIONS,
         ]
@@ -525,32 +524,40 @@ Reglas:
         if prompt_type is PromptType.CRITIQUE:
             sections.append(self.CRITIQUE_INSTRUCTIONS)
 
-        agent_role = context.get("agent_role")
+        # ---------------------------------------------------------
+        # Modo lean: usado por CoderAgent en landings
+        # para evitar que el modelo se quede en modo análisis.
+        # ---------------------------------------------------------
+        lean_mode = bool(
+            context.get("lean_prompt")
+            or context.get("suppress_plan")
+            or context.get("ignore_original_task")
+        )
 
+        agent_role = context.get("agent_role")
         if agent_role:
+            sections.append(self._section("Rol de ejecución", str(agent_role)))
+
+        # Tarea del usuario
+        if lean_mode:
+            # Preferir coding_task si existe
+            task_text = (
+                context.get("coding_task")
+                or context.get("task")
+                or "Genera el artefacto solicitado."
+            )
+            sections.append(self._section("Tarea", str(task_text)))
+        else:
+            sections.append(self._section("Tarea del usuario", plan.original_task))
             sections.append(
                 self._section(
-                    "Rol de ejecución",
-                    str(agent_role),
+                    "ExecutionPlan",
+                    self._build_plan_section(plan),
                 )
             )
 
-        sections.append(
-            self._section(
-                "Tarea del usuario",
-                plan.original_task,
-            )
-        )
-
-        sections.append(
-            self._section(
-                "ExecutionPlan",
-                self._build_plan_section(plan),
-            )
-        )
-
+        # Requisitos de análisis
         analysis_requirements = context.get("analysis_requirements")
-
         if analysis_requirements:
             sections.append(
                 self._section(
@@ -559,38 +566,60 @@ Reglas:
                 )
             )
 
+        # Formato de salida solicitado
         requested_output = context.get("requested_output")
-
         if requested_output:
             sections.append(
                 self._section(
                     "Formato de salida solicitado",
-                    self._serialize(requested_output),
+                    (
+                        self._serialize(requested_output)
+                        if not isinstance(requested_output, str)
+                        else requested_output
+                    ),
                 )
             )
 
+        # Contexto general (excluyendo claves especializadas)
         general_context = {
-            key: value for key, value in context.items() if key not in self.SPECIALIZED_CONTEXT_KEYS
+            key: value
+            for key, value in context.items()
+            if key not in self.SPECIALIZED_CONTEXT_KEYS
+            and key
+            not in {
+                "lean_prompt",
+                "suppress_plan",
+                "ignore_original_task",
+                "coding_task",
+                "requested_output",
+                "agent_role",
+            }
         }
 
-        if general_context:
+        if general_context and not lean_mode:
             sections.append(
                 self._section(
                     "Contexto y evidencia disponible",
                     self._serialize(general_context),
                 )
             )
+        elif lean_mode and context.get("dependency_text"):
+            # En lean mode solo dejamos pasar el análisis si existe
+            sections.append(
+                self._section(
+                    "Análisis de referencia",
+                    str(context["dependency_text"])[:4500],
+                )
+            )
 
+        # Retry
         retry_issues = context.get("retry_issues")
-
         retry_corrections = context.get("retry_corrections")
-
         if retry_issues or retry_corrections:
             retry_payload = {
                 "issues": retry_issues or [],
                 "corrections": retry_corrections or [],
             }
-
             sections.append(
                 self._section(
                     "Correcciones de una ejecución anterior",
@@ -598,61 +627,28 @@ Reglas:
                 )
             )
 
-        execution = context.get("execution")
-
-        if execution:
-            sections.append(
-                self._section(
-                    "Evidencia de ejecución",
-                    self._serialize(execution),
-                )
-            )
-
-        additional_instructions = context.get("additional_instructions")
-
-        if additional_instructions:
-            sections.append(
-                self._section(
-                    "Instrucciones adicionales",
-                    str(additional_instructions),
-                )
-            )
-
+        # Instrucciones finales
         if prompt_type is PromptType.CRITIQUE:
             sections.append(
                 self._section(
                     "Instrucciones finales",
                     """
-Evalúa exclusivamente el resultado disponible.
-
-No ejecutes nuevamente la tarea.
-No propongas cambios basados en información inexistente.
-No confundas una limitación de evidencia con un error de ejecución.
-
-Devuelve únicamente el JSON definido en "Modo de evaluación".
-""".strip(),
+    Evalúa exclusivamente el resultado disponible.
+    No ejecutes nuevamente la tarea.
+    Devuelve únicamente el JSON definido en "Modo de evaluación".
+    """.strip(),
                 )
             )
-
         else:
             sections.append(
                 self._section(
                     "Instrucciones finales",
                     """
-Realiza la tarea utilizando únicamente la información disponible.
-
-Cuando debas analizar una implementación:
-
-1. identifica primero los hechos observables;
-2. separa las inferencias de los hechos;
-3. indica explícitamente qué información no puede determinarse;
-4. evita completar huecos con suposiciones;
-5. respeta las restricciones del ExecutionPlan;
-6. si existe información de retry, corrige específicamente los problemas
-   señalados sin introducir cambios no justificados.
-
-La respuesta debe ser concreta, técnica y específica para el proyecto.
-""".strip(),
+    Realiza la tarea utilizando únicamente la información disponible.
+    Responde de forma concreta y técnica.
+    Si se te pide un formato específico (JSON, HTML, etc.), respétalo estrictamente.
+    No inventes información que no esté en el contexto.
+    """.strip(),
                 )
             )
 
