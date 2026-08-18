@@ -55,23 +55,18 @@ class CoderAgent(Agent):
         context = dict(context or {})
         params = dict(step.params or {})
 
-        task = str(params.get("task") or plan.objective or plan.original_task or "")
+        original_task = str(params.get("task") or plan.objective or plan.original_task or "")
 
         requested_paths = self._collect_requested_paths(plan, step)
-
         if requested_paths:
             context["requested_paths"] = requested_paths
 
-        # ---------------------------------------------------------
-        # Detectar landing / HTML
-        # ---------------------------------------------------------
-
+        # Detectar landing
         is_landing = any(
-            p.lower().endswith((".html", ".htm")) or "landing" in p.lower() for p in requested_paths
+            p.lower().endswith((".html", ".htm")) or "landing" in p.lower()
+            for p in (requested_paths or [])
         )
-
-        task_lower = task.lower()
-
+        task_lower = original_task.lower()
         is_landing = (
             is_landing
             or "landing" in task_lower
@@ -86,8 +81,8 @@ class CoderAgent(Agent):
         has_analysis = isinstance(dependency_text, str) and bool(dependency_text.strip())
 
         logger.info(
-            "CoderAgent contexto | plan=%s | landing=%s | "
-            "requested_paths=%s | dependency_text=%s | dependency_chars=%s",
+            "CoderAgent contexto | plan=%s | landing=%s | requested_paths=%s | "
+            "dependency_text=%s | dependency_chars=%s",
             plan.id,
             is_landing,
             requested_paths,
@@ -99,97 +94,70 @@ class CoderAgent(Agent):
             requested_paths[0] if requested_paths else str(params.get("path") or "landing.html")
         )
 
-        # ---------------------------------------------------------
-        # Construir prompt
-        # ---------------------------------------------------------
-
+        # ------------------------------------------------------------------
+        # Para landings: reescribimos la tarea para que el modelo
+        # deje de estar en modo "análisis" y pase a modo "generación".
+        # ------------------------------------------------------------------
         if is_landing:
-            analysis_block = ""
+            generation_task = (
+                f"Genera el código HTML completo de una landing page "
+                f"para el producto 'chocolate artesanal'. "
+                f"El archivo debe guardarse en '{target_path}'. "
+                f"Devuelve únicamente el code_artifact solicitado."
+            )
+            context["coding_task"] = generation_task
 
+            analysis_block = ""
             if has_analysis:
                 analysis_block = f"""
-ANÁLISIS PREVIO DE LA LANDING DE REFERENCIA
-===========================================
-Usa el siguiente análisis como inspiración de estructura,
-copy y elementos de conversión.
-
-Adapta TODO al producto "chocolate artesanal".
-
-No copies marcas, nombres ni claims de terceros.
-
---- BEGIN ANALYSIS ---
-{dependency_text[:6000]}
---- END ANALYSIS ---
-"""
+    ANÁLISIS DE REFERENCIA (usar solo como inspiración de estructura y copy):
+    ---
+    {dependency_text[:4500]}
+    ---
+    Adapta todo al producto "chocolate artesanal". No copies marcas ni claims de terceros.
+    """
 
             context["requested_output"] = f"""
-CONTRATO OBLIGATORIO – LANDING HTML
-===================================
+    CONTRATO OBLIGATORIO
+    ====================
+    Devuelve ÚNICAMENTE este JSON válido (sin markdown, sin texto extra):
 
-Devuelve ÚNICAMENTE JSON válido.
-No uses markdown.
-No agregues explicaciones.
-No agregues confirmaciones.
-
-{{
-  "type": "code_artifact",
-  "files": [
     {{
-      "path": "{target_path}",
-      "content": "<!DOCTYPE html>...HTML completo...</html>"
+    "type": "code_artifact",
+    "files": [
+        {{
+        "path": "{target_path}",
+        "content": "<!DOCTYPE html>...HTML completo...</html>"
+        }}
+    ]
     }}
-  ]
-}}
 
-REGLAS ABSOLUTAS:
+    REGLAS:
+    - "path" debe ser exactamente "{target_path}"
+    - "content" debe ser HTML5 completo que empiece con <!DOCTYPE html> y termine con </html>
+    - Debe incluir: title, meta description, og:title, og:description, og:type="website", viewport
+    - Debe incluir: <header>, <main>, <section>, <footer>, exactamente un <h1>, <style>, un CTA (<a> o <button>)
+    - Producto: chocolate artesanal
+    - Página autocontenida y mobile-first
+    - NO escribas análisis, confirmaciones ni explicaciones
 
-1. "type" debe ser exactamente "code_artifact".
-2. Debe existir exactamente un archivo.
-3. "path" debe ser exactamente "{target_path}".
-4. "content" debe contener HTML5 completo.
-5. El contenido debe comenzar con <!DOCTYPE html>.
-6. El contenido debe terminar con </html>.
-7. Debe existir <title>.
-8. Debe existir meta name="description".
-9. Debe existir og:title.
-10. Debe existir og:description.
-11. Debe existir og:type="website".
-12. Debe existir <header>, <main>, <section> y <footer>.
-13. Debe existir exactamente un <h1>.
-14. Debe existir <style> con CSS autocontenido.
-15. Debe existir meta viewport para comportamiento mobile-first.
-16. Debe existir un CTA mediante <a> o <button>.
-17. Producto: chocolate artesanal.
-18. La página debe ser autocontenida.
-19. No escribas archivos ni confirmes que escribiste archivos.
-20. Escapa correctamente saltos de línea y comillas para producir JSON válido.
-
-{analysis_block}
-"""
-
+    {analysis_block}
+    """
         else:
+            context["coding_task"] = original_task
             context.setdefault(
                 "requested_output",
                 (
-                    "Responde ÚNICAMENTE con JSON válido de tipo "
-                    "code_artifact. "
-                    '{"type":"code_artifact","files":['
-                    '{"path":"...","content":"..."}]}. '
-                    "No uses markdown ni texto adicional. "
-                    "Escapa correctamente el contenido."
+                    "Responde ÚNICAMENTE con JSON válido de tipo code_artifact. "
+                    '{"type":"code_artifact","files":[{"path":"...","content":"..."}]}. '
+                    "No uses markdown ni texto adicional."
                 ),
             )
 
-        context["coding_task"] = task
-
-        # ---------------------------------------------------------
+        # ------------------------------------------------------------------
         # Primer intento
-        # ---------------------------------------------------------
-
-        raw = LLMRouter().generate(
-            plan=plan,
-            context=context,
-        )
+        # ------------------------------------------------------------------
+        raw = LLMRouter().generate(plan=plan, context=context)
 
         logger.info(
             "CoderAgent respuesta LLM (1er intento) | chars=%s | prefix=%r",
@@ -206,10 +174,6 @@ REGLAS ABSOLUTAS:
         if not is_landing:
             return artifact
 
-        # ---------------------------------------------------------
-        # Validar contrato de landing
-        # ---------------------------------------------------------
-
         artifact = self._enforce_landing_contract(
             artifact=artifact,
             expected_path=target_path,
@@ -219,70 +183,53 @@ REGLAS ABSOLUTAS:
         if artifact.get("files"):
             return artifact
 
-        # ---------------------------------------------------------
-        # Segundo intento:
-        # pedir HTML PURO, no JSON.
-        #
-        # Esto elimina una capa completa de posibles errores
-        # de escaping JSON.
-        # ---------------------------------------------------------
-
+        # ------------------------------------------------------------------
+        # Segundo intento: HTML puro + contexto mínimo
+        # ------------------------------------------------------------------
         logger.warning(
             "CoderAgent landing inválida en 1er intento. "
-            "Ejecutando segundo intento con HTML puro."
+            "Ejecutando segundo intento con HTML puro y contexto mínimo."
         )
 
-        html_context = dict(context)
+        html_context: dict[str, Any] = {
+            "agent_role": self.role,
+            "coding_task": (
+                f"Genera ÚNICAMENTE el HTML completo de una landing page "
+                f"para 'chocolate artesanal'. "
+                f"El archivo se llamará {target_path}."
+            ),
+            "requested_output": f"""
+    DEVUELVE ÚNICAMENTE HTML PURO.
 
-        html_context["requested_output"] = f"""
-DEVUELVE ÚNICAMENTE HTML PURO.
+    No devuelvas JSON.
+    No uses markdown.
+    No uses ```html.
+    No escribas análisis ni confirmaciones.
 
-No devuelvas JSON.
-No uses markdown.
-No uses ```html.
-No agregues explicaciones.
-No confirmes que creaste un archivo.
+    El resultado debe empezar exactamente con:
+    <!DOCTYPE html>
 
-El resultado debe comenzar exactamente con:
-<!DOCTYPE html>
+    Y terminar con:
+    </html>
 
-Y debe terminar con:
-</html>
+    Requisitos obligatorios:
+    - <html lang="es">
+    - <head> con charset, viewport, title, meta description
+    - og:title, og:description, og:type="website"
+    - <style> con CSS autocontenido
+    - <body> con <header>, <main>, <section>, <footer>
+    - exactamente un <h1>
+    - un CTA con <a> o <button>
+    - producto: chocolate artesanal
+    - mobile-first y autocontenida
+    """,
+            "requested_paths": requested_paths,
+        }
 
-Requisitos obligatorios:
+        # No enviamos dependency_text ni el ExecutionPlan completo
+        # para evitar que el modelo vuelva al modo análisis.
 
-- <html>
-- <head>
-- <meta charset="UTF-8">
-- meta viewport
-- <title>
-- meta name="description"
-- og:title
-- og:description
-- og:type="website"
-- <style>
-- <body>
-- <header>
-- <main>
-- <section>
-- exactamente un <h1>
-- un CTA mediante <a> o <button>
-- <footer>
-
-Producto:
-chocolate artesanal.
-
-La página debe ser autocontenida y mobile-first.
-"""
-
-        # El análisis largo puede provocar que el segundo intento
-        # vuelva a desviarse del formato.
-        html_context.pop("dependency_text", None)
-
-        raw2 = LLMRouter().generate(
-            plan=plan,
-            context=html_context,
-        )
+        raw2 = LLMRouter().generate(plan=plan, context=html_context)
 
         logger.info(
             "CoderAgent respuesta LLM (2º intento HTML) | chars=%s | prefix=%r",
