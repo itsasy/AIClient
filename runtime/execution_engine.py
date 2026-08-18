@@ -34,6 +34,7 @@ class ExecutionEngine:
     proporcionados por la composición de la aplicación.
 
     No:
+
         - Carga Agents.
         - Carga Skills.
         - Gestiona AgentManager.
@@ -52,18 +53,40 @@ class ExecutionEngine:
             ↓
         ExecutionPlan
             ↓
-        validate → context → execute → evaluate → retry → finalize → learning
+        validate
+            ↓
+        context
+            ↓
+        execute
+            ↓
+        evaluate
+            ↓
+        retry
+            ↓
+        finalize
+            ↓
+        learning
+
+    ExecutionResult es la fuente de verdad del lifecycle.
+
+    El engine utiliza:
+
+        result.is_success
+        result.is_partial
+        result.is_failure
+        result.is_retry
+        result.is_cancelled
+        result.is_terminal
+
+    result.status se reserva para:
+
+        - serialización
+        - logging
+        - métricas
+        - compatibilidad con datos legacy
     """
 
     name = "execution_engine"
-
-    SUCCESS_STATUSES = frozenset(
-        {
-            "completed",
-            "success",
-            "ok",
-        }
-    )
 
     def __init__(
         self,
@@ -113,6 +136,7 @@ class ExecutionEngine:
         self.learner = ContinuousLearner()
         self.engram = EngramMemory()
         self.metrics_store = MetricsStore()
+
         self._retry_context: dict[str, dict[str, Any]] = {}
 
         logger.info(
@@ -131,17 +155,24 @@ class ExecutionEngine:
         metadata: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         if not user_input or not user_input.strip():
-            raise ValueError("user_input no puede estar vacío.")
+            raise ValueError(
+                "user_input no puede estar vacío.",
+            )
 
         logger.info(
             "Engine procesando entrada=%s",
             user_input[:100],
         )
 
-        # Slash commands (/spec, /plan, …) antes del IntentAnalyzer
+        # -----------------------------------------------------
+        # Slash commands
+        # -----------------------------------------------------
+
         if self.command_router is not None:
             try:
-                slash_plan = self.command_router.process(user_input)
+                slash_plan = self.command_router.process(
+                    user_input,
+                )
             except ValueError as exc:
                 return ExecutionResult.fail(
                     plan_id="slash",
@@ -153,7 +184,13 @@ class ExecutionEngine:
                 if metadata:
                     slash_plan.metadata.update(metadata)
 
-                return self.execute(slash_plan)
+                return self.execute(
+                    slash_plan,
+                )
+
+        # -----------------------------------------------------
+        # Intent → Plan
+        # -----------------------------------------------------
 
         intent = self.intent_analyzer.analyze(
             user_input,
@@ -167,16 +204,29 @@ class ExecutionEngine:
         if metadata:
             plan.metadata.update(metadata)
 
-        return self.execute(plan)
+        return self.execute(
+            plan,
+        )
 
     def execute(
         self,
         plan: ExecutionPlan,
     ) -> ExecutionResult:
-        started = time.monotonic()
+        if plan is None:
+            raise ValueError(
+                "ExecutionEngine.execute requiere un plan.",
+            )
+
+        started_monotonic = time.monotonic()
+        started_at = datetime.now(timezone.utc)
+
         self.metrics["executions"] += 1
 
         try:
+            # -------------------------------------------------
+            # Validation
+            # -------------------------------------------------
+
             errors = plan.validate()
 
             if errors:
@@ -186,12 +236,17 @@ class ExecutionEngine:
                 )
 
                 return self._finalize(
-                    plan,
-                    result,
-                    started,
+                    plan=plan,
+                    result=result,
+                    started_monotonic=started_monotonic,
+                    started_at=started_at,
                 )
 
             plan.mark_validated()
+
+            # -------------------------------------------------
+            # Context
+            # -------------------------------------------------
 
             context = self.context_manager.build(plan) or {}
 
@@ -199,16 +254,30 @@ class ExecutionEngine:
 
             plan.mark_running()
 
+            # -------------------------------------------------
+            # Execution + retry + evaluation
+            # -------------------------------------------------
+
             result = self._execute_with_retries(
                 plan,
                 context,
+                started_at=started_at,
             )
 
+            # -------------------------------------------------
+            # Finalization
+            # -------------------------------------------------
+
             result = self._finalize(
-                plan,
-                result,
-                started,
+                plan=plan,
+                result=result,
+                started_monotonic=started_monotonic,
+                started_at=started_at,
             )
+
+            # -------------------------------------------------
+            # Learning
+            # -------------------------------------------------
 
             self._learn(
                 plan,
@@ -235,10 +304,95 @@ class ExecutionEngine:
             )
 
             return self._finalize(
-                plan,
-                result,
-                started,
+                plan=plan,
+                result=result,
+                started_monotonic=started_monotonic,
+                started_at=started_at,
             )
+
+    # =========================================================
+    # ExecutionResult helpers
+    # =========================================================
+
+    @staticmethod
+    def _result_is_success(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_success
+
+    @staticmethod
+    def _result_is_partial(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_partial
+
+    @staticmethod
+    def _result_is_failure(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_failure
+
+    @staticmethod
+    def _result_is_retry(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_retry
+
+    @staticmethod
+    def _result_is_cancelled(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_cancelled
+
+    @staticmethod
+    def _result_is_terminal(
+        result: ExecutionResult | Any,
+    ) -> bool:
+        return isinstance(result, ExecutionResult) and result.is_terminal
+
+    @staticmethod
+    def _legacy_status_is_success(
+        value: Any,
+    ) -> bool:
+        """
+        Compatibilidad exclusiva con datos legacy que todavía
+        estén almacenados como dict.
+
+        El lifecycle nuevo NO utiliza esta función para
+        ExecutionResult.
+        """
+        return value in {
+            "completed",
+            "success",
+            "ok",
+        }
+
+    @classmethod
+    def _dependency_result_is_success(
+        cls,
+        value: Any,
+    ) -> bool:
+        if isinstance(value, ExecutionResult):
+            return value.is_success
+
+        if isinstance(value, dict):
+            status = value.get("status")
+
+            if cls._legacy_status_is_success(status):
+                return True
+
+            raw = value.get("result")
+
+            if isinstance(
+                raw,
+                ExecutionResult,
+            ):
+                return raw.is_success
+
+            if isinstance(raw, dict) and "ok" in raw:
+                return bool(raw.get("ok"))
+
+        return False
 
     # =========================================================
     # Finalization
@@ -248,16 +402,81 @@ class ExecutionEngine:
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
-        started: float,
+        started_monotonic: float,
+        started_at: datetime,
     ) -> ExecutionResult:
+        """
+        Único punto de finalización pública.
+
+        Garantía:
+
+            nunca devuelve status="retry".
+
+        ExecutionResult es la fuente de verdad.
+        """
+
+        if not isinstance(
+            result,
+            ExecutionResult,
+        ):
+            logger.error(
+                "Resultado inválido en finalize | plan=%s | type=%s",
+                plan.id,
+                type(result).__name__,
+            )
+
+            result = ExecutionResult.fail(
+                plan_id=plan.id,
+                error="ExecutionEngine recibió un resultado inválido.",
+                executor=self.name,
+                started_at=started_at,
+            )
+
+        if result.plan_id != plan.id:
+            logger.warning(
+                "Corrigiendo plan_id de resultado | result=%s | plan=%s",
+                result.plan_id,
+                plan.id,
+            )
+
+            result.plan_id = plan.id
+
+        if result.is_retry:
+            logger.error(
+                "Retry llegó a finalize | plan=%s",
+                plan.id,
+            )
+
+            result = ExecutionResult.fail(
+                plan_id=plan.id,
+                error=(result.error or "La ejecución terminó en retry inesperadamente."),
+                executor=result.executor or self.name,
+                retries=result.retries,
+                metadata={
+                    **dict(result.metadata or {}),
+                    "invalid_terminal_retry": True,
+                },
+                started_at=started_at,
+            )
+
+        finished_at = datetime.now(timezone.utc)
+
+        result.set_execution_window(
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
         self._apply_plan_state(
             plan,
             result,
         )
 
-        duration = round(
-            time.monotonic() - started,
-            3,
+        duration = max(
+            0.0,
+            round(
+                time.monotonic() - started_monotonic,
+                3,
+            ),
         )
 
         result.metadata.update(
@@ -265,12 +484,12 @@ class ExecutionEngine:
                 "engine": self.name,
                 "duration": duration,
                 "plan_id": plan.id,
+                "retries": result.retries,
+                "terminal": result.is_terminal,
             }
         )
 
-        self._update_metrics(
-            result,
-        )
+        self._update_metrics(result)
 
         self._save_metric(
             plan,
@@ -304,15 +523,10 @@ class ExecutionEngine:
                     "model",
                     "unknown",
                 ),
-                started_at=datetime.now(timezone.utc),
+                started_at=(result.started_at or datetime.now(timezone.utc)),
                 duration=duration,
                 status=result.status,
-                retry_count=getattr(
-                    result,
-                    "retries",
-                    0,
-                )
-                or 0,
+                retry_count=result.retries,
                 error=result.error,
                 step_count=len(plan.steps),
                 metadata=dict(
@@ -341,6 +555,14 @@ class ExecutionEngine:
         step: ExecutionStep,
         result: ExecutionResult,
     ) -> None:
+        if not isinstance(
+            result,
+            ExecutionResult,
+        ):
+            raise TypeError(
+                "Solo se pueden almacenar ExecutionResult.",
+            )
+
         self.context_manager.record_step_result(
             context,
             step,
@@ -431,9 +653,21 @@ class ExecutionEngine:
             "step_context | keys=%s | arch=%s | summary_len=%s",
             sorted(step_context.keys()),
             bool(step_context.get("architecture")),
-            len(str(step_context.get("project_summary") or "")),
+            len(
+                str(
+                    step_context.get(
+                        "project_summary",
+                    )
+                    or ""
+                )
+            ),
         )
+
         return step_context
+
+    # =========================================================
+    # Path normalization
+    # =========================================================
 
     @staticmethod
     def _normalize_write_path(
@@ -441,22 +675,48 @@ class ExecutionEngine:
         fallback: str = "output.txt",
     ) -> str:
         """
-        Fuerza path relativo bajo TARGET.
-        Absolutos del modelo (/home/user/..., /landing_...) → solo nombre o partes seguras.
+        Fuerza path relativo.
+
+        El path nunca debe escapar del target mediante:
+
+            - rutas absolutas
+            - ..
+            - separadores de Windows
         """
-        from pathlib import Path
 
         raw = (path or "").strip() or fallback
+
         p = Path(raw)
 
         if p.is_absolute():
             raw = p.name or fallback
 
-        raw = raw.replace("\\", "/").lstrip("/")
-        parts = [x for x in Path(raw).parts if x not in ("", ".", "..")]
+        raw = raw.replace(
+            "\\",
+            "/",
+        ).lstrip("/")
+
+        parts = [
+            x
+            for x in Path(raw).parts
+            if x
+            not in (
+                "",
+                ".",
+                "..",
+            )
+        ]
+
         if not parts:
             parts = [fallback]
-        return str(Path(*parts))
+
+        return str(
+            Path(*parts),
+        )
+
+    # =========================================================
+    # Dependency output materialization
+    # =========================================================
 
     def _materialize_dependency_outputs(
         self,
@@ -467,14 +727,14 @@ class ExecutionEngine:
         """
         Proyecta outputs tipados de dependencias a:
 
-          - step.params  (Skills)
-          - step_context (Agents)
+            - step.params  → Skills
+            - step_context → Agents
 
-        Contratos:
+        Los dependencies nuevos pueden ser ExecutionResult.
 
-          - code_artifact → write_file (path, content)
-          - texto plano   → write_file.content
-          - architecture_evidence / project_analysis → architect
+        Compatibilidad:
+
+            también acepta el formato legacy dict.
         """
 
         if not dependencies:
@@ -485,72 +745,181 @@ class ExecutionEngine:
         plain_texts: list[str] = []
 
         for dep_id, dep_data in dependencies.items():
-            if not isinstance(dep_data, dict):
+            raw: Any = None
+
+            # -------------------------------------------------
+            # Nuevo contrato
+            # -------------------------------------------------
+
+            if isinstance(
+                dep_data,
+                ExecutionResult,
+            ):
+                if not dep_data.is_success:
+                    continue
+
+                raw = dep_data.result
+
+            # -------------------------------------------------
+            # Legacy
+            # -------------------------------------------------
+
+            elif isinstance(
+                dep_data,
+                dict,
+            ):
+                status = dep_data.get("status")
+
+                if status is not None and not self._legacy_status_is_success(status):
+                    continue
+
+                raw = dep_data.get(
+                    "result",
+                )
+
+                if isinstance(
+                    raw,
+                    ExecutionResult,
+                ):
+                    if not raw.is_success:
+                        continue
+
+                    raw = raw.result
+
+                # Envelope:
+                #
+                # {
+                #     "ok": True,
+                #     "result": ...
+                # }
+
+                if isinstance(raw, dict) and "ok" in raw and "result" in raw:
+                    if raw.get("ok") is False:
+                        continue
+
+                    raw = raw.get(
+                        "result",
+                    )
+
+            else:
                 continue
 
-            status = dep_data.get("status")
-            if status is not None and status not in self.SUCCESS_STATUSES:
-                continue
-
-            raw = dep_data.get("result")
             if raw is None:
                 continue
 
-            payload = raw
-            if isinstance(raw, dict) and "ok" in raw and "result" in raw:
-                if raw.get("ok") is False:
-                    continue
-                payload = raw.get("result")
+            # -------------------------------------------------
+            # Plain text
+            # -------------------------------------------------
 
-            if isinstance(payload, str):
-                if payload.strip():
-                    plain_texts.append(payload)
+            if isinstance(
+                raw,
+                str,
+            ):
+                if raw.strip():
+                    plain_texts.append(
+                        raw,
+                    )
+
                 continue
 
-            if not isinstance(payload, dict):
+            if not isinstance(
+                raw,
+                dict,
+            ):
                 continue
 
-            payload_type = payload.get("type")
+            payload_type = raw.get(
+                "type",
+            )
 
             if payload_type == "code_artifact":
-                artifacts.append(payload)
-            elif payload_type in (
+                artifacts.append(
+                    raw,
+                )
+
+            elif payload_type in {
                 "architecture_evidence",
                 "quality_evidence",
                 "security_evidence",
                 "performance_evidence",
                 "project_analysis",
-            ):
-                evidence_by_type[payload_type] = payload
-            elif "architecture" in payload and payload_type is None:
-                evidence_by_type.setdefault("architecture_evidence", payload)
-            elif payload_type is None and (
-                "structure" in payload or "files" in payload or "project" in payload
-            ):
-                evidence_by_type.setdefault("project_analysis", payload)
+            }:
+                evidence_by_type[payload_type] = raw
 
-        # ----------------------------------------------------------
+            elif "architecture" in raw and payload_type is None:
+                evidence_by_type.setdefault(
+                    "architecture_evidence",
+                    raw,
+                )
+
+            elif payload_type is None and (
+                "structure" in raw or "files" in raw or "project" in raw
+            ):
+                evidence_by_type.setdefault(
+                    "project_analysis",
+                    raw,
+                )
+
+        # -----------------------------------------------------
         # Skills: write_file
-        # ----------------------------------------------------------
+        # -----------------------------------------------------
 
         if step.unit_type == "skill" and step.unit_name == "write_file":
-            params = dict(step.params or {})
-            planned_path = params.get("path")  # del ExecutionPlanner
+            params = dict(
+                step.params or {},
+            )
 
-            needs_path = not params.get("path")
-            needs_content = params.get("content") is None
+            planned_path = params.get(
+                "path",
+            )
+
+            needs_path = not params.get(
+                "path",
+            )
+
+            needs_content = (
+                params.get(
+                    "content",
+                )
+                is None
+            )
+
+            # -------------------------------------------------
+            # code_artifact directo
+            # -------------------------------------------------
 
             if (needs_path or needs_content) and artifacts:
                 file_index = 0
+
                 try:
-                    file_index = int(params.get("file_index", 0) or 0)
-                except (TypeError, ValueError):
+                    file_index = int(
+                        params.get(
+                            "file_index",
+                            0,
+                        )
+                        or 0
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
                     file_index = 0
 
-                files = artifacts[0].get("files") or []
+                files = (
+                    artifacts[0].get(
+                        "files",
+                    )
+                    or []
+                )
 
                 if 0 <= file_index < len(files):
                     chosen = files[file_index]
+
+                    if not isinstance(
+                        chosen,
+                        dict,
+                    ):
+                        chosen = {}
 
                     if needs_path and chosen.get("path"):
                         params["path"] = chosen["path"]
@@ -558,115 +927,249 @@ class ExecutionEngine:
                     if needs_content and chosen.get("content") is not None:
                         params["content"] = chosen["content"]
 
-            # Fallback: texto plano de task_agent / multi_turn
-            needs_path = not params.get("path")
-            needs_content = params.get("content") is None
+            # -------------------------------------------------
+            # Texto plano
+            # -------------------------------------------------
+
+            needs_path = not params.get(
+                "path",
+            )
+
+            needs_content = (
+                params.get(
+                    "content",
+                )
+                is None
+            )
 
             if needs_content and plain_texts:
                 text = plain_texts[0]
                 content = text
                 path_from_json = None
+
                 stripped = text.strip()
 
                 if "code_artifact" in stripped and "{" in stripped:
                     candidate = stripped
-                    if candidate.startswith("```"):
-                        lines = candidate.split("\n")
+
+                    if candidate.startswith(
+                        "```",
+                    ):
+                        lines = candidate.split(
+                            "\n",
+                        )
+
                         if lines and lines[0].startswith("```"):
                             lines = lines[1:]
+
                         if lines and lines[-1].strip().startswith("```"):
                             lines = lines[:-1]
-                        candidate = "\n".join(lines).strip()
+
+                        candidate = "\n".join(
+                            lines,
+                        ).strip()
 
                     try:
-                        data = json.loads(candidate)
+                        data = json.loads(
+                            candidate,
+                        )
+
                     except json.JSONDecodeError:
-                        start = candidate.find("{")
-                        end = candidate.rfind("}")
+                        start = candidate.find(
+                            "{",
+                        )
+                        end = candidate.rfind(
+                            "}",
+                        )
+
                         data = None
+
                         if start >= 0 and end > start:
                             try:
-                                data = json.loads(candidate[start : end + 1])
+                                data = json.loads(
+                                    candidate[start : end + 1],
+                                )
                             except json.JSONDecodeError:
                                 data = None
 
                     if isinstance(data, dict) and data.get("type") == "code_artifact":
-                        files = data.get("files") or []
+                        files = (
+                            data.get(
+                                "files",
+                            )
+                            or []
+                        )
+
                         file_index = 0
+
                         try:
-                            file_index = int(params.get("file_index", 0) or 0)
-                        except (TypeError, ValueError):
+                            file_index = int(
+                                params.get(
+                                    "file_index",
+                                    0,
+                                )
+                                or 0
+                            )
+                        except (
+                            TypeError,
+                            ValueError,
+                        ):
                             file_index = 0
+
                         if 0 <= file_index < len(files):
                             chosen = files[file_index]
-                            if isinstance(chosen, dict):
+
+                            if isinstance(
+                                chosen,
+                                dict,
+                            ):
                                 if chosen.get("content") is not None:
                                     content = chosen["content"]
+
                                 if chosen.get("path"):
                                     path_from_json = chosen["path"]
 
                 params["content"] = content
+
                 if needs_path and not params.get("path"):
                     params["path"] = path_from_json or planned_path or "output.md"
 
-            # --- Normalización de path (siempre) ---
+            # -------------------------------------------------
+            # Siempre normalizar path
+            # -------------------------------------------------
+
             fallback = planned_path or "output.txt"
-            if not isinstance(fallback, str) or not fallback.strip():
+
+            if (
+                not isinstance(
+                    fallback,
+                    str,
+                )
+                or not fallback.strip()
+            ):
                 fallback = "output.txt"
-            # Si el artifact trajo absoluto, preferir el path del plan cuando exista
+
             candidate_path = params.get("path") or fallback
-            if planned_path and Path(str(candidate_path)).is_absolute():
+
+            if (
+                planned_path
+                and Path(
+                    str(candidate_path),
+                ).is_absolute()
+            ):
                 candidate_path = planned_path
+
             params["path"] = self._normalize_write_path(
-                str(candidate_path) if candidate_path else None,
-                fallback=str(fallback),
+                (str(candidate_path) if candidate_path else None),
+                fallback=str(
+                    fallback,
+                ),
             )
 
             step.params = params
 
-            current = dict(step_context.get("execution") or {})
-            current_step = dict(current.get("current_step") or {})
-            current_step["params"] = dict(params)
+            current = dict(
+                step_context.get(
+                    "execution",
+                )
+                or {}
+            )
+
+            current_step = dict(
+                current.get(
+                    "current_step",
+                )
+                or {}
+            )
+
+            current_step["params"] = dict(
+                params,
+            )
+
             current["current_step"] = current_step
             step_context["execution"] = current
 
             logger.info(
                 "Materializado write_file | path=%s | content_len=%s",
                 params.get("path"),
-                len(str(params.get("content", ""))),
+                len(
+                    str(
+                        params.get(
+                            "content",
+                            "",
+                        )
+                    )
+                ),
             )
 
-        # ----------------------------------------------------------
-        # Agents: evidencia  (igual que tu versión)
-        # ----------------------------------------------------------
+        # -----------------------------------------------------
+        # Agents: evidence
+        # -----------------------------------------------------
 
         if step.unit_type == "agent":
-            architecture_evidence = evidence_by_type.get("architecture_evidence")
-            if isinstance(architecture_evidence, dict):
+            architecture_evidence = evidence_by_type.get(
+                "architecture_evidence",
+            )
+
+            if isinstance(
+                architecture_evidence,
+                dict,
+            ):
                 step_context["architecture"] = architecture_evidence
-                if not step_context.get("project_summary"):
+
+                if not step_context.get(
+                    "project_summary",
+                ):
                     step_context["project_summary"] = (
-                        architecture_evidence.get("summary")
-                        or architecture_evidence.get("project_summary")
+                        architecture_evidence.get(
+                            "summary",
+                        )
+                        or architecture_evidence.get(
+                            "project_summary",
+                        )
                         or ""
                     )
 
-            project_analysis = evidence_by_type.get("project_analysis")
-            if isinstance(project_analysis, dict):
+            project_analysis = evidence_by_type.get(
+                "project_analysis",
+            )
+
+            if isinstance(
+                project_analysis,
+                dict,
+            ):
                 if "architecture" not in step_context:
-                    architecture = project_analysis.get("architecture_context")
-                    if isinstance(architecture, dict):
+                    architecture = project_analysis.get(
+                        "architecture_context",
+                    )
+
+                    if isinstance(
+                        architecture,
+                        dict,
+                    ):
                         step_context["architecture"] = architecture
 
                 summary = (
-                    project_analysis.get("summary") or project_analysis.get("project_summary") or ""
+                    project_analysis.get(
+                        "summary",
+                    )
+                    or project_analysis.get(
+                        "project_summary",
+                    )
+                    or ""
                 )
-                if summary and not step_context.get("project_summary"):
+
+                if summary and not step_context.get(
+                    "project_summary",
+                ):
                     step_context["project_summary"] = summary
 
                 step_context["project_analysis"] = {
                     "summary": summary,
-                    "type": project_analysis.get("type", "project_analysis"),
+                    "type": project_analysis.get(
+                        "type",
+                        "project_analysis",
+                    ),
                 }
 
             for key in (
@@ -674,8 +1177,14 @@ class ExecutionEngine:
                 "security_evidence",
                 "performance_evidence",
             ):
-                evidence = evidence_by_type.get(key)
-                if isinstance(evidence, dict):
+                evidence = evidence_by_type.get(
+                    key,
+                )
+
+                if isinstance(
+                    evidence,
+                    dict,
+                ):
                     step_context[key] = evidence
 
             if artifacts:
@@ -692,12 +1201,28 @@ class ExecutionEngine:
         self,
         plan: ExecutionPlan,
         context: dict[str, Any],
+        started_at: datetime,
     ) -> ExecutionResult:
-        max_retries = plan.get_max_retries()
+        max_retries = max(
+            0,
+            plan.get_max_retries(),
+        )
+
         retries = 0
 
         try:
             while True:
+                logger.info(
+                    "Execution intento | plan=%s | retry=%s/%s",
+                    plan.id,
+                    retries,
+                    max_retries,
+                )
+
+                # -------------------------------------------------
+                # Execute
+                # -------------------------------------------------
+
                 if plan.is_multi_step():
                     result = self._execute_steps(
                         plan,
@@ -709,45 +1234,126 @@ class ExecutionEngine:
                         context,
                     )
 
+                if not isinstance(
+                    result,
+                    ExecutionResult,
+                ):
+                    raise TypeError(
+                        "La ejecución debe devolver ExecutionResult.",
+                    )
+
+                # -------------------------------------------------
+                # Evaluation
+                # -------------------------------------------------
+
                 result = self._evaluate(
                     plan,
                     result,
                 )
 
-                if result.is_success or result.is_partial:
+                if not isinstance(
+                    result,
+                    ExecutionResult,
+                ):
+                    raise TypeError(
+                        "SelfCritic debe devolver ExecutionResult.",
+                    )
+
+                result.retries = retries
+                result.started_at = started_at
+
+                # -------------------------------------------------
+                # Terminal
+                # -------------------------------------------------
+
+                if result.is_success:
+                    return result
+
+                if result.is_partial:
                     return result
 
                 if result.is_cancelled:
                     return result
 
-                if not (result.is_failure or result.status == "retry"):
-                    return result
+                # -------------------------------------------------
+                # Estados que pueden provocar retry
+                # -------------------------------------------------
+
+                if not (result.is_failure or result.is_retry):
+                    logger.error(
+                        "Estado inesperado del ExecutionResult | " "plan=%s | status=%s",
+                        plan.id,
+                        result.status,
+                    )
+
+                    return ExecutionResult.fail(
+                        plan_id=plan.id,
+                        error=(
+                            "ExecutionEngine recibió un estado " f"no soportado: {result.status}"
+                        ),
+                        executor=self.name,
+                        retries=retries,
+                        metadata={
+                            "unexpected_status": result.status,
+                        },
+                        started_at=started_at,
+                    )
+
+                # -------------------------------------------------
+                # Agotado
+                # -------------------------------------------------
 
                 if retries >= max_retries:
-                    # No devolver status transitorio "retry" como resultado final.
-                    if result.status == "retry" or getattr(result, "is_retry", False):
-                        return ExecutionResult.fail(
-                            plan_id=plan.id,
-                            error=(
-                                result.error
-                                or "SelfCritic: reintentos agotados sin superar la evaluación"
-                            ),
-                            executor=result.executor or self.name,
-                            metadata={
-                                **dict(result.metadata or {}),
-                                "retry_exhausted": True,
-                                "retry_count": retries,
-                            },
-                        )
-                    return result
+                    error = result.error or "La ejecución falló y se agotaron " "los reintentos."
+
+                    metadata = dict(
+                        result.metadata or {},
+                    )
+
+                    metadata.update(
+                        {
+                            "retry_exhausted": True,
+                            "retry_count": retries,
+                            "max_retries": max_retries,
+                        }
+                    )
+
+                    logger.error(
+                        "Retries agotados | plan=%s | retries=%s/%s",
+                        plan.id,
+                        retries,
+                        max_retries,
+                    )
+
+                    return ExecutionResult.fail(
+                        plan_id=plan.id,
+                        error=error,
+                        executor=(result.executor or self.name),
+                        retries=retries,
+                        metadata=metadata,
+                        started_at=started_at,
+                    )
+
+                # -------------------------------------------------
+                # Preparar siguiente intento
+                # -------------------------------------------------
 
                 retries += 1
                 self.metrics["retries"] += 1
-                result.metadata["retry_count"] = retries
 
                 retry_data = self._retry_context.get(plan.id) or {}
+
+                result.retries = retries
+
+                result.metadata.update(
+                    {
+                        "retry_count": retries,
+                        "max_retries": max_retries,
+                    }
+                )
+
                 logger.info(
-                    "Retry plan=%s intento=%s/%s | corrections=%s | issues=%s",
+                    "Preparando retry | plan=%s | retry=%s/%s | " "corrections=%s | issues=%s",
                     plan.id,
                     retries,
                     max_retries,
@@ -755,12 +1361,33 @@ class ExecutionEngine:
                     len(retry_data.get("issues") or []),
                 )
 
+                # -------------------------------------------------
+                # Reset selectivo
+                # -------------------------------------------------
+
                 self._reset_execution_context(
                     plan,
                     context,
                 )
 
-                time.sleep(0.5)
+                retry_delay = plan.metadata.get(
+                    "retry_delay",
+                    0.5,
+                )
+
+                try:
+                    retry_delay = max(
+                        0.0,
+                        float(retry_delay),
+                    )
+                except (
+                    TypeError,
+                    ValueError,
+                ):
+                    retry_delay = 0.5
+
+                if retry_delay:
+                    time.sleep(retry_delay)
 
         finally:
             self._retry_context.pop(
@@ -778,13 +1405,85 @@ class ExecutionEngine:
             {},
         )
 
-        execution["steps"] = {}
+        if not isinstance(
+            execution,
+            dict,
+        ):
+            execution = {}
+            context["execution"] = execution
+
+        completed_steps = execution.get(
+            "steps",
+        )
+
+        if not isinstance(
+            completed_steps,
+            dict,
+        ):
+            completed_steps = {}
+            execution["steps"] = completed_steps
 
         for step in plan.steps:
+            previous = completed_steps.get(
+                step.id,
+            )
+
+            if previous is None:
+                step.reset()
+                completed_steps.pop(
+                    step.id,
+                    None,
+                )
+                continue
+
+            # -------------------------------------------------
+            # Nuevo contrato
+            # -------------------------------------------------
+
+            if isinstance(
+                previous,
+                ExecutionResult,
+            ):
+                if previous.is_success:
+                    continue
+
+                step.reset()
+                completed_steps.pop(
+                    step.id,
+                    None,
+                )
+                continue
+
+            # -------------------------------------------------
+            # Legacy
+            # -------------------------------------------------
+
+            if isinstance(
+                previous,
+                dict,
+            ):
+                if self._dependency_result_is_success(
+                    previous,
+                ):
+                    continue
+
+                step.reset()
+                completed_steps.pop(
+                    step.id,
+                    None,
+                )
+                continue
+
             step.reset()
+            completed_steps.pop(
+                step.id,
+                None,
+            )
+
+        execution["steps"] = completed_steps
 
     # =========================================================
-    # Single / multi
+    # Single execution
     # =========================================================
 
     def _execute_single(
@@ -829,6 +1528,12 @@ class ExecutionEngine:
                 step,
                 step_context,
             )
+
+            if not isinstance(
+                result,
+                ExecutionResult,
+            ):
+                raise TypeError("UnitDispatcher.dispatch " "debe devolver ExecutionResult.")
 
             step.apply_result(
                 result=result.result,
@@ -890,7 +1595,9 @@ class ExecutionEngine:
             if isinstance(raw, dict) and "ok" in raw and "result" in raw:
                 if raw.get("ok") is False and raw.get("error"):
                     errors.append(
-                        str(raw["error"]),
+                        str(
+                            raw["error"],
+                        )
                     )
 
                 raw = raw.get(
@@ -912,8 +1619,14 @@ class ExecutionEngine:
                     str(mod),
                 )
 
-            for path in raw.get("created") or []:
+            for path in (
+                raw.get(
+                    "created",
+                )
+                or []
+            ):
                 p = str(path)
+
                 created.append(p)
 
                 if "/adapters/" in p.replace(
@@ -928,10 +1641,10 @@ class ExecutionEngine:
             seen: set[str] = set()
             out: list[str] = []
 
-            for x in seq:
-                if x not in seen:
-                    seen.add(x)
-                    out.append(x)
+            for item in seq:
+                if item not in seen:
+                    seen.add(item)
+                    out.append(item)
 
             return out
 
@@ -944,7 +1657,7 @@ class ExecutionEngine:
             "from_spec": plan.metadata.get(
                 "from_spec",
             ),
-            "steps_ok": sum(1 for r in results if r.is_success),
+            "steps_ok": sum(1 for result in results if result.is_success),
             "steps_total": len(results),
             "errors": errors,
         }
@@ -985,6 +1698,10 @@ class ExecutionEngine:
 
         return scaffoldish >= 2
 
+    # =========================================================
+    # Multi-step execution
+    # =========================================================
+
     def _execute_steps(
         self,
         plan: ExecutionPlan,
@@ -1005,6 +1722,49 @@ class ExecutionEngine:
         errors: list[dict[str, str]] = []
 
         for step in ordered:
+            previous = context.get("execution", {}).get("steps", {}).get(step.id)
+
+            # -------------------------------------------------
+            # Reutilizar resultado exitoso
+            # -------------------------------------------------
+
+            if previous is not None:
+                if isinstance(
+                    previous,
+                    ExecutionResult,
+                ):
+                    if previous.is_success:
+                        logger.info(
+                            "Step ya completado; se reutiliza | " "plan=%s | step=%s",
+                            plan.id,
+                            step.id,
+                        )
+                        results.append(previous)
+                        executed_steps.append(step)
+                        continue
+
+                elif isinstance(
+                    previous,
+                    dict,
+                ):
+                    if self._dependency_result_is_success(
+                        previous,
+                    ):
+                        logger.info(
+                            "Step legacy ya completado; se reutiliza | " "plan=%s | step=%s",
+                            plan.id,
+                            step.id,
+                        )
+
+                        # No reconstruimos un ExecutionResult artificial
+                        # acá. El ContextManager debería migrar a
+                        # ExecutionResult.
+                        continue
+
+            # -------------------------------------------------
+            # Dependencies
+            # -------------------------------------------------
+
             dependency_failure = self._dependency_failure(
                 step,
                 context,
@@ -1023,6 +1783,7 @@ class ExecutionEngine:
                         "step_id": step.id,
                         "step": step.description,
                         "unit": step.unit_name,
+                        "skipped": True,
                     },
                 )
 
@@ -1049,6 +1810,10 @@ class ExecutionEngine:
 
                 continue
 
+            # -------------------------------------------------
+            # Step context
+            # -------------------------------------------------
+
             step_context = self._build_step_context(
                 plan,
                 context,
@@ -1063,6 +1828,12 @@ class ExecutionEngine:
                     step,
                     step_context,
                 )
+
+                if not isinstance(
+                    result,
+                    ExecutionResult,
+                ):
+                    raise TypeError("UnitDispatcher.dispatch " "debe devolver ExecutionResult.")
 
                 step.apply_result(
                     result=result.result,
@@ -1086,6 +1857,10 @@ class ExecutionEngine:
                     },
                 )
 
+            # -------------------------------------------------
+            # Store
+            # -------------------------------------------------
+
             self._store_step_result(
                 plan,
                 context,
@@ -1096,7 +1871,35 @@ class ExecutionEngine:
             results.append(result)
             executed_steps.append(step)
 
-            if result.is_failure:
+            # -------------------------------------------------
+            # Retry
+            # -------------------------------------------------
+
+            if result.is_retry:
+                errors.append(
+                    {
+                        "step": step.description,
+                        "unit": step.unit_name,
+                        "error": (result.error or "El step solicitó un reintento."),
+                    }
+                )
+
+                logger.warning(
+                    "Step solicitó retry | plan=%s | step=%s | " "unit=%s | error=%s",
+                    plan.id,
+                    step.id,
+                    step.unit_name,
+                    result.error,
+                )
+
+                if plan.should_stop_on_error():
+                    break
+
+            # -------------------------------------------------
+            # Failure
+            # -------------------------------------------------
+
+            elif result.is_failure:
                 errors.append(
                     {
                         "step": step.description,
@@ -1108,21 +1911,96 @@ class ExecutionEngine:
                 if plan.should_stop_on_error():
                     break
 
+            # -------------------------------------------------
+            # Cancelled
+            # -------------------------------------------------
+
+            elif result.is_cancelled:
+                errors.append(
+                    {
+                        "step": step.description,
+                        "unit": step.unit_name,
+                        "error": (result.error or "Step cancelado."),
+                    }
+                )
+
+                if plan.should_stop_on_error():
+                    break
+
+        # -----------------------------------------------------
+        # Payload por step
+        # -----------------------------------------------------
+
         result_payload = [
             {
                 "step_id": step.id,
                 "description": step.description,
                 "unit_type": step.unit_type,
                 "unit_name": step.unit_name,
-                "status": step.status,
+                "status": result.status,
                 "result": result.result,
                 "error": result.error,
+                "success": result.is_success,
+                "partial": result.is_partial,
+                "failure": result.is_failure,
+                "retry": result.is_retry,
+                "cancelled": result.is_cancelled,
+                "terminal": result.is_terminal,
             }
             for step, result in zip(
                 executed_steps,
                 results,
             )
         ]
+
+        # -----------------------------------------------------
+        # Retry solicitado
+        # -----------------------------------------------------
+
+        retry_requested = any(result.is_retry for result in results)
+
+        if retry_requested:
+            detail = "\n".join(
+                (f"- {error['step']} " f"({error['unit']}): " f"{error['error']}")
+                for error in errors
+            )
+
+            return ExecutionResult.retry(
+                plan_id=plan.id,
+                error=(detail or "Uno o más steps solicitaron " "un reintento."),
+                executor=self.name,
+                metadata={
+                    "steps": result_payload,
+                    "step_count": len(results),
+                    "retry_requested": True,
+                },
+            )
+
+        # -----------------------------------------------------
+        # Cancelled
+        # -----------------------------------------------------
+
+        cancelled = any(result.is_cancelled for result in results)
+
+        if cancelled:
+            detail = "\n".join(
+                (f"- {error['step']} " f"({error['unit']}): " f"{error['error']}")
+                for error in errors
+            )
+
+            return ExecutionResult.cancelled(
+                plan_id=plan.id,
+                error=(detail or "Uno o más steps fueron cancelados."),
+                executor=self.name,
+                metadata={
+                    "steps": result_payload,
+                    "step_count": len(results),
+                },
+            )
+
+        # -----------------------------------------------------
+        # Everything successful
+        # -----------------------------------------------------
 
         if not errors:
             if self._should_aggregate_scaffold(
@@ -1156,11 +2034,19 @@ class ExecutionEngine:
                 },
             )
 
+        # -----------------------------------------------------
+        # Errors
+        # -----------------------------------------------------
+
         detail = "\n".join(
-            f"- {error['step']} " f"({error['unit']}): " f"{error['error']}" for error in errors
+            (f"- {error['step']} " f"({error['unit']}): " f"{error['error']}") for error in errors
         )
 
-        if len(errors) == len(results):
+        # -----------------------------------------------------
+        # Todos fallaron
+        # -----------------------------------------------------
+
+        if len(errors) == len(results) and results:
             return ExecutionResult.fail(
                 plan_id=plan.id,
                 error=detail,
@@ -1170,6 +2056,10 @@ class ExecutionEngine:
                     "step_count": len(results),
                 },
             )
+
+        # -----------------------------------------------------
+        # Algunos fallaron
+        # -----------------------------------------------------
 
         return ExecutionResult.partial(
             plan_id=plan.id,
@@ -1199,10 +2089,22 @@ class ExecutionEngine:
             {},
         )
 
+        if not isinstance(
+            execution,
+            dict,
+        ):
+            return "Contexto de ejecución inválido " "para resolver dependencias."
+
         completed_steps = execution.get(
             "steps",
             {},
         )
+
+        if not isinstance(
+            completed_steps,
+            dict,
+        ):
+            return "Contexto de steps inválido " "para resolver dependencias."
 
         for dependency_id in step.depends_on:
             dependency = completed_steps.get(
@@ -1212,26 +2114,66 @@ class ExecutionEngine:
             if dependency is None:
                 return "Dependencia no ejecutada: " f"{dependency_id}"
 
-            status = dependency.get(
-                "status",
-            )
+            # -------------------------------------------------
+            # Nuevo contrato
+            # -------------------------------------------------
 
-            error = dependency.get(
-                "error",
-            )
+            if isinstance(
+                dependency,
+                ExecutionResult,
+            ):
+                if dependency.is_success:
+                    continue
 
-            if status in self.SUCCESS_STATUSES:
-                continue
+                if dependency.error:
+                    return (
+                        f"Dependencia fallida: "
+                        f"{dependency_id} "
+                        f"(status={dependency.status}): "
+                        f"{dependency.error}"
+                    )
 
-            if error is None and dependency.get("result") is not None:
-                continue
+                return (
+                    f"Dependencia no válida: " f"{dependency_id} " f"(status={dependency.status})"
+                )
 
-            return "Dependencia fallida: " f"{dependency_id} " f"(status={status})"
+            # -------------------------------------------------
+            # Legacy
+            # -------------------------------------------------
+
+            if isinstance(
+                dependency,
+                dict,
+            ):
+                if self._dependency_result_is_success(
+                    dependency,
+                ):
+                    continue
+
+                error = dependency.get(
+                    "error",
+                )
+
+                if error:
+                    return (
+                        f"Dependencia fallida: "
+                        f"{dependency_id} "
+                        f"(status={dependency.get('status')}): "
+                        f"{error}"
+                    )
+
+                return (
+                    f"Dependencia no válida: "
+                    f"{dependency_id} "
+                    f"(status={dependency.get('status')})"
+                )
+
+            return f"Dependencia inválida: " f"{dependency_id}"
 
         return None
 
     # =========================================================
-    # Evaluation / learning
+    # Evaluation
     # =========================================================
 
     def _evaluate(
@@ -1239,13 +2181,26 @@ class ExecutionEngine:
         plan: ExecutionPlan,
         result: ExecutionResult,
     ) -> ExecutionResult:
+        """
+        Evalúa únicamente resultados que pueden ser evaluados.
+
+        success / partial
+            → SelfCritic
+
+        failure / cancelled
+            → se mantienen
+
+        retry
+            → se mantiene
+        """
+
+        if not (result.is_success or result.is_partial):
+            return result
+
         if not plan.metadata.get(
             "requires_self_critic",
             False,
         ):
-            return result
-
-        if result.is_failure:
             return result
 
         evaluation = self.critic.evaluate(
@@ -1265,7 +2220,10 @@ class ExecutionEngine:
                 ],
             )
         except Exception:
-            pass
+            logger.debug(
+                "No se pudo persistir SelfCritic " "en EngramMemory.",
+                exc_info=True,
+            )
 
         if evaluation.get(
             "pass",
@@ -1278,32 +2236,40 @@ class ExecutionEngine:
             [],
         )
 
+        issues = evaluation.get(
+            "issues",
+            [],
+        )
+
         self._retry_context[plan.id] = {
             "corrections": corrections,
-            "issues": evaluation.get(
-                "issues",
-                [],
-            ),
+            "issues": issues,
         }
 
         return ExecutionResult.retry(
             plan_id=plan.id,
-            error=evaluation.get(
-                "reason",
-                "Evaluación fallida",
+            error=(
+                evaluation.get(
+                    "reason",
+                    "Evaluación fallida",
+                )
             ),
-            retries=getattr(
-                result,
-                "retries",
-                0,
-            )
-            + 1,
+            retries=result.retries,
             executor="self_critic",
             metadata={
+                **dict(
+                    result.metadata or {},
+                ),
                 "evaluation": evaluation,
                 "corrections": corrections,
+                "issues": issues,
             },
+            started_at=result.started_at,
         )
+
+    # =========================================================
+    # Learning
+    # =========================================================
 
     def _learn(
         self,
@@ -1316,16 +2282,16 @@ class ExecutionEngine:
         try:
             proposed = self.learner.extract_and_learn(
                 user_query=plan.original_task,
-                assistant_response=str(
-                    result.result or result.error or "",
-                ),
+                assistant_response=str(result.result or result.error or ""),
             )
+
             if proposed:
                 logger.info(
-                    "Learning candidate creado | plan=%s | task=%s",
+                    "Learning candidate creado | " "plan=%s | task=%s",
                     plan.id,
                     (plan.original_task or "")[:80],
                 )
+
         except Exception as exc:
             logger.warning(
                 "Learning post-ejecución falló: %s",
@@ -1333,17 +2299,36 @@ class ExecutionEngine:
             )
 
     # =========================================================
-    # Ordering / state / metrics
+    # Ordering
     # =========================================================
 
     def _resolve_order(
         self,
         steps: list[ExecutionStep],
     ) -> list[ExecutionStep]:
+        ids = [step.id for step in steps]
+
+        seen: set[str] = set()
+        duplicates: set[str] = set()
+
+        for step in steps:
+            if step.id in seen:
+                duplicates.add(
+                    step.id,
+                )
+
+            seen.add(
+                step.id,
+            )
+
+        if duplicates:
+            raise ValueError("IDs de steps duplicados: " f"{sorted(duplicates)}")
+
         ordered: list[ExecutionStep] = []
         resolved: set[str] = set()
+
         pending = list(steps)
-        available_ids = {step.id for step in steps}
+        available_ids = set(ids)
 
         while pending:
             progress = False
@@ -1354,22 +2339,31 @@ class ExecutionEngine:
                 ]
 
                 if missing:
-                    raise ValueError(
-                        "Dependencias inexistentes: " f"{missing}",
-                    )
+                    raise ValueError("Dependencias inexistentes: " f"{missing}")
 
                 if all(dependency in resolved for dependency in step.depends_on):
-                    ordered.append(step)
-                    resolved.add(step.id)
-                    pending.remove(step)
+                    ordered.append(
+                        step,
+                    )
+
+                    resolved.add(
+                        step.id,
+                    )
+
+                    pending.remove(
+                        step,
+                    )
+
                     progress = True
 
             if not progress:
-                raise RuntimeError(
-                    "Dependencias circulares en el plan.",
-                )
+                raise RuntimeError("Dependencias circulares " "en el plan.")
 
         return ordered
+
+    # =========================================================
+    # State
+    # =========================================================
 
     def _apply_plan_state(
         self,
@@ -1378,15 +2372,29 @@ class ExecutionEngine:
     ) -> None:
         if result.is_success:
             plan.mark_completed()
+            return
 
-        elif result.is_partial:
+        if result.is_partial:
             plan.mark_partial()
+            return
 
-        elif result.is_failure:
+        if result.is_failure:
             plan.mark_failed()
+            return
 
-        elif result.is_cancelled:
+        if result.is_cancelled:
             plan.mark_cancelled()
+            return
+
+        if result.is_retry:
+            logger.error(
+                "Intento de finalizar plan en retry | " "plan=%s",
+                plan.id,
+            )
+
+    # =========================================================
+    # Metrics
+    # =========================================================
 
     def _update_metrics(
         self,
@@ -1394,18 +2402,31 @@ class ExecutionEngine:
     ) -> None:
         if result.is_success:
             self.metrics["success"] += 1
+            return
 
-        elif result.is_partial:
+        if result.is_partial:
             self.metrics["partial"] += 1
+            return
 
-        elif result.is_failure:
+        if result.is_failure:
             self.metrics["failed"] += 1
+            return
 
-        elif result.is_cancelled:
+        if result.is_cancelled:
             self.metrics["cancelled"] += 1
+            return
+
+        if result.is_retry:
+            logger.warning("ExecutionResult retry llegó a métricas " "sin ser terminal.")
 
     def get_metrics(self) -> dict[str, int]:
-        return dict(self.metrics)
+        return dict(
+            self.metrics,
+        )
+
+    # =========================================================
+    # Failure helper
+    # =========================================================
 
     def _fail(
         self,
