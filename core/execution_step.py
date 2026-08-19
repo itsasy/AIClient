@@ -51,7 +51,7 @@ class ExecutionStep:
     # Contador de retries consumidos
     retry_count: int = 0
 
-    timeout: int = 120
+    timeout: int = 300
 
     status: str = "pending"
     result: Any = None
