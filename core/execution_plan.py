@@ -8,6 +8,7 @@ from typing import Any
 from core.execution_step import ExecutionStep
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
+
 @dataclass(slots=True)
 class ExecutionPlan:
     """
@@ -697,8 +698,7 @@ class ExecutionPlan:
 
         if not description or not unit_type or not unit_name:
             raise ValueError(
-                "Si no pasas un ExecutionStep, debes indicar "
-                "description, unit_type y unit_name"
+                "Si no pasas un ExecutionStep, debes indicar " "description, unit_type y unit_name"
             )
 
         new_step = ExecutionStep(
@@ -1016,7 +1016,8 @@ class ExecutionPlan:
                     "params": dict(step.params),
                     "depends_on": list(step.depends_on),
                     "expected_output": step.expected_output,
-                    "retries": step.retries,
+                    "max_retries": step.max_retries,
+                    "retry_count": step.retry_count,
                     "timeout": step.timeout,
                     "status": step.status,
                     "metadata": dict(step.metadata),
@@ -1206,18 +1207,3 @@ class ExecutionPlan:
             f"steps={len(self.steps)}"
             ")>"
         )
-
-    def _run_with_timeout(self, fn, timeout: int):
-        """
-        Ejecuta fn() con timeout.
-        Si timeout <= 0 se ejecuta sin límite.
-        """
-        if timeout <= 0:
-            return fn()
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(fn)
-            try:
-                return future.result(timeout=timeout)
-            except FuturesTimeout:
-                raise TimeoutError(f"Step excedió el timeout de {timeout}s")
