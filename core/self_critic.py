@@ -7,6 +7,8 @@ from typing import Any
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
 from llm.prompt_builder import PromptBuilder, PromptType
+from core.evaluation_result import EvaluationResult
+
 from llm.router import LLMRouter
 
 logger = logging.getLogger(__name__)
@@ -70,7 +72,7 @@ class SelfCritic:
         plan: ExecutionPlan,
         result: ExecutionResult,
         context: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    ) -> EvaluationResult:
         """
         Evalúa el resultado de una ejecución.
 
@@ -83,6 +85,7 @@ class SelfCritic:
         Importante:
             SelfCritic nunca utiliza plan.loaded_context.
         """
+        context = context or {}
 
         if plan is None:
             raise ValueError(
@@ -118,7 +121,7 @@ class SelfCritic:
                 plan.id,
             )
 
-            return evaluation
+            return EvaluationResult.from_dict(evaluation)
 
         # ------------------------------------------------------
         # Self-critic no requerido
@@ -132,16 +135,10 @@ class SelfCritic:
         )
 
         if not requires_self_critic:
-            return self._evaluation_pass(
+            return EvaluationResult.passed(
                 score=10,
                 reason="No se requirió crítica.",
             )
-
-        # ------------------------------------------------------
-        # Contexto explícito
-        # ------------------------------------------------------
-
-        context = context or {}
 
         # ------------------------------------------------------
         # Construcción del contexto de evaluación
@@ -192,8 +189,8 @@ class SelfCritic:
                     type(response).__name__,
                 )
 
-                return self._evaluation_unavailable(
-                    reason=("El LLM devolvió una respuesta " "que no es texto."),
+                return EvaluationResult.unavailable(
+                    reason="El LLM devolvió una respuesta que no es texto.",
                 )
 
             evaluation = self._parse_and_validate(
@@ -208,7 +205,7 @@ class SelfCritic:
                 evaluation.get("score"),
             )
 
-            return evaluation
+            return EvaluationResult.from_dict(evaluation)
 
         except Exception as exc:
             logger.exception(
@@ -216,7 +213,7 @@ class SelfCritic:
                 plan.id,
             )
 
-            return self._evaluation_unavailable(
+            return EvaluationResult.unavailable(
                 reason=f"Error en crítica: {exc}",
             )
 

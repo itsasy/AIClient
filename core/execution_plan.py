@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.execution_step import ExecutionStep
-
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 @dataclass(slots=True)
 class ExecutionPlan:
@@ -400,21 +400,12 @@ class ExecutionPlan:
         self.context_requirements[provider] = required
 
     def required_context_providers(self) -> list[str]:
-        """
-        API oficial para ContextManager.
-        Devuelve los providers que el plan declara como necesarios.
-        """
+        """API oficial para ContextManager."""
         requirements = getattr(self, "context_requirements", None) or {}
         if not isinstance(requirements, dict):
             return []
+        return [key for key, required in requirements.items() if required]
 
-        return [
-            key
-            for key, required in requirements.items()
-            if required
-        ]
-
-    
     # =========================================================
     # Governance
     # =========================================================
@@ -673,100 +664,22 @@ class ExecutionPlan:
     # Steps
     # =========================================================
 
-    def add_step(
-        self,
-        description: str,
-        unit_type: str,
-        unit_name: str,
-        params: dict[str, Any] | None = None,
-        expected_output: str | None = None,
-        retries: int = 0,
-        timeout: int = 120,
-        metadata: dict[str, Any] | None = None,
-    ) -> ExecutionStep:
-        """
-        Agrega un step a un plan multi_step.
-        """
-
-        if not self.is_multi_step():
-            raise ValueError("No se pueden agregar steps a un " "ExecutionPlan en modo single.")
-
-        normalized_unit_type = self.normalize_unit_type(unit_type)
-
-        if normalized_unit_type is None:
-            raise ValueError("unit_type no puede ser None.")
-
-        if not isinstance(unit_name, str):
-            raise ValueError("unit_name debe ser un string.")
-
-        unit_name = unit_name.strip()
-
-        if not unit_name:
-            raise ValueError("unit_name no puede estar vacío.")
-
-        if params is None:
-            params = {}
-
-        if not isinstance(params, dict):
-            raise TypeError("params debe ser un diccionario.")
-
-        if metadata is None:
-            metadata = {}
-
-        if not isinstance(metadata, dict):
-            raise TypeError("metadata debe ser un diccionario.")
-
-        step = ExecutionStep(
-            description=description,
-            unit_type=normalized_unit_type,
-            unit_name=unit_name,
-            params=dict(params),
-            expected_output=expected_output,
-            retries=retries,
-            timeout=timeout,
-            metadata=dict(metadata),
-        )
-
+    def add_step(self, step: ExecutionStep) -> None:
+        if any(s.id == step.id for s in self.steps):
+            raise ValueError(f"Ya existe un step con id={step.id}")
         self.steps.append(step)
 
-        return step
-
-    def remove_step(
-        self,
-        step_id: str,
-    ) -> bool:
-        if not isinstance(step_id, str):
-            return False
-
-        step_id = step_id.strip()
-
-        for index, step in enumerate(self.steps):
-            if step.id != step_id:
-                continue
-
-            self.steps.pop(index)
-
-            for remaining in self.steps:
-                if hasattr(
-                    remaining,
-                    "remove_dependency",
-                ):
-                    remaining.remove_dependency(step_id)
-                elif step_id in remaining.depends_on:
-                    remaining.depends_on.remove(step_id)
-
-            return True
-
+    def remove_step(self, step_id: str) -> bool:
+        for i, step in enumerate(self.steps):
+            if step.id == step_id:
+                self.steps.pop(i)
+                return True
         return False
 
-    def get_step(
-        self,
-        step_id: str,
-    ) -> ExecutionStep | None:
+    def get_step(self, step_id: str) -> ExecutionStep | None:
         for step in self.steps:
             if step.id == step_id:
                 return step
-
         return None
 
     def has_steps(self) -> bool:
@@ -777,6 +690,14 @@ class ExecutionPlan:
 
     def is_single(self) -> bool:
         return self.execution_mode == "single"
+
+    def dependencies_for(self, step: ExecutionStep) -> list[ExecutionStep]:
+        deps = []
+        for dep_id in step.depends_on:
+            found = self.get_step(dep_id)
+            if found:
+                deps.append(found)
+        return deps
 
     # =========================================================
     # Dependency graph
@@ -1235,3 +1156,18 @@ class ExecutionPlan:
             f"steps={len(self.steps)}"
             ")>"
         )
+
+    def _run_with_timeout(self, fn, timeout: int):
+        """
+        Ejecuta fn() con timeout.
+        Si timeout <= 0 se ejecuta sin límite.
+        """
+        if timeout <= 0:
+            return fn()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(fn)
+            try:
+                return future.result(timeout=timeout)
+            except FuturesTimeout:
+                raise TimeoutError(f"Step excedió el timeout de {timeout}s")
