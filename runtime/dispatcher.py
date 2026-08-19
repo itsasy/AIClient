@@ -47,6 +47,7 @@ class UnitDispatcher:
         self,
         agent_registry: AgentRegistry,
         skill_registry: SkillRegistry,
+        capability_guard: CapabilityGuard | None = None,
     ) -> None:
         if agent_registry is None:
             raise ValueError(
@@ -60,6 +61,9 @@ class UnitDispatcher:
 
         self.agent_registry = agent_registry
         self.skill_registry = skill_registry
+        self.capability_guard = (
+            capability_guard if capability_guard is not None else CapabilityGuard()
+        )
 
     # ==========================================================
     # Public API
@@ -277,7 +281,7 @@ class UnitDispatcher:
         ):
             capabilities = (capabilities,)
 
-        guard = CapabilityGuard()
+        guard = self.capability_guard
 
         try:
             for capability in capabilities:

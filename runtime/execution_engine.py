@@ -60,6 +60,7 @@ class ExecutionEngine:
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
         command_router: Any | None = None,
+        capability_guard: Any | None = None,
     ) -> None:
         if agent_registry is None:
             raise ValueError("ExecutionEngine requiere agent_registry.")
@@ -72,11 +73,12 @@ class ExecutionEngine:
         self.intent_analyzer = intent_analyzer if intent_analyzer is not None else IntentAnalyzer()
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
         self.command_router = command_router
-        self.retry_policy = RetryPolicy()
+        self.capability_guard = capability_guard
 
         self.dispatcher = UnitDispatcher(
             agent_registry=self.agent_registry,
             skill_registry=self.skill_registry,
+            capability_guard=self.capability_guard,
         )
 
         self.metrics: dict[str, int] = {
@@ -92,6 +94,7 @@ class ExecutionEngine:
         self.learner = ContinuousLearner()
         self.engram = EngramMemory()
         self.metrics_store = MetricsStore()
+        self.retry_policy = RetryPolicy()
         self._retry_context: dict[str, dict[str, Any]] = {}
 
         logger.info(
