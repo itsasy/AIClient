@@ -25,6 +25,7 @@ from core.self_critic import SelfCritic
 from runtime.dispatcher import UnitDispatcher
 from runtime.registry.agent_registry import AgentRegistry
 from runtime.registry.skill_registry import SkillRegistry
+from core.governance.capability_guard import CapabilityGuard
 
 logger = logging.getLogger(__name__)
 
@@ -60,20 +61,28 @@ class ExecutionEngine:
         intent_analyzer: IntentAnalyzer | None = None,
         plan_builder: PlanBuilder | None = None,
         command_router: Any | None = None,
-        capability_guard: Any | None = None,
+        capability_guard: CapabilityGuard | None = None,
     ) -> None:
         if agent_registry is None:
             raise ValueError("ExecutionEngine requiere agent_registry.")
+
         if skill_registry is None:
             raise ValueError("ExecutionEngine requiere skill_registry.")
 
         self.agent_registry = agent_registry
         self.skill_registry = skill_registry
+
         self.context_manager = context_manager if context_manager is not None else ContextManager()
+
         self.intent_analyzer = intent_analyzer if intent_analyzer is not None else IntentAnalyzer()
+
         self.plan_builder = plan_builder if plan_builder is not None else PlanBuilder()
+
         self.command_router = command_router
-        self.capability_guard = capability_guard
+
+        self.capability_guard = (
+            capability_guard if capability_guard is not None else CapabilityGuard()
+        )
 
         self.dispatcher = UnitDispatcher(
             agent_registry=self.agent_registry,
