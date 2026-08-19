@@ -1023,7 +1023,12 @@ class ExecutionEngine:
                                 chosen,
                                 dict,
                             ):
-                                if chosen.get("content") is not None:
+                                if (
+                                    chosen.get(
+                                        "content",
+                                    )
+                                    is not None
+                                ):
                                     content = chosen["content"]
 
                                 if chosen.get("path"):
@@ -1249,6 +1254,7 @@ class ExecutionEngine:
                 result = self._evaluate(
                     plan,
                     result,
+                    context,
                 )
 
                 if not isinstance(
@@ -1281,7 +1287,8 @@ class ExecutionEngine:
 
                 if not (result.is_failure or result.is_retry):
                     logger.error(
-                        "Estado inesperado del ExecutionResult | " "plan=%s | status=%s",
+                        "Estado inesperado del ExecutionResult | "
+                        "plan=%s | status=%s",
                         plan.id,
                         result.status,
                     )
@@ -1289,7 +1296,8 @@ class ExecutionEngine:
                     return ExecutionResult.fail(
                         plan_id=plan.id,
                         error=(
-                            "ExecutionEngine recibió un estado " f"no soportado: {result.status}"
+                            "ExecutionEngine recibió un estado "
+                            f"no soportado: {result.status}"
                         ),
                         executor=self.name,
                         retries=retries,
@@ -1304,7 +1312,10 @@ class ExecutionEngine:
                 # -------------------------------------------------
 
                 if retries >= max_retries:
-                    error = result.error or "La ejecución falló y se agotaron " "los reintentos."
+                    error = (
+                        result.error
+                        or "La ejecución falló y se agotaron los reintentos."
+                    )
 
                     metadata = dict(
                         result.metadata or {},
@@ -1353,12 +1364,23 @@ class ExecutionEngine:
                 )
 
                 logger.info(
-                    "Preparando retry | plan=%s | retry=%s/%s | " "corrections=%s | issues=%s",
+                    "Preparando retry | plan=%s | retry=%s/%s | "
+                    "corrections=%s | issues=%s",
                     plan.id,
                     retries,
                     max_retries,
-                    len(retry_data.get("corrections") or []),
-                    len(retry_data.get("issues") or []),
+                    len(
+                        retry_data.get(
+                            "corrections",
+                        )
+                        or []
+                    ),
+                    len(
+                        retry_data.get(
+                            "issues",
+                        )
+                        or []
+                    ),
                 )
 
                 # -------------------------------------------------
@@ -1699,6 +1721,255 @@ class ExecutionEngine:
         return scaffoldish >= 2
 
     # =========================================================
+    # Analysis → generation → write presentation
+    # =========================================================
+
+    def _is_analysis_then_generate_plan(
+        self,
+        plan: ExecutionPlan,
+        executed_steps: list[ExecutionStep],
+        results: list[ExecutionResult],
+    ) -> bool:
+        """
+        Detecta planes del tipo:
+
+            task_agent (análisis)
+                ↓
+            coder (generación)
+                ↓
+            write_file (persistencia)
+
+        Importante:
+
+            Se utilizan executed_steps + results y no
+            plan.steps + results, porque results puede no
+            contener todos los steps cuando alguno fue
+            reutilizado desde el contexto de ejecución.
+
+        Además se comprueba el orden real de ejecución.
+        """
+
+        if len(executed_steps) < 3 or len(results) < 3:
+            return False
+
+        units = [
+            (
+                step.unit_type,
+                step.unit_name,
+            )
+            for step in executed_steps
+        ]
+
+        try:
+            analysis_index = units.index(
+                (
+                    "agent",
+                    "task_agent",
+                ),
+            )
+
+            coder_index = units.index(
+                (
+                    "agent",
+                    "coder",
+                ),
+            )
+
+            write_index = units.index(
+                (
+                    "skill",
+                    "write_file",
+                ),
+            )
+
+        except ValueError:
+            return False
+
+        return analysis_index < coder_index < write_index
+
+    def _build_analysis_and_write_result(
+        self,
+        plan: ExecutionPlan,
+        executed_steps: list[ExecutionStep],
+        results: list[ExecutionResult],
+        result_payload: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """
+        Construye un resultado compuesto pensado para la
+        presentación final al usuario:
+
+            1. Análisis producido por task_agent.
+            2. Confirmación de write_file.
+            3. Ruta absoluta cuando la skill la proporciona.
+
+        La asociación step/result se realiza mediante
+        executed_steps + results para evitar desalineaciones
+        producidas por steps reutilizados desde contexto.
+        """
+
+        analysis_text: str | None = None
+        write_result: Any = None
+        absolute_path: str | None = None
+
+        # -----------------------------------------------------
+        # Asociar correctamente step ↔ result
+        # -----------------------------------------------------
+
+        for step, result in zip(
+            executed_steps,
+            results,
+        ):
+            if not result.is_success:
+                continue
+
+            # -------------------------------------------------
+            # task_agent
+            # -------------------------------------------------
+
+            if step.unit_type == "agent" and step.unit_name == "task_agent":
+                raw = result.result
+
+                if isinstance(
+                    raw,
+                    str,
+                ):
+                    if raw.strip():
+                        analysis_text = raw.strip()
+
+                elif isinstance(
+                    raw,
+                    dict,
+                ):
+                    candidate = raw.get("result") or raw.get("analysis") or raw.get("content")
+
+                    if candidate is not None:
+                        analysis_text = str(
+                            candidate,
+                        ).strip()
+
+                    elif raw:
+                        analysis_text = str(
+                            raw,
+                        )
+
+            # -------------------------------------------------
+            # write_file
+            # -------------------------------------------------
+
+            elif step.unit_type == "skill" and step.unit_name == "write_file":
+                write_result = result.result
+
+                if isinstance(
+                    write_result,
+                    dict,
+                ):
+                    absolute_path = write_result.get(
+                        "absolute_path",
+                    ) or write_result.get(
+                        "path",
+                    )
+
+        # -----------------------------------------------------
+        # Fallback desde result_payload
+        # -----------------------------------------------------
+
+        if analysis_text is None:
+            for item in result_payload:
+                if not (
+                    item.get("unit_type") == "agent"
+                    and item.get("unit_name") == "task_agent"
+                    and item.get("success")
+                ):
+                    continue
+
+                raw = item.get(
+                    "result",
+                )
+
+                if isinstance(
+                    raw,
+                    str,
+                ):
+                    if raw.strip():
+                        analysis_text = raw.strip()
+
+                elif isinstance(
+                    raw,
+                    dict,
+                ):
+                    candidate = raw.get("result") or raw.get("analysis") or raw.get("content")
+
+                    if candidate is not None:
+                        analysis_text = str(
+                            candidate,
+                        ).strip()
+
+                    elif raw:
+                        analysis_text = str(
+                            raw,
+                        )
+
+                if analysis_text:
+                    break
+
+        # -----------------------------------------------------
+        # Fallback para path
+        # -----------------------------------------------------
+
+        if absolute_path is None:
+            for item in result_payload:
+                if not (
+                    item.get("unit_type") == "skill"
+                    and item.get("unit_name") == "write_file"
+                    and item.get("success")
+                ):
+                    continue
+
+                raw = item.get(
+                    "result",
+                )
+
+                if isinstance(
+                    raw,
+                    dict,
+                ):
+                    absolute_path = raw.get(
+                        "absolute_path",
+                    ) or raw.get(
+                        "path",
+                    )
+
+                if absolute_path:
+                    break
+
+        # -----------------------------------------------------
+        # Resultado final
+        # -----------------------------------------------------
+
+        return {
+            "type": "analysis_and_write",
+            "analysis": (analysis_text or "(No se pudo recuperar el análisis)"),
+            "write": {
+                "ok": True,
+                "path": absolute_path,
+                "message": (
+                    (
+                        "He ejecutado la skill 'write_file' "
+                        "correctamente. El archivo se guardó "
+                        f"en: {absolute_path}"
+                    )
+                    if absolute_path
+                    else "Archivo escrito correctamente."
+                ),
+            },
+            "summary": (
+                "Análisis completado y landing generada correctamente."
+                if analysis_text and absolute_path
+                else "Proceso completado."
+            ),
+        }
+
+    # =========================================================
     # Multi-step execution
     # =========================================================
 
@@ -1722,7 +1993,19 @@ class ExecutionEngine:
         errors: list[dict[str, str]] = []
 
         for step in ordered:
-            previous = context.get("execution", {}).get("steps", {}).get(step.id)
+            previous = (
+                context.get(
+                    "execution",
+                    {},
+                )
+                .get(
+                    "steps",
+                    {},
+                )
+                .get(
+                    step.id,
+                )
+            )
 
             # -------------------------------------------------
             # Reutilizar resultado exitoso
@@ -1739,8 +2022,15 @@ class ExecutionEngine:
                             plan.id,
                             step.id,
                         )
-                        results.append(previous)
-                        executed_steps.append(step)
+
+                        results.append(
+                            previous,
+                        )
+
+                        executed_steps.append(
+                            step,
+                        )
+
                         continue
 
                 elif isinstance(
@@ -1794,8 +2084,13 @@ class ExecutionEngine:
                     result,
                 )
 
-                results.append(result)
-                executed_steps.append(step)
+                results.append(
+                    result,
+                )
+
+                executed_steps.append(
+                    step,
+                )
 
                 errors.append(
                     {
@@ -1868,8 +2163,13 @@ class ExecutionEngine:
                 result,
             )
 
-            results.append(result)
-            executed_steps.append(step)
+            results.append(
+                result,
+            )
+
+            executed_steps.append(
+                step,
+            )
 
             # -------------------------------------------------
             # Retry
@@ -2003,6 +2303,42 @@ class ExecutionEngine:
         # -----------------------------------------------------
 
         if not errors:
+            # -------------------------------------------------
+            # Caso especial:
+            #
+            # task_agent → coder → write_file
+            #
+            # La presentación final conserva el análisis y
+            # agrega la confirmación de escritura.
+            # -------------------------------------------------
+
+            if self._is_analysis_then_generate_plan(
+                plan,
+                executed_steps,
+                results,
+            ):
+                final_result = self._build_analysis_and_write_result(
+                    plan=plan,
+                    executed_steps=executed_steps,
+                    results=results,
+                    result_payload=result_payload,
+                )
+
+                return ExecutionResult.success(
+                    plan_id=plan.id,
+                    result=final_result,
+                    executor=self.name,
+                    metadata={
+                        "steps": result_payload,
+                        "step_count": len(results),
+                        "presentation": "analysis_then_write",
+                    },
+                )
+
+            # -------------------------------------------------
+            # Scaffold aggregation
+            # -------------------------------------------------
+
             if self._should_aggregate_scaffold(
                 plan,
                 results,
@@ -2180,6 +2516,7 @@ class ExecutionEngine:
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
+        context: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         """
         Evalúa únicamente resultados que pueden ser evaluados.
@@ -2197,31 +2534,33 @@ class ExecutionEngine:
         if not (result.is_success or result.is_partial):
             return result
 
-        if not plan.metadata.get(
-            "requires_self_critic",
-            False,
-        ):
+        if not plan.metadata.get("requires_self_critic", False):
             return result
 
         evaluation = self.critic.evaluate(
-            plan,
-            result,
+            plan=plan,
+            result=result,
+            context=context or {},
         )
 
         result.metadata["evaluation"] = evaluation
 
         try:
             self.engram.save(
-                (f"SelfCritic: {plan.id} - " f"score={evaluation.get('score')}"),
+                (
+                    f"SelfCritic: {plan.id} - "
+                    f"score={evaluation.get('score')}"
+                ),
                 tags=[
                     "self_critic",
                     f"plan_{plan.id}",
-                    ("score_" f"{evaluation.get('score', 0)}"),
+                    f"score_{evaluation.get('score', 0)}",
                 ],
             )
         except Exception:
             logger.debug(
-                "No se pudo persistir SelfCritic " "en EngramMemory.",
+                "No se pudo persistir SelfCritic "
+                "en EngramMemory.",
                 exc_info=True,
             )
 
@@ -2282,7 +2621,9 @@ class ExecutionEngine:
         try:
             proposed = self.learner.extract_and_learn(
                 user_query=plan.original_task,
-                assistant_response=str(result.result or result.error or ""),
+                assistant_response=str(
+                    result.result or result.error or "",
+                ),
             )
 
             if proposed:

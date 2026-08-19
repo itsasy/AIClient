@@ -49,6 +49,13 @@ class PromptBuilder:
     MAX_FILE_CONTENT_CHARS = 1_200
     MAX_ARCHITECTURE_CONTENT_CHARS = 12_000
 
+    # Límites específicos para evitar que una sola pieza
+    # de contexto destruya todo el prompt.
+    MAX_REQUESTED_OUTPUT_CHARS = 8_000
+    MAX_CODING_TASK_CHARS = 12_000
+    MAX_DEPENDENCY_TEXT_CHARS = 4_500
+    MAX_ADDITIONAL_INSTRUCTIONS_CHARS = 4_000
+
     SYSTEM_INSTRUCTIONS = """
 Eres un ingeniero de software senior y arquitecto de sistemas.
 
@@ -138,6 +145,11 @@ Reglas:
         "retry_issues",
         "retry_corrections",
         "execution",
+        "lean_prompt",
+        "suppress_plan",
+        "ignore_original_task",
+        "coding_task",
+        "dependency_text",
     }
 
     def __init__(
@@ -149,7 +161,9 @@ Reglas:
         )
 
         if self.max_context_chars <= 0:
-            raise ValueError("max_context_chars debe ser mayor que cero.")
+            raise ValueError(
+                "max_context_chars debe ser mayor que cero.",
+            )
 
     # ==========================================================
     # Public API
@@ -169,13 +183,17 @@ Reglas:
         """
 
         if plan is None:
-            raise ValueError("plan no puede ser None.")
+            raise ValueError(
+                "plan no puede ser None.",
+            )
 
         if not isinstance(prompt_type, PromptType):
             try:
                 prompt_type = PromptType(prompt_type)
             except (ValueError, TypeError) as exc:
-                raise ValueError(f"prompt_type inválido: {prompt_type!r}") from exc
+                raise ValueError(
+                    f"prompt_type inválido: {prompt_type!r}",
+                ) from exc
 
         raw_context = dict(context or {})
 
@@ -186,17 +204,24 @@ Reglas:
             list(raw_context.keys()),
         )
 
-        prepared_context = self._prepare_context(raw_context)
+        prepared_context = self._prepare_context(
+            raw_context,
+        )
 
         try:
             sizes = {key: len(self._serialize(value)) for key, value in prepared_context.items()}
+
             logger.info(
                 "PromptBuilder | prepared_context_chars=%s | total=%s",
                 sizes,
                 sum(sizes.values()),
             )
+
         except Exception:
-            logger.debug("No se pudo medir tamaños de prepared_context", exc_info=True)
+            logger.debug(
+                "No se pudo medir tamaños de prepared_context",
+                exc_info=True,
+            )
 
         prompt = self._compose(
             plan=plan,
@@ -279,21 +304,81 @@ Reglas:
         value: Any,
     ) -> Any:
         if key == "architecture":
-            return self._sanitize_architecture(value)
+            return self._sanitize_architecture(
+                value,
+            )
 
         if key == "project_analysis":
-            return self._sanitize_project_analysis(value)
+            return self._sanitize_project_analysis(
+                value,
+            )
 
         if key == "execution":
-            return self._sanitize_execution(value)
+            return self._sanitize_execution(
+                value,
+            )
 
         if key in {
             "retry_issues",
             "retry_corrections",
         }:
-            return self._sanitize_list(value)
+            return self._sanitize_list(
+                value,
+            )
+
+        if key == "requested_output":
+            return self._limit_text(
+                value,
+                self.MAX_REQUESTED_OUTPUT_CHARS,
+            )
+
+        if key == "coding_task":
+            return self._limit_text(
+                value,
+                self.MAX_CODING_TASK_CHARS,
+            )
+
+        if key == "dependency_text":
+            return self._limit_text(
+                value,
+                self.MAX_DEPENDENCY_TEXT_CHARS,
+            )
+
+        if key == "additional_instructions":
+            return self._limit_text(
+                value,
+                self.MAX_ADDITIONAL_INSTRUCTIONS_CHARS,
+            )
 
         return value
+
+    # ==========================================================
+    # Text limits
+    # ==========================================================
+
+    @staticmethod
+    def _limit_text(
+        value: Any,
+        limit: int,
+    ) -> Any:
+        """
+        Limita texto sin alterar otros tipos de datos.
+        """
+
+        if not isinstance(
+            value,
+            str,
+        ):
+            return value
+
+        if len(value) <= limit:
+            return value
+
+        return value[:limit] + "\n\n[CONTENIDO TRUNCADO POR LÍMITE DE TAMAÑO]"
+
+    # ==========================================================
+    # Project analysis
+    # ==========================================================
 
     def _sanitize_project_analysis(
         self,
@@ -305,24 +390,36 @@ Reglas:
         architecture es la representación canónica enviada por separado.
         project_analysis solo conserva resumen / hallazgos, no snapshot crudo.
         """
-        if not isinstance(analysis, dict):
+
+        if not isinstance(
+            analysis,
+            dict,
+        ):
             return analysis
 
-        result = dict(analysis)
+        result = dict(
+            analysis,
+        )
 
-        # Evidencia canónica: va en context["architecture"]
-        result.pop("architecture_context", None)
+        result.pop(
+            "architecture_context",
+            None,
+        )
 
-        # Estructura cruda duplicada (aunque sea sin content)
-        result.pop("snapshot", None)
+        result.pop(
+            "snapshot",
+            None,
+        )
 
-        serialized = self._serialize(result)
+        serialized = self._serialize(
+            result,
+        )
 
         if len(serialized) <= self.MAX_PROJECT_ANALYSIS_CHARS:
             return result
 
         return {
-            "summary": result.get("summary") or result.get("project_summary"),
+            "summary": (result.get("summary") or result.get("project_summary")),
             "structure": result.get("structure"),
             "findings": result.get("findings"),
             "components": result.get("components"),
@@ -346,20 +443,35 @@ Reglas:
         - Recorta content por archivo.
         - Recorta content total del bloque architecture.
         """
-        if not isinstance(architecture, dict):
+
+        if not isinstance(
+            architecture,
+            dict,
+        ):
             return architecture
 
-        result = dict(architecture)
+        result = dict(
+            architecture,
+        )
 
-        files = result.get("files")
-        if not isinstance(files, list):
+        files = result.get(
+            "files",
+        )
+
+        if not isinstance(
+            files,
+            list,
+        ):
             return result
 
         clean_files: list[dict[str, Any]] = []
         total_content_chars = 0
 
         for file_data in files[: self.MAX_ARCHITECTURE_FILES]:
-            if not isinstance(file_data, dict):
+            if not isinstance(
+                file_data,
+                dict,
+            ):
                 continue
 
             clean_file: dict[str, Any] = {
@@ -375,23 +487,50 @@ Reglas:
                 if key in file_data
             }
 
-            content = file_data.get("content")
-            if isinstance(content, str) and content:
+            content = file_data.get(
+                "content",
+            )
+
+            if (
+                isinstance(
+                    content,
+                    str,
+                )
+                and content
+            ):
                 remaining = self.MAX_ARCHITECTURE_CONTENT_CHARS - total_content_chars
+
                 if remaining <= 0:
                     clean_file["content_omitted"] = True
+
                 else:
-                    clipped = content[: min(self.MAX_FILE_CONTENT_CHARS, remaining)]
+                    clipped = content[
+                        : min(
+                            self.MAX_FILE_CONTENT_CHARS,
+                            remaining,
+                        )
+                    ]
+
                     clean_file["content"] = clipped
+
                     if len(content) > len(clipped):
                         clean_file["content_truncated"] = True
-                    total_content_chars += len(clipped)
 
-            clean_files.append(clean_file)
+                    total_content_chars += len(
+                        clipped,
+                    )
+
+            clean_files.append(
+                clean_file,
+            )
 
         result["files"] = clean_files
-        result["files_included"] = len(clean_files)
-        result["files_total"] = len(files)
+        result["files_included"] = len(
+            clean_files,
+        )
+        result["files_total"] = len(
+            files,
+        )
         result["content_chars_included"] = total_content_chars
 
         return result
@@ -468,7 +607,9 @@ Reglas:
             )
 
         except Exception:
-            logger.exception("Error serializando contexto.")
+            logger.exception(
+                "Error serializando contexto.",
+            )
 
             return str(value)
 
@@ -480,6 +621,14 @@ Reglas:
         self,
         plan: ExecutionPlan,
     ) -> str:
+        """
+        Representación del plan para el LLM.
+
+        En modo normal se conserva el detalle suficiente para
+        comprender la ejecución sin convertir el plan en una
+        segunda fuente de instrucciones contradictorias.
+        """
+
         plan_data: dict[str, Any] = {
             "plan_id": plan.id,
             "original_task": plan.original_task,
@@ -499,13 +648,19 @@ Reglas:
                     "description": step.description,
                     "unit_type": step.unit_type,
                     "unit_name": step.unit_name,
-                    "depends_on": list(step.depends_on),
-                    "params": dict(step.params),
+                    "depends_on": list(
+                        step.depends_on,
+                    ),
+                    "params": dict(
+                        step.params,
+                    ),
                 }
                 for step in plan.steps
             ]
 
-        return self._serialize(plan_data)
+        return self._serialize(
+            plan_data,
+        )
 
     # ==========================================================
     # Prompt composition
@@ -522,134 +677,230 @@ Reglas:
         ]
 
         if prompt_type is PromptType.CRITIQUE:
-            sections.append(self.CRITIQUE_INSTRUCTIONS)
+            sections.append(
+                self.CRITIQUE_INSTRUCTIONS,
+            )
 
         # ---------------------------------------------------------
-        # Modo lean: usado por CoderAgent en landings
-        # para evitar que el modelo se quede en modo análisis.
+        # Lean mode
         # ---------------------------------------------------------
+        #
+        # Usado por CoderAgent en tareas donde el modelo debe
+        # producir directamente un artefacto.
+        #
+        # En este modo NO agregamos el ExecutionPlan completo,
+        # porque puede competir con coding_task/requested_output.
+        # ---------------------------------------------------------
+
         lean_mode = bool(
             context.get("lean_prompt")
             or context.get("suppress_plan")
             or context.get("ignore_original_task")
         )
 
-        agent_role = context.get("agent_role")
-        if agent_role:
-            sections.append(self._section("Rol de ejecución", str(agent_role)))
+        agent_role = context.get(
+            "agent_role",
+        )
 
-        # Tarea del usuario
+        if agent_role:
+            sections.append(
+                self._section(
+                    "Rol de ejecución",
+                    str(agent_role),
+                ),
+            )
+
+        # ---------------------------------------------------------
+        # Tarea
+        # ---------------------------------------------------------
+
         if lean_mode:
-            # Preferir coding_task si existe
             task_text = (
                 context.get("coding_task")
                 or context.get("task")
+                or plan.original_task
                 or "Genera el artefacto solicitado."
             )
-            sections.append(self._section("Tarea", str(task_text)))
+
+            sections.append(
+                self._section(
+                    "Tarea",
+                    str(task_text),
+                ),
+            )
+
         else:
-            sections.append(self._section("Tarea del usuario", plan.original_task))
+            sections.append(
+                self._section(
+                    "Tarea del usuario",
+                    plan.original_task,
+                ),
+            )
+
             sections.append(
                 self._section(
                     "ExecutionPlan",
-                    self._build_plan_section(plan),
-                )
+                    self._build_plan_section(
+                        plan,
+                    ),
+                ),
             )
 
+        # ---------------------------------------------------------
         # Requisitos de análisis
-        analysis_requirements = context.get("analysis_requirements")
+        # ---------------------------------------------------------
+
+        analysis_requirements = context.get(
+            "analysis_requirements",
+        )
+
         if analysis_requirements:
             sections.append(
                 self._section(
                     "Requisitos de análisis",
-                    self._serialize(analysis_requirements),
-                )
+                    self._serialize(
+                        analysis_requirements,
+                    ),
+                ),
             )
 
-        # Formato de salida solicitado
-        requested_output = context.get("requested_output")
+        # ---------------------------------------------------------
+        # Formato de salida
+        # ---------------------------------------------------------
+
+        requested_output = context.get(
+            "requested_output",
+        )
+
         if requested_output:
+            if isinstance(
+                requested_output,
+                str,
+            ):
+                output_text = requested_output
+            else:
+                output_text = self._serialize(
+                    requested_output,
+                )
+
             sections.append(
                 self._section(
                     "Formato de salida solicitado",
-                    (
-                        self._serialize(requested_output)
-                        if not isinstance(requested_output, str)
-                        else requested_output
-                    ),
-                )
+                    output_text,
+                ),
             )
 
-        # Contexto general (excluyendo claves especializadas)
+        # ---------------------------------------------------------
+        # Contexto general
+        # ---------------------------------------------------------
+
         general_context = {
-            key: value
-            for key, value in context.items()
-            if key not in self.SPECIALIZED_CONTEXT_KEYS
-            and key
-            not in {
-                "lean_prompt",
-                "suppress_plan",
-                "ignore_original_task",
-                "coding_task",
-                "requested_output",
-                "agent_role",
-            }
+            key: value for key, value in context.items() if key not in self.SPECIALIZED_CONTEXT_KEYS
         }
 
         if general_context and not lean_mode:
             sections.append(
                 self._section(
                     "Contexto y evidencia disponible",
-                    self._serialize(general_context),
-                )
-            )
-        elif lean_mode and context.get("dependency_text"):
-            # En lean mode solo dejamos pasar el análisis si existe
-            sections.append(
-                self._section(
-                    "Análisis de referencia",
-                    str(context["dependency_text"])[:4500],
-                )
+                    self._serialize(
+                        general_context,
+                    ),
+                ),
             )
 
+        elif lean_mode:
+            dependency_text = context.get(
+                "dependency_text",
+            )
+
+            if dependency_text:
+                sections.append(
+                    self._section(
+                        "Análisis de referencia",
+                        str(
+                            dependency_text,
+                        )[: self.MAX_DEPENDENCY_TEXT_CHARS],
+                    ),
+                )
+
+        # ---------------------------------------------------------
         # Retry
-        retry_issues = context.get("retry_issues")
-        retry_corrections = context.get("retry_corrections")
+        # ---------------------------------------------------------
+
+        retry_issues = context.get(
+            "retry_issues",
+        )
+
+        retry_corrections = context.get(
+            "retry_corrections",
+        )
+
         if retry_issues or retry_corrections:
             retry_payload = {
                 "issues": retry_issues or [],
                 "corrections": retry_corrections or [],
             }
+
             sections.append(
                 self._section(
                     "Correcciones de una ejecución anterior",
-                    self._serialize(retry_payload),
-                )
+                    self._serialize(
+                        retry_payload,
+                    ),
+                ),
             )
 
+        # ---------------------------------------------------------
         # Instrucciones finales
+        # ---------------------------------------------------------
+
         if prompt_type is PromptType.CRITIQUE:
             sections.append(
                 self._section(
                     "Instrucciones finales",
                     """
-    Evalúa exclusivamente el resultado disponible.
-    No ejecutes nuevamente la tarea.
-    Devuelve únicamente el JSON definido en "Modo de evaluación".
-    """.strip(),
-                )
+Evalúa exclusivamente el resultado disponible.
+No ejecutes nuevamente la tarea.
+Devuelve únicamente el JSON definido en "Modo de evaluación".
+""".strip(),
+                ),
             )
+
+        elif lean_mode:
+            sections.append(
+                self._section(
+                    "Instrucciones finales",
+                    """
+Ejecuta directamente la tarea solicitada.
+
+Prioridades obligatorias:
+
+1. La Tarea define qué producto o artefacto debe generarse.
+2. El Formato de salida solicitado define cómo debe devolverse.
+3. Las restricciones explícitas de la tarea tienen prioridad sobre
+   cualquier interpretación genérica.
+4. Si se solicita código, devuelve código real y completo.
+5. No respondas con explicaciones, análisis o confirmaciones cuando
+   el contrato solicite un artefacto.
+6. No inventes otro producto, marca, archivo o objetivo distinto
+   del indicado por la tarea.
+7. Respeta literalmente paths, nombres y contratos de salida
+   cuando hayan sido especificados.
+""".strip(),
+                ),
+            )
+
         else:
             sections.append(
                 self._section(
                     "Instrucciones finales",
                     """
-    Realiza la tarea utilizando únicamente la información disponible.
-    Responde de forma concreta y técnica.
-    Si se te pide un formato específico (JSON, HTML, etc.), respétalo estrictamente.
-    No inventes información que no esté en el contexto.
-    """.strip(),
-                )
+Realiza la tarea utilizando únicamente la información disponible.
+Responde de forma concreta y técnica.
+Si se te pide un formato específico (JSON, HTML, etc.), respétalo estrictamente.
+No inventes información que no esté en el contexto.
+""".strip(),
+                ),
             )
 
         return "\n\n".join(section.strip() for section in sections if section and section.strip())
@@ -680,14 +931,13 @@ Reglas:
         """
         Reduce el prompt sin eliminar las instrucciones finales.
 
-        La estrategia es:
+        Estrategia:
 
-            1. conservar el prefijo;
-            2. conservar las instrucciones finales;
-            3. reducir primero el contexto/evidencia;
-            4. si todavía no alcanza, reducir secciones no críticas;
-            5. como último recurso truncar el cuerpo manteniendo
-               explícitamente el inicio y el final.
+            1. conservar instrucciones finales;
+            2. reducir contexto/evidencia;
+            3. reducir secciones no críticas;
+            4. como último recurso truncar el cuerpo manteniendo
+               inicio y final.
         """
 
         limit = self.max_context_chars
@@ -709,6 +959,7 @@ Reglas:
 
         if final_index != -1:
             before_final = prompt[:final_index]
+
             final_section = prompt[final_index:]
 
             available = limit - len(final_section) - len(notice)
@@ -724,7 +975,6 @@ Reglas:
                 if len(result) <= limit:
                     return result
 
-                # Protección contra diferencias de separadores.
                 remaining = limit - len(final_section) - len(notice)
 
                 if remaining > 0:
@@ -732,8 +982,6 @@ Reglas:
 
                 return final_section[:limit]
 
-        # Fallback: no se encontró la sección final.
-        # Conservamos el principio y añadimos el aviso.
         available = max(
             0,
             limit - len(notice),
@@ -749,17 +997,7 @@ Reglas:
         """
         Reduce el bloque previo a las instrucciones finales.
 
-        Prioridad:
-
-            - sistema
-            - rol
-            - tarea
-            - ExecutionPlan
-            - requisitos
-            - output
-            - evidencia/contexto
-
-        La sección de evidencia es la primera candidata a reducción.
+        La evidencia es la primera candidata a reducción.
         """
 
         if len(prompt) <= available:
@@ -811,7 +1049,9 @@ Reglas:
 
         notice = "\n[CONTEXTO REDUCIDO]"
 
-        if marker and text.startswith(marker):
+        if marker and text.startswith(
+            marker,
+        ):
             available = limit - len(marker) - len(notice)
 
             if available <= 0:

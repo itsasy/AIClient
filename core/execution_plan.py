@@ -400,10 +400,21 @@ class ExecutionPlan:
         self.context_requirements[provider] = required
 
     def required_context_providers(self) -> list[str]:
-        return sorted(
-            provider for provider, required in self.context_requirements.items() if required
-        )
+        """
+        API oficial para ContextManager.
+        Devuelve los providers que el plan declara como necesarios.
+        """
+        requirements = getattr(self, "context_requirements", None) or {}
+        if not isinstance(requirements, dict):
+            return []
 
+        return [
+            key
+            for key, required in requirements.items()
+            if required
+        ]
+
+    
     # =========================================================
     # Governance
     # =========================================================

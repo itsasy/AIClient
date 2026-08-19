@@ -30,6 +30,16 @@ class SelfCritic:
         - Ejecuta Agents o Skills.
         - Selecciona proveedores.
         - Decide políticas de ejecución.
+
+    El contexto de evaluación debe ser proporcionado
+    explícitamente por el caller.
+
+    SelfCritic NO accede a:
+        plan.loaded_context
+
+    Esto mantiene separado:
+        - el contexto de ejecución
+        - el contexto utilizado por el crítico
     """
 
     DEFAULT_SCORE = 5
@@ -59,19 +69,30 @@ class SelfCritic:
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Evalúa el resultado de una ejecución.
 
         SelfCritic no modifica el resultado original ni el plan.
         Devuelve únicamente un contrato de evaluación normalizado.
+
+        El contexto debe ser recibido explícitamente mediante
+        el argumento `context`.
+
+        Importante:
+            SelfCritic nunca utiliza plan.loaded_context.
         """
 
         if plan is None:
-            raise ValueError("plan no puede ser None.")
+            raise ValueError(
+                "plan no puede ser None.",
+            )
 
         if result is None:
-            raise ValueError("result no puede ser None.")
+            raise ValueError(
+                "result no puede ser None.",
+            )
 
         logger.info(
             "Evaluando ejecución | plan=%s | status=%s",
@@ -88,7 +109,9 @@ class SelfCritic:
         # ------------------------------------------------------
 
         if result.is_failure:
-            evaluation = self._evaluation_from_failure(result)
+            evaluation = self._evaluation_from_failure(
+                result,
+            )
 
             logger.info(
                 "SelfCritic omitido por ejecución fallida | plan=%s",
@@ -115,12 +138,19 @@ class SelfCritic:
             )
 
         # ------------------------------------------------------
-        # Construcción del contexto
+        # Contexto explícito
         # ------------------------------------------------------
 
-        context = self._build_context(
+        context = context or {}
+
+        # ------------------------------------------------------
+        # Construcción del contexto de evaluación
+        # ------------------------------------------------------
+
+        evaluation_context = self._build_context(
             plan=plan,
             result=result,
+            context=context,
         )
 
         try:
@@ -130,7 +160,7 @@ class SelfCritic:
 
             prompt = self.prompt_builder.build(
                 plan=plan,
-                context=context,
+                context=evaluation_context,
                 prompt_type=PromptType.CRITIQUE,
             )
 
@@ -166,7 +196,9 @@ class SelfCritic:
                     reason=("El LLM devolvió una respuesta " "que no es texto."),
                 )
 
-            evaluation = self._parse_and_validate(response)
+            evaluation = self._parse_and_validate(
+                response,
+            )
 
             logger.info(
                 "SelfCritic completado | plan=%s | status=%s | " "pass=%s | score=%s",
@@ -196,42 +228,58 @@ class SelfCritic:
         self,
         plan: ExecutionPlan,
         result: ExecutionResult,
+        context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Construye la evidencia que necesita el crítico.
+
+        El contexto base proviene exclusivamente del argumento
+        `context`.
+
+        No se consulta:
+            plan.loaded_context
+
+        Se agrega información de la ejecución actual para que
+        el crítico pueda evaluar el resultado.
         """
 
-        context: dict[str, Any] = {
-            "execution": {
+        source_context = dict(
+            context or {},
+        )
+
+        evaluation_context: dict[str, Any] = dict(
+            source_context,
+        )
+
+        # ------------------------------------------------------
+        # Información de ejecución
+        # ------------------------------------------------------
+
+        existing_execution = evaluation_context.get(
+            "execution",
+        )
+
+        execution_context: dict[str, Any] = {}
+
+        if isinstance(
+            existing_execution,
+            dict,
+        ):
+            execution_context.update(
+                existing_execution,
+            )
+
+        execution_context.update(
+            {
                 "plan_id": plan.id,
                 "task": plan.original_task,
                 "result": result.to_dict(),
             }
-        }
-
-        loaded_context = getattr(
-            plan,
-            "loaded_context",
-            None,
         )
 
-        if isinstance(
-            loaded_context,
-            dict,
-        ):
-            for key in (
-                "architecture",
-                "project_analysis",
-                "standards",
-                "gentleman",
-                "swarmforge",
-                "engram",
-                "project_summary",
-            ):
-                if key in loaded_context:
-                    context[key] = loaded_context[key]
+        evaluation_context["execution"] = execution_context
 
-        return context
+        return evaluation_context
 
     # ==========================================================
     # Parsing
@@ -250,19 +298,25 @@ class SelfCritic:
                 reason="El LLM no devolvió una respuesta.",
             )
 
-        data = self._extract_json(response)
+        data = self._extract_json(
+            response,
+        )
 
         if data is None:
             return self._evaluation_unavailable(
                 reason=("La respuesta del LLM no contiene " "JSON válido."),
             )
 
-        if not self._has_valid_contract(data):
+        if not self._has_valid_contract(
+            data,
+        ):
             return self._evaluation_unavailable(
                 reason=("La respuesta JSON del LLM " "no cumple el contrato de evaluación."),
             )
 
-        return self._normalize_evaluation(data)
+        return self._normalize_evaluation(
+            data,
+        )
 
     def _extract_json(
         self,
@@ -285,7 +339,9 @@ class SelfCritic:
         # ------------------------------------------------------
 
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(
+                text,
+            )
 
             if isinstance(
                 parsed,
@@ -300,9 +356,13 @@ class SelfCritic:
         # Fallback: localizar el primer objeto JSON.
         # ------------------------------------------------------
 
-        start = text.find("{")
+        start = text.find(
+            "{",
+        )
 
-        end = text.rfind("}")
+        end = text.rfind(
+            "}",
+        )
 
         if start == -1 or end == -1 or end <= start:
             return None
@@ -310,7 +370,9 @@ class SelfCritic:
         candidate = text[start : end + 1]
 
         try:
-            parsed = json.loads(candidate)
+            parsed = json.loads(
+                candidate,
+            )
 
             if isinstance(
                 parsed,
@@ -319,7 +381,9 @@ class SelfCritic:
                 return parsed
 
         except json.JSONDecodeError:
-            logger.warning("SelfCritic recibió JSON inválido.")
+            logger.warning(
+                "SelfCritic recibió JSON inválido.",
+            )
 
         return None
 
@@ -336,7 +400,9 @@ class SelfCritic:
         todos los campos requeridos y con tipos compatibles.
         """
 
-        if not self.REQUIRED_FIELDS.issubset(data.keys()):
+        if not self.REQUIRED_FIELDS.issubset(
+            data.keys(),
+        ):
             return False
 
         if not isinstance(
@@ -345,13 +411,19 @@ class SelfCritic:
         ):
             return False
 
-        if not self._is_valid_score(data.get("score")):
+        if not self._is_valid_score(
+            data.get("score"),
+        ):
             return False
 
-        if not self._is_valid_string_list(data.get("issues")):
+        if not self._is_valid_string_list(
+            data.get("issues"),
+        ):
             return False
 
-        if not self._is_valid_string_list(data.get("corrections")):
+        if not self._is_valid_string_list(
+            data.get("corrections"),
+        ):
             return False
 
         if not isinstance(
@@ -417,13 +489,19 @@ class SelfCritic:
         final de aprobación.
         """
 
-        score = self._normalize_score(data.get("score"))
+        score = self._normalize_score(
+            data.get("score"),
+        )
 
         passed = score >= self.PASS_SCORE
 
-        issues = self._normalize_string_list(data.get("issues"))
+        issues = self._normalize_string_list(
+            data.get("issues"),
+        )
 
-        corrections = self._normalize_string_list(data.get("corrections"))
+        corrections = self._normalize_string_list(
+            data.get("corrections"),
+        )
 
         reason = str(
             data.get(
@@ -451,7 +529,9 @@ class SelfCritic:
         """
 
         try:
-            score = int(value)
+            score = int(
+                value,
+            )
 
         except (
             TypeError,
@@ -498,10 +578,14 @@ class SelfCritic:
             if item is None:
                 continue
 
-            text = str(item).strip()
+            text = str(
+                item,
+            ).strip()
 
             if text:
-                normalized.append(text)
+                normalized.append(
+                    text,
+                )
 
         return normalized
 
