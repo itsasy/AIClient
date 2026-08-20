@@ -366,7 +366,6 @@ class ExecutionPlanner:
         if normalized in cls.INVALID_PATH_TOKENS:
             return ""
 
-        # Evitar espacios accidentales en paths extraídos.
         p = re.sub(
             r"\s+$",
             "",
@@ -421,9 +420,6 @@ class ExecutionPlanner:
         ):
             return ""
 
-        # 1. path explícito:
-        # path: "xxx"
-        # path = "xxx"
         explicit = re.search(
             r"""path\s*[:=]\s*['"]([^'"]+)['"]""",
             task,
@@ -444,7 +440,6 @@ class ExecutionPlanner:
             )
         )
 
-        # 2. Archivo con extensión entre comillas.
         quoted = re.search(
             rf"""['"]([A-Za-z0-9_.\\/-]+\.({extensions}))['"]""",
             task,
@@ -457,7 +452,6 @@ class ExecutionPlanner:
             if candidate:
                 return candidate
 
-        # 3. nombre.ext en claro.
         plain = re.search(
             rf"\b([A-Za-z0-9_.\\/-]+\.({extensions}))\b",
             task,
@@ -470,7 +464,6 @@ class ExecutionPlanner:
             if candidate:
                 return candidate
 
-        # 4. Patrones clásicos.
         patterns = (
             r"\bel\s+archivo\s+[\"']([^\"']+)[\"']",
             r"\barchivo\s+[\"']([^\"']+)[\"']",
@@ -552,7 +545,7 @@ class ExecutionPlanner:
 
         if unit_type not in cls.SUPPORTED_UNIT_TYPES:
             raise ValueError(
-                f"Tipo de unidad inválido: " f"{unit_type!r}. " "Debe ser 'agent' o 'skill'."
+                f"Tipo de unidad inválido: {unit_type!r}. " "Debe ser 'agent' o 'skill'."
             )
 
         if not unit_name:
@@ -607,8 +600,8 @@ class ExecutionPlanner:
         produces: str | None = None,
     ) -> None:
         """
-        Documenta el flujo de datos sin asumir una API adicional de
-        ExecutionPlan que no conocemos.
+        Documenta el flujo de datos sin asumir una API adicional
+        de ExecutionPlan.
 
         La dependencia real sigue estando expresada por depends_on.
         """
@@ -662,7 +655,6 @@ class ExecutionPlanner:
         intent: IntentResult,
     ) -> None:
         plan.objective = "Crear archivo"
-
         plan.execution_mode = "multi_step"
 
         plan.context_requirements["project"] = False
@@ -670,10 +662,6 @@ class ExecutionPlanner:
         plan.context_requirements["gentleman"] = False
 
         plan.governance["allow_write"] = True
-
-        # =====================================================
-        # Path
-        # =====================================================
 
         path = cls._extract_file_path(task)
 
@@ -696,10 +684,6 @@ class ExecutionPlanner:
             path = cls._default_output_path(task)
 
         path = cls._sanitize_output_path(path) or cls._default_output_path(task)
-
-        # =====================================================
-        # Contenido explícito
-        # =====================================================
 
         content = cls._extract_file_content(task)
 
@@ -730,16 +714,12 @@ class ExecutionPlanner:
             )
 
             logger.info(
-                "File creation " "(explicit content) | path=%s | content_length=%d",
+                "File creation (explicit content) | " "path=%s | content_length=%d",
                 path,
                 len(content),
             )
 
             return
-
-        # =====================================================
-        # Landing multi-fase
-        # =====================================================
 
         if cls._is_multi_phase_landing_request(task):
             analyze_step = plan.add_step(
@@ -821,10 +801,6 @@ class ExecutionPlanner:
             )
 
             return
-
-        # =====================================================
-        # Plan clásico
-        # =====================================================
 
         coder_step = plan.add_step(
             description=(f"Generar contenido para {path}"),
@@ -974,13 +950,22 @@ class ExecutionPlanner:
             },
         )
 
-    @staticmethod
+    @classmethod
     def _plan_project_analysis(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
     ) -> None:
-        plan.objective = "Analizar la arquitectura " "del proyecto"
+        """
+        Analiza un proyecto/directorio y posteriormente
+        genera una interpretación ejecutiva de la evidencia.
+
+        También cubre solicitudes como:
+        "Realiza un resumen conciso de los archivos
+        que ves en este directorio."
+        """
+        plan.objective = "Analizar y resumir el proyecto o directorio"
 
         plan.execution_mode = "multi_step"
 
@@ -1008,15 +993,13 @@ class ExecutionPlanner:
         )
 
         architect = plan.add_step(
-            description=(
-                "Interpretar la arquitectura del " "proyecto y generar un resumen " "ejecutivo"
-            ),
+            description=("Interpretar la evidencia y generar " "un resumen ejecutivo"),
             unit_type="agent",
             unit_name="architect",
             params={
                 "task": task,
             },
-            expected_output=("Análisis arquitectónico ejecutivo " "del proyecto."),
+            expected_output=("Resumen ejecutivo / análisis " "del proyecto."),
             metadata={
                 "stage": "architecture_analysis",
             },
@@ -1033,8 +1016,9 @@ class ExecutionPlanner:
             consumes_from=inspect,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_architecture_audit(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1088,8 +1072,9 @@ class ExecutionPlanner:
             consumes_from=evidence,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_quality_audit(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1144,8 +1129,9 @@ class ExecutionPlanner:
             consumes_from=evidence,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_security_audit(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1200,8 +1186,9 @@ class ExecutionPlanner:
             consumes_from=evidence,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_performance_audit(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1399,8 +1386,9 @@ class ExecutionPlanner:
             consumes_from=generate,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_debug(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1450,8 +1438,9 @@ class ExecutionPlanner:
             consumes_from=analyze,
         )
 
-    @staticmethod
+    @classmethod
     def _plan_refactor(
+        cls,
         plan: ExecutionPlan,
         task: str,
         intent: IntentResult,
@@ -1463,8 +1452,6 @@ class ExecutionPlanner:
         plan.context_requirements["project"] = True
         plan.context_requirements["standards"] = True
 
-        # No habilitamos escritura porque este plan produce
-        # una propuesta; no existe un apply_patch/write step.
         plan.governance["allow_write"] = False
 
         analyze = plan.add_step(
@@ -1681,7 +1668,6 @@ class ExecutionPlanner:
             intent,
         )
 
-        # Si el LLM falla, evitar dejar un plan multi_step vacío.
         if not plan.steps:
             plan.execution_mode = "single"
 
@@ -1884,8 +1870,6 @@ Cada paso:
 
             created_steps: list[tuple[Any, list[int], int]] = []
 
-            # Mapa del índice ORIGINAL generado por el LLM
-            # al step realmente creado.
             index_map: dict[
                 int,
                 Any,
@@ -1999,8 +1983,6 @@ Cada paso:
 
                 index_map[original_index] = step
 
-            # Resolver dependencias usando los índices ORIGINALES
-            # del LLM, no la lista filtrada.
             for (
                 step,
                 dependency_indexes,
@@ -2009,7 +1991,7 @@ Cada paso:
                 for dependency_index in dependency_indexes:
                     if dependency_index == original_index:
                         logger.warning(
-                            "Dependencia circular consigo mismo " "descartada en step=%s",
+                            "Dependencia circular " "consigo mismo descartada " "en step=%s",
                             step.id,
                         )
                         continue
@@ -2018,13 +2000,12 @@ Cada paso:
 
                     if dependency_step is None:
                         logger.warning(
-                            "Dependencia LLM inexistente: " "step=%s depende de índice=%s",
+                            "Dependencia LLM " "inexistente: step=%s " "depende de índice=%s",
                             step.id,
                             dependency_index,
                         )
                         continue
 
-                    # Solo permitir dependencias hacia pasos previos.
                     dependency_position = next(
                         (
                             idx
@@ -2045,7 +2026,7 @@ Cada paso:
                         or dependency_position >= current_position
                     ):
                         logger.warning(
-                            "Dependencia no válida por orden: " "step=%s depende de índice=%s",
+                            "Dependencia no válida " "por orden: step=%s " "depende de índice=%s",
                             step.id,
                             dependency_index,
                         )
@@ -2079,7 +2060,6 @@ Cada paso:
 
         cleaned = response.strip()
 
-        # 1. JSON puro.
         try:
             data = json.loads(cleaned)
 
@@ -2099,7 +2079,6 @@ Cada paso:
         except json.JSONDecodeError:
             pass
 
-        # 2. JSON dentro de fenced code.
         fenced = re.search(
             r"```(?:json)?\s*(\[.*?\])\s*```",
             cleaned,
@@ -2126,7 +2105,6 @@ Cada paso:
             except json.JSONDecodeError:
                 pass
 
-        # 3. Último fallback: buscar primer '[' y último ']'.
         start = cleaned.find("[")
         end = cleaned.rfind("]") + 1
 
