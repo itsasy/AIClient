@@ -169,17 +169,36 @@ class ProjectSnapshot:
         data: dict[str, Any],
     ) -> ProjectSnapshot:
 
-        files = [ProjectFile.from_dict(item) for item in data.get("files", [])]
+        files: list[ProjectFile] = []
+        for item in data.get("files", []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                files.append(ProjectFile.from_dict(item))
+            except Exception:
+                continue
 
-        directories = [ProjectDirectory(**item) for item in data.get("directories", [])]
+        directories: list[ProjectDirectory] = []
+        for item in data.get("directories", []):
+            if not isinstance(item, dict):
+                continue
+            directories.append(
+                ProjectDirectory(
+                    path=str(item.get("path", "") or ""),
+                    name=str(item.get("name", "") or ""),
+                    files_count=int(item.get("files_count", 0) or 0),
+                    directories_count=int(item.get("directories_count", 0) or 0),
+                    metadata=dict(item.get("metadata") or {}),
+                )
+            )
 
         return cls(
-            project_name=data.get("project_name", "Unknown"),
-            root_path=data.get("root_path", ""),
+            project_name=str(data.get("project_name") or "Unknown"),
+            root_path=str(data.get("root_path") or ""),
             files=files,
             directories=directories,
-            languages=data.get("languages", {}),
-            extensions=data.get("extensions", {}),
-            metadata=data.get("metadata", {}),
+            languages=dict(data.get("languages") or {}),
+            extensions=dict(data.get("extensions") or {}),
+            metadata=dict(data.get("metadata") or {}),
             generated_at=data.get("generated_at"),
         )

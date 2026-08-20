@@ -13,20 +13,19 @@ logger = logging.getLogger(__name__)
 
 class ProjectAnalyzerSkill(Skill):
     """
-    Inspecciona el proyecto y produce un contexto estructurado.
+    Inspecciona el proyecto y produce contexto estructurado.
 
-    El snapshot completo queda disponible para el runtime.
+    Params de step (opcionales):
+      - path: ruta absoluta o relativa al root base
+      - prefer_target / target: True → TARGET_PROJECT_ROOT
+      - task: texto original (solo metadata)
 
-    El contexto arquitectónico que se entrega al siguiente Agent
-    es deliberadamente compacto.
+    Sin prefer_target y path="." → PROJECT_ROOT (AIClient).
     """
 
     name = "analyze_project"
-
-    description = "Analiza la estructura, archivos y arquitectura " "de un proyecto existente."
-
-    version = "2.2"
-
+    description = "Analiza la estructura, archivos y arquitectura de un proyecto existente."
+    version = "2.3"
     capabilities = (
         "project_analysis",
         "repository_inspection",
@@ -42,42 +41,37 @@ class ProjectAnalyzerSkill(Skill):
         step: ExecutionStep,
         context: dict[str, Any],
     ) -> dict[str, Any]:
-
         try:
-            snapshot = self.inspector.inspect_snapshot()
+            params = getattr(step, "params", None) or {}
+            path = params.get("path")
+            prefer_target = bool(params.get("prefer_target") or params.get("target") or False)
 
+            snapshot = self.inspector.inspect_snapshot(
+                path=path,
+                prefer_target=prefer_target,
+            )
             architecture_context = snapshot.to_architecture_context()
 
             logger.info(
-                "Project snapshot generado | " "files=%s | directories=%s",
+                "Project snapshot generado | root=%s | files=%s | directories=%s | prefer_target=%s",
+                snapshot.root_path,
                 snapshot.file_count,
                 snapshot.directory_count,
+                prefer_target,
             )
 
             return {
                 "ok": True,
                 "result": {
                     "type": "project_analysis",
-                    # Resumen humano.
                     "summary": snapshot.summary(),
-                    # # Evidencia arquitectónica estructurada para Agents.
                     "architecture_context": architecture_context,
-                    # Snapshot estructural.
-                    #
-                    # No contiene el contenido de archivos en la
-                    # representación arquitectónica.
-                    "snapshot": snapshot.to_dict(
-                        include_content=False,
-                    ),
+                    "snapshot": snapshot.to_dict(include_content=False),
                 },
                 "error": None,
             }
-
         except Exception as exc:
-            logger.exception(
-                "Error analizando proyecto",
-            )
-
+            logger.exception("Error analizando proyecto")
             return {
                 "ok": False,
                 "result": None,

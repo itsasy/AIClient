@@ -980,6 +980,7 @@ class ExecutionPlanner:
             params={
                 "path": ".",
                 "task": task,
+                "prefer_target": False,
             },
             expected_output=("Snapshot estructurado del proyecto."),
             metadata={
