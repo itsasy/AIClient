@@ -50,10 +50,16 @@ class ProviderManager:
         from llm.providers.deepseek import DeepSeekProvider
         from llm.providers.gemini import GeminiProvider
         from llm.providers.nim import NVIDIAProvider
+        from llm.providers.openai_provider import OpenAIProvider
+        from llm.providers.anthropic_provider import AnthropicProvider
+        from llm.providers.groq_provider import GroqProvider
 
         self.register("gemini", GeminiProvider)
         self.register("deepseek", DeepSeekProvider)
         self.register("nim", NVIDIAProvider)
+        self.register("openai", OpenAIProvider)
+        self.register("anthropic", AnthropicProvider)
+        self.register("groq", GroqProvider)
 
     # =========================================================
     # Registration

@@ -39,8 +39,8 @@ class RetryPolicy:
 
         # Ya no quedan intentos
         if current_retries >= max_retries:
-            return RetryDecision.no(
-                reason="Reintentos agotados",
+            return RetryDecision.pause(
+                reason="Reintentos agotados - Intervención humana requerida",
                 metadata={"current_retries": current_retries, "max_retries": max_retries},
             )
 

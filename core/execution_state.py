@@ -14,7 +14,7 @@ class ExecutionState:
 
     plan_id: str
     status: str = (
-        "created"  # created | validated | running | completed | partial | failed | cancelled
+        "created"  # created | validated | running | completed | partial | failed | cancelled | paused
     )
 
     result: Any = None
@@ -56,6 +56,12 @@ class ExecutionState:
 
     def mark_cancelled(self) -> None:
         self.status = "cancelled"
+        self.finished_at = datetime.now(timezone.utc)
+
+    def mark_paused(self, reason: str | None = None) -> None:
+        self.status = "paused"
+        if reason:
+            self.error = str(reason)
         self.finished_at = datetime.now(timezone.utc)
 
     def to_dict(self) -> dict[str, Any]:

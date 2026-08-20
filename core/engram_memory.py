@@ -36,6 +36,7 @@ class EngramMemory:
         self.data_dir = data_dir or Path.home() / ".engram"
         self.project = project or Config.PROJECT_ROOT.name
         self.async_save = async_save
+        self._cache: Dict[str, Any] = {}
 
         os.environ["ENGRAM_DATA_DIR"] = str(self.data_dir)
 
@@ -143,6 +144,10 @@ class EngramMemory:
         if not self._available:
             return []
 
+        cache_key = f"{query}_{limit}"
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
         cmd = [
             "search",
             query,
@@ -225,7 +230,9 @@ class EngramMemory:
                     "",
                 )
 
-        return results[:limit]
+        final_results = results[:limit]
+        self._cache[cache_key] = final_results
+        return final_results
 
     def search(
         self,

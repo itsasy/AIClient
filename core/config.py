@@ -21,6 +21,9 @@ class Config:
         "gemini",
         "deepseek",
         "nim",
+        "openai",
+        "anthropic",
+        "groq",
     }
 
     POWER_MODES = {
@@ -98,6 +101,19 @@ class Config:
         "DEEPSEEK_CODER_MODEL",
         "deepseek-coder",
     )
+
+    # ==========================================================
+    # OpenAI, Anthropic, Groq
+    # ==========================================================
+
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+    OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+    ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
+
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+    GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 
     # ==========================================================
     # Providers por categoría

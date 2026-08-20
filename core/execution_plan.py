@@ -62,6 +62,7 @@ class ExecutionPlan:
             "partial",
             "failed",
             "cancelled",
+            "paused",
         }
     )
 

@@ -14,6 +14,7 @@ class RetryDecision:
     retry: bool
     reason: str
     delay_seconds: float = 0.0
+    needs_human: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -49,10 +50,25 @@ class RetryDecision:
             metadata=dict(metadata or {}),
         )
 
+    @classmethod
+    def pause(
+        cls,
+        reason: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> RetryDecision:
+        return cls(
+            retry=False,
+            reason=reason,
+            delay_seconds=0.0,
+            needs_human=True,
+            metadata=dict(metadata or {}),
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "retry": self.retry,
             "reason": self.reason,
             "delay_seconds": self.delay_seconds,
+            "needs_human": self.needs_human,
             "metadata": dict(self.metadata),
         }

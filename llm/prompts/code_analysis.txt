@@ -27,3 +27,7 @@ INSTRUCCIONES:
 - No inventes archivos, dependencias o comportamiento no visibles.
 - Si algo no puede determinarse con el fragmento disponible, indícalo.
 - Prioriza problemas reales sobre recomendaciones innecesarias.
+
+REGLA CRÍTICA DE EVALUACIÓN:
+- RECHAZA (falla la evaluación) INMEDIATAMENTE si el código contiene PLACEHOLDERS ("TODO", "código aquí", "...", "lógica de X"). El código DEBE estar completo para pasar a producción.
+- RECHAZA si el código es un MVP sin los requisitos de estilo/lógica solicitados.
