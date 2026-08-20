@@ -1003,6 +1003,7 @@ class ExecutionPlanner:
             metadata={
                 "stage": "architecture_analysis",
             },
+            timeout=300,
         )
 
         cls._add_dependency(
