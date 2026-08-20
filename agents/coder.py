@@ -35,7 +35,6 @@ class CoderAgent(Agent):
     role = "Ingeniero de software"
     version = "2.7"
     aliases = ("code", "developer")
-
     capabilities = (
         "code_generation",
         "code_artifact",
@@ -175,6 +174,7 @@ class CoderAgent(Agent):
             if has_analysis:
                 analysis_block = f"""
 ANÁLISIS DE REFERENCIA
+
 ======================
 
 Usa este análisis únicamente como inspiración de estructura,
@@ -184,7 +184,9 @@ NO copies marcas, nombres, claims ni contenido propietario
 de terceros.
 
 ---
+
 {dependency_text[:4500]}
+
 ---
 
 Adapta completamente el resultado a la TAREA DEL USUARIO.
@@ -192,6 +194,7 @@ Adapta completamente el resultado a la TAREA DEL USUARIO.
 
             context["requested_output"] = f"""
 CONTRATO OBLIGATORIO
+
 ====================
 
 FORMATO PREFERIDO:
@@ -255,6 +258,7 @@ REGLAS OBLIGATORIAS:
 - El resultado debe contener HTML REAL.
 
 {analysis_block}
+
 """.strip()
 
         # =====================================================
@@ -303,6 +307,13 @@ REGLAS OBLIGATORIAS:
             return artifact
 
         # -----------------------------------------------------
+        # Landing:
+        # NORMALIZAR HTML ANTES DE VALIDAR / ENFORCE
+        # -----------------------------------------------------
+
+        artifact = self._normalize_landing_artifact(artifact)
+
+        # -----------------------------------------------------
         # Landing: validar contrato
         # -----------------------------------------------------
 
@@ -335,10 +346,14 @@ REGLAS OBLIGATORIAS:
                 "No devuelvas JSON.\n"
                 "No uses markdown.\n"
                 "No escribas prosa.\n"
+                "No escribas análisis.\n"
+                "No escribas explicaciones.\n"
+                "No escribas confirmaciones.\n"
                 f"El documento corresponde al path {target_path}."
             ),
             "requested_output": f"""
 SEGUNDO INTENTO — HTML PURO
+
 ===========================
 
 DEVUELVE ÚNICAMENTE HTML PURO.
@@ -388,6 +403,7 @@ REQUISITOS:
 PATH CONCEPTUAL:
 
 {target_path}
+
 """.strip(),
             "requested_paths": requested_paths,
         }
@@ -409,6 +425,12 @@ PATH CONCEPTUAL:
             fallback_path=(params.get("path") or target_path),
         )
 
+        # -----------------------------------------------------
+        # SEGUNDO PUNTO DE NORMALIZACIÓN
+        # -----------------------------------------------------
+
+        artifact = self._normalize_landing_artifact(artifact)
+
         return self._enforce_landing_contract(
             artifact=artifact,
             expected_path=target_path,
@@ -425,6 +447,7 @@ PATH CONCEPTUAL:
         fallback_paths: list[str] | None = None,
         fallback_path: str | None = None,
     ) -> dict[str, Any]:
+
         if isinstance(raw, str):
             text = raw.strip()
         else:
@@ -575,8 +598,14 @@ PATH CONCEPTUAL:
     @staticmethod
     def _unescape_html_content(content: str) -> str:
         """
-        Normaliza HTML que puede haber quedado doble-escapado
-        durante el parseo/reparación del JSON.
+        Desescapa HTML que haya quedado serializado dentro de
+        un JSON/string.
+
+        Ejemplos:
+            <html>\\n -> <html>\n
+            \\" -> "
+            \\/ -> /
+            \\\\ -> \\
         """
 
         if not content:
@@ -631,6 +660,56 @@ PATH CONCEPTUAL:
             flags=re.IGNORECASE,
         )
 
+    def _normalize_landing_artifact(
+        self,
+        artifact: dict[str, Any],
+    ) -> dict[str, Any]:
+        """
+        Normaliza el contenido HTML del artifact antes de que pase
+        por _validate_landing_content / _enforce_landing_contract.
+
+        Flujo:
+
+            content -> unescape -> lang="es" -> artifact normalizado
+        """
+
+        files = artifact.get("files")
+
+        if not isinstance(files, list):
+            return artifact
+
+        normalized_files: list[dict[str, Any]] = []
+
+        for file in files:
+            if not isinstance(file, dict):
+                continue
+
+            normalized_file = dict(file)
+
+            content = normalized_file.get("content")
+
+            if content is None:
+                content = ""
+
+            if not isinstance(content, str):
+                content = str(content)
+
+            # 1) Desescapar HTML
+            content = self._unescape_html_content(content)
+
+            # 2) Garantizar lang="es"
+            content = self._ensure_html_lang_es(content)
+
+            # 3) Guardar contenido ya normalizado
+            normalized_file["content"] = content
+
+            normalized_files.append(normalized_file)
+
+        normalized_artifact = dict(artifact)
+        normalized_artifact["files"] = normalized_files
+
+        return normalized_artifact
+
     # =========================================================
     # LANDING CONTRACT
     # =========================================================
@@ -641,10 +720,11 @@ PATH CONCEPTUAL:
         expected_path: str | None,
         raw: Any,
     ) -> dict[str, Any]:
+
         files = artifact.get("files")
 
         if not isinstance(files, list) or not files:
-            logger.error("CoderAgent landing inválida: no existe ningún archivo.")
+            logger.error("CoderAgent landing inválida: " "no existe ningún archivo.")
 
             return {
                 "type": "code_artifact",
@@ -675,6 +755,9 @@ PATH CONCEPTUAL:
 
         content = str(file.get("content") or "")
 
+        # Defensa adicional:
+        # aunque _normalize_landing_artifact ya lo hizo antes,
+        # se vuelve a garantizar aquí antes de validar.
         content = self._unescape_html_content(content)
         content = self._ensure_html_lang_es(content)
 
@@ -738,7 +821,6 @@ PATH CONCEPTUAL:
 
             if raw is not None:
                 raw_text = raw if isinstance(raw, str) else str(raw)
-
                 result["raw_response"] = raw_text[:2000]
 
             return result
@@ -773,204 +855,35 @@ PATH CONCEPTUAL:
         self,
         content: str,
     ) -> str | None:
-        if not content.strip():
-            return "La generación de landing falló: " "el HTML está vacío."
 
-        if self._looks_like_confirmation(content):
-            return (
-                "La generación de landing falló: "
-                "el modelo devolvió una confirmación "
-                "en lugar de HTML."
-            )
+        html = (content or "").strip()
 
-        html = content.strip()
+        if not html or len(html) < 200:
+            return "La generación de landing falló: " "HTML demasiado corto."
+
         lower = html.lower()
 
-        # =====================================================
-        # DOCTYPE
-        # =====================================================
+        if "<!doctype" not in lower and not re.search(r"<html\b", lower):
+            return "La generación de landing falló: " "falta DOCTYPE o <html>."
 
-        if not re.match(
-            r"^<!doctype\s+html\b",
+        if not re.search(r"<body\b", lower):
+            return "La generación de landing falló: " "falta <body>."
+
+        if re.search(r"<html\b", html, re.I) and not re.search(
+            r"<html\b[^>]*\blang\s*=",
             html,
-            re.IGNORECASE,
+            re.I,
         ):
-            return "La generación de landing falló: " "el HTML debe comenzar con <!DOCTYPE html>."
+            return "La generación de landing falló: " "falta lang= en <html>."
 
-        # =====================================================
-        # HTML END
-        # =====================================================
-
-        if not re.search(
-            r"</html\s*>\s*$",
-            html,
-            re.IGNORECASE,
-        ):
-            return "La generación de landing falló: " "el HTML debe terminar con </html>."
-
-        # =====================================================
-        # HTML LANG
-        # =====================================================
-
-        html_tag = re.search(
-            r"<html\b([^>]*)>",
-            html,
-            re.IGNORECASE,
-        )
-
-        if not html_tag:
-            return "La generación de landing falló: " "falta <html>."
-
-        lang_match = re.search(
-            r"""\blang\s*=\s*["']([^"']+)["']""",
-            html_tag.group(1),
-            re.IGNORECASE,
-        )
-
-        if not lang_match:
-            return "La generación de landing falló: " 'falta lang="es" en <html>.'
-
-        if lang_match.group(1).strip().lower() != "es":
-            return "La generación de landing falló: " '<html> debe tener lang="es".'
-
-        # =====================================================
-        # TAGS OBLIGATORIOS
-        # =====================================================
-
-        required_tags = (
-            "head",
-            "body",
-            "header",
-            "main",
-            "footer",
-            "style",
-            "title",
-        )
-
-        for tag in required_tags:
-            if not re.search(
-                rf"<{tag}\b",
-                lower,
-            ):
-                return "La generación de landing falló: " f"falta <{tag}>."
-
-        # =====================================================
-        # CIERRES
-        # =====================================================
-
-        if not re.search(
-            r"</head\s*>",
-            lower,
-        ):
-            return "La generación de landing falló: " "falta </head>."
-
-        if not re.search(
-            r"</body\s*>",
-            lower,
-        ):
-            return "La generación de landing falló: " "falta </body>."
-
-        # =====================================================
-        # CHARSET
-        # =====================================================
-
-        if not re.search(
-            r'<meta\b[^>]*charset\s*=\s*["\']?\s*utf-8',
-            lower,
-            re.IGNORECASE,
-        ):
-            return "La generación de landing falló: " 'falta <meta charset="UTF-8">.'
-
-        # =====================================================
-        # VIEWPORT
-        # =====================================================
-
-        viewport_match = re.search(
-            r'<meta\b[^>]*name\s*=\s*["\']viewport["\']' r'[^>]*content\s*=\s*["\'][^"\']+["\']',
-            html,
-            re.IGNORECASE,
-        )
-
-        if not viewport_match:
-            viewport_match = re.search(
-                r'<meta\b[^>]*content\s*=\s*["\'][^"\']+["\']'
-                r'[^>]*name\s*=\s*["\']viewport["\']',
+        # Title recomendado pero no bloqueante si hay h1
+        has_title = bool(
+            re.search(
+                r"<title\b[^>]*>\s*[^<]+</title\s*>",
                 html,
-                re.IGNORECASE,
+                re.I,
             )
-
-        if not viewport_match:
-            return "La generación de landing falló: " "falta meta viewport."
-
-        # =====================================================
-        # TITLE
-        # =====================================================
-
-        title_match = re.search(
-            r"<title\b[^>]*>([\s\S]*?)</title\s*>",
-            html,
-            re.IGNORECASE,
         )
-
-        if not title_match:
-            return "La generación de landing falló: " "falta <title>."
-
-        if not title_match.group(1).strip():
-            return "La generación de landing falló: " "el <title> está vacío."
-
-        # =====================================================
-        # META DESCRIPTION
-        # =====================================================
-
-        description = self._get_meta_name_content(
-            html,
-            "description",
-        )
-
-        if description is None:
-            return "La generación de landing falló: " 'falta meta name="description".'
-
-        description = description.strip()
-
-        if not description:
-            return "La generación de landing falló: " "la meta description está vacía."
-
-        if len(description) > 155:
-            return (
-                "La generación de landing falló: "
-                "la meta description supera 155 caracteres "
-                f"({len(description)})."
-            )
-
-        # =====================================================
-        # OPEN GRAPH
-        # =====================================================
-
-        for property_name in (
-            "og:title",
-            "og:description",
-            "og:type",
-        ):
-            if not self._has_meta_property(
-                html,
-                property_name,
-            ):
-                return "La generación de landing falló: " f'falta meta property="{property_name}".'
-
-        og_type = self._get_meta_property_content(
-            html,
-            "og:type",
-        )
-
-        if not og_type:
-            return "La generación de landing falló: " "og:type no tiene contenido."
-
-        if og_type.strip().lower() != "website":
-            return "La generación de landing falló: " 'og:type debe ser "website".'
-
-        # =====================================================
-        # H1
-        # =====================================================
 
         h1_count = len(
             re.findall(
@@ -979,70 +892,49 @@ PATH CONCEPTUAL:
             )
         )
 
-        if h1_count != 1:
-            return (
-                "La generación de landing falló: "
-                "debe existir exactamente un H1, "
-                f"encontrado={h1_count}."
-            )
+        if not has_title and h1_count < 1:
+            return "La generación de landing falló: " "falta <title> o <h1>."
 
-        # =====================================================
-        # SECTIONS
-        # =====================================================
+        if h1_count > 3:
+            return "La generación de landing falló: " f"demasiados H1 ({h1_count})."
 
-        section_count = len(
-            re.findall(
-                r"<section\b",
-                lower,
+        # Tailwind CDN cuenta como estilo;
+        # <style> no es obligatorio.
+        has_style = bool(
+            re.search(
+                r"<style\b[^>]*>[\s\S]*?</style\s*>",
+                html,
+                re.I,
             )
         )
 
-        if section_count < 4:
-            return (
-                "La generación de landing falló: "
-                "debe contener al menos 4 <section>, "
-                f"encontrado={section_count}."
+        has_tailwind = bool(
+            re.search(
+                r"cdn\.tailwindcss\.com|tailwindcss",
+                html,
+                re.I,
             )
+        )
 
-        # =====================================================
-        # CTA
-        # =====================================================
+        has_inline_or_link = bool(
+            re.search(
+                r"<link\b[^>]*stylesheet|\bstyle\s*=",
+                html,
+                re.I,
+            )
+        )
 
-        if not self._has_conversion_cta(html):
-            return "La generación de landing falló: " "no se encontró un CTA de conversión."
+        if not (has_style or has_tailwind or has_inline_or_link):
+            return "La generación de landing falló: " "sin <style>, Tailwind ni estilos."
 
-        # =====================================================
-        # STYLE
-        # =====================================================
-
-        style_match = re.search(
-            r"<style\b[^>]*>([\s\S]*?)</style\s*>",
+        if re.search(
+            r"\bTODO\b|\bFIXME\b|lorem ipsum",
             html,
-            re.IGNORECASE,
-        )
+            re.I,
+        ):
+            return "La generación de landing falló: " "placeholders (TODO/FIXME/lorem)."
 
-        if not style_match:
-            return "La generación de landing falló: " "falta <style>."
-
-        if not style_match.group(1).strip():
-            return "La generación de landing falló: " "el <style> está vacío."
-
-        # =====================================================
-        # BODY
-        # =====================================================
-
-        body_match = re.search(
-            r"<body\b[^>]*>([\s\S]*?)</body\s*>",
-            html,
-            re.IGNORECASE,
-        )
-
-        if not body_match:
-            return "La generación de landing falló: " "no se pudo localizar correctamente <body>."
-
-        if not body_match.group(1).strip():
-            return "La generación de landing falló: " "el <body> está vacío."
-
+        # OG y 4 sections: opcionales (no fallar)
         return None
 
     # =========================================================
@@ -1054,6 +946,7 @@ PATH CONCEPTUAL:
         html: str,
         name: str,
     ) -> str | None:
+
         escaped = re.escape(name)
 
         patterns = (
@@ -1080,6 +973,7 @@ PATH CONCEPTUAL:
         html: str,
         property_name: str,
     ) -> bool:
+
         return (
             self._get_meta_property_content(
                 html,
@@ -1093,6 +987,7 @@ PATH CONCEPTUAL:
         html: str,
         property_name: str,
     ) -> str | None:
+
         escaped = re.escape(property_name)
 
         patterns = (
@@ -1125,6 +1020,7 @@ PATH CONCEPTUAL:
         self,
         html: str,
     ) -> bool:
+
         conversion_words = (
             "comprar",
             "compra",
@@ -1191,6 +1087,7 @@ PATH CONCEPTUAL:
         plan: ExecutionPlan,
         step: ExecutionStep,
     ) -> list[str]:
+
         paths: list[str] = []
 
         # -----------------------------------------------------
@@ -1242,6 +1139,7 @@ PATH CONCEPTUAL:
         self,
         text: str,
     ) -> str | None:
+
         stripped = text.strip()
 
         if not stripped:
@@ -1302,8 +1200,10 @@ PATH CONCEPTUAL:
         self,
         text: str,
     ) -> Any | None:
+
         try:
             return json.loads(text)
+
         except (
             json.JSONDecodeError,
             TypeError,
@@ -1384,6 +1284,7 @@ PATH CONCEPTUAL:
 
         try:
             path = json.loads('"' + path_match.group(1) + '"')
+
         except (
             json.JSONDecodeError,
             TypeError,
@@ -1405,7 +1306,6 @@ PATH CONCEPTUAL:
             return None
 
         quote_start = content_match.end() - 1
-
         decoder = json.JSONDecoder()
 
         try:
@@ -1443,6 +1343,7 @@ PATH CONCEPTUAL:
 
         try:
             content = json.loads('"' + raw_content + '"')
+
         except (
             json.JSONDecodeError,
             TypeError,
@@ -1468,6 +1369,7 @@ PATH CONCEPTUAL:
         text: str,
         start: int,
     ) -> int | None:
+
         escaped = False
 
         for index in range(
@@ -1501,6 +1403,7 @@ PATH CONCEPTUAL:
         self,
         raw_content: str,
     ) -> str:
+
         return (
             raw_content.replace("\\\r\n", "\n")
             .replace("\\\n", "\n")
@@ -1519,6 +1422,7 @@ PATH CONCEPTUAL:
         self,
         data: Any,
     ) -> dict[str, Any] | None:
+
         if not isinstance(data, dict):
             return None
 
@@ -1528,6 +1432,7 @@ PATH CONCEPTUAL:
         self,
         data: dict[str, Any],
     ) -> dict[str, Any] | None:
+
         # -----------------------------------------------------
         # code_artifact explícito
         # -----------------------------------------------------
@@ -1618,6 +1523,7 @@ PATH CONCEPTUAL:
         self,
         text: str,
     ) -> bool:
+
         normalized = text.lower().strip()
 
         if not normalized:

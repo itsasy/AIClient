@@ -55,6 +55,8 @@ class ExecutionPlanner:
         "shell",
         "readme",
         "ingest",
+        "scrape_job",
+        "scrape_integration",
     }
 
     FRAMEWORK_ALIASES = {
@@ -665,18 +667,10 @@ class ExecutionPlanner:
 
         path = cls._extract_file_path(task)
 
-        entity_path = str(
-            cls._entity(
-                intent,
-                "path",
-                "",
-            )
-            or ""
-        ).strip()
+        entity_path = str(cls._entity(intent, "path", "") or "").strip()
 
         if entity_path:
             sanitized_entity_path = cls._sanitize_output_path(entity_path)
-
             if sanitized_entity_path:
                 path = sanitized_entity_path
 
@@ -686,23 +680,16 @@ class ExecutionPlanner:
         path = cls._sanitize_output_path(path) or cls._default_output_path(task)
 
         content = cls._extract_file_content(task)
-
         if not content:
-            entity_content = cls._entity(
-                intent,
-                "content",
-                "",
-            )
-
-            if isinstance(
-                entity_content,
-                str,
-            ):
+            entity_content = cls._entity(intent, "content", "")
+            if isinstance(entity_content, str):
                 content = entity_content.strip()
 
+        # -----------------------------------------------------
+        # Contenido explícito → write_file directo
+        # -----------------------------------------------------
         if content:
             plan.execution_mode = "single"
-
             cls._set_execution_unit(
                 plan,
                 "skill",
@@ -712,58 +699,71 @@ class ExecutionPlanner:
                     "content": content,
                 },
             )
-
             logger.info(
-                "File creation (explicit content) | " "path=%s | content_length=%d",
+                "File creation (explicit content) | path=%s | content_length=%d",
                 path,
                 len(content),
             )
-
             return
 
+        # -----------------------------------------------------
+        # Multi-phase: referencia URL/landing → scrape|analyze → coder → write
+        # -----------------------------------------------------
         if cls._is_multi_phase_landing_request(task):
-            analyze_step = plan.add_step(
-                description=("Analizar la landing de referencia"),
-                unit_type="agent",
-                unit_name="task_agent",
-                params={
-                    "task": (
-                        "Realiza un análisis detallado "
-                        "de la landing page indicada en "
-                        "la tarea. Extrae estructura de "
-                        "secciones, copy principal, "
-                        "elementos de conversión y "
-                        "estilo visual. Responde solo "
-                        "con el análisis, sin generar "
-                        "código todavía."
-                    )
-                },
-                expected_output=("Análisis estructurado de la " "landing de referencia."),
-                metadata={
-                    "stage": "analysis",
-                    "produces": "landing_analysis",
-                },
-            )
+            url_match = re.search(r"https?://[^\s]+", task)
+            url = url_match.group(0).rstrip(".,);]") if url_match else ""
+
+            if url:
+                analyze_step = plan.add_step(
+                    description="Obtener y resumir la página de referencia",
+                    unit_type="skill",
+                    unit_name="scrape_job",
+                    params={
+                        "url": url,
+                        "task": task,
+                    },
+                    expected_output="Evidencia textual/estructura de la URL",
+                    metadata={
+                        "stage": "scrape",
+                        "produces": "landing_analysis",
+                    },
+                    timeout=120,
+                )
+                plan.governance["allow_network"] = True
+            else:
+                analyze_step = plan.add_step(
+                    description="Analizar la landing de referencia",
+                    unit_type="agent",
+                    unit_name="task_agent",
+                    params={
+                        "task": (
+                            "Analiza la referencia indicada en la tarea. "
+                            "Extrae secciones, copy, conversión y estilo. "
+                            "Solo análisis, sin código."
+                        ),
+                    },
+                    expected_output="Análisis estructurado de la referencia",
+                    metadata={
+                        "stage": "analysis",
+                        "produces": "landing_analysis",
+                    },
+                    timeout=180,
+                )
 
             coder_step = plan.add_step(
-                description=(f"Generar HTML completo para {path}"),
+                description=f"Generar HTML completo para {path}",
                 unit_type="agent",
                 unit_name="coder",
                 params={
                     "task": task,
                     "path": path,
+                    "landing": True,
                 },
-                expected_output=("code_artifact con el HTML " "completo y SEO."),
-                metadata={
-                    "stage": "generation",
-                },
+                expected_output="code_artifact con HTML completo",
+                metadata={"stage": "generation"},
+                timeout=180,
             )
-
-            cls._add_dependency(
-                coder_step,
-                analyze_step,
-            )
-
+            cls._add_dependency(coder_step, analyze_step)
             cls._mark_data_flow(
                 coder_step,
                 consumes="landing_analysis",
@@ -772,23 +772,15 @@ class ExecutionPlanner:
             )
 
             write_step = plan.add_step(
-                description=(f"Escribir archivo {path}"),
+                description=f"Escribir archivo {path}",
                 unit_type="skill",
                 unit_name="write_file",
-                params={
-                    "path": path,
-                },
-                expected_output=("Archivo creado en disco."),
-                metadata={
-                    "stage": "materialization",
-                },
+                params={"path": path},
+                expected_output="Archivo creado en disco",
+                metadata={"stage": "materialization"},
+                timeout=60,
             )
-
-            cls._add_dependency(
-                write_step,
-                coder_step,
-            )
-
+            cls._add_dependency(write_step, coder_step)
             cls._mark_data_flow(
                 write_step,
                 consumes="code_artifact",
@@ -796,49 +788,43 @@ class ExecutionPlanner:
             )
 
             logger.info(
-                "File creation " "(multi-phase: analyze→coder→write_file) " "| path=%s",
+                "File creation (multi-phase: %s→coder→write_file) | path=%s | url=%s",
+                "scrape" if url else "analyze",
                 path,
+                bool(url),
             )
-
             return
 
+        # -----------------------------------------------------
+        # Simple: coder → write_file
+        # -----------------------------------------------------
         coder_step = plan.add_step(
-            description=(f"Generar contenido para {path}"),
+            description=f"Generar contenido para {path}",
             unit_type="agent",
             unit_name="coder",
             params={
                 "task": task,
                 "path": path,
             },
-            expected_output=("code_artifact con path y content."),
-            metadata={
-                "stage": "generation",
-            },
+            expected_output="code_artifact con path y content",
+            metadata={"stage": "generation"},
+            timeout=180,
         )
-
         cls._mark_data_flow(
             coder_step,
             produces="code_artifact",
         )
 
         write_step = plan.add_step(
-            description=(f"Escribir archivo {path}"),
+            description=f"Escribir archivo {path}",
             unit_type="skill",
             unit_name="write_file",
-            params={
-                "path": path,
-            },
-            expected_output=("Archivo creado en disco."),
-            metadata={
-                "stage": "materialization",
-            },
+            params={"path": path},
+            expected_output="Archivo creado en disco",
+            metadata={"stage": "materialization"},
+            timeout=60,
         )
-
-        cls._add_dependency(
-            write_step,
-            coder_step,
-        )
-
+        cls._add_dependency(write_step, coder_step)
         cls._mark_data_flow(
             write_step,
             consumes="code_artifact",
@@ -846,7 +832,7 @@ class ExecutionPlanner:
         )
 
         logger.info(
-            "File creation " "(coder→write_file) | path=%s",
+            "File creation (coder→write_file) | path=%s",
             path,
         )
 

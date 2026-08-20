@@ -50,7 +50,11 @@ class ProjectAnalyzerSkill(Skill):
                 path=path,
                 prefer_target=prefer_target,
             )
-            architecture_context = snapshot.to_architecture_context()
+            architecture_context = snapshot.to_architecture_context(
+                max_files=80,
+                max_directories=60,
+                include_file_content=False,
+            )
 
             logger.info(
                 "Project snapshot generado | root=%s | files=%s | directories=%s | prefer_target=%s",

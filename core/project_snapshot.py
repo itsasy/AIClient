@@ -130,7 +130,28 @@ class ProjectSnapshot:
         self,
         max_files: int = 120,
         max_directories: int = 80,
+        *,
+        include_file_content: bool = False,
     ) -> dict[str, Any]:
+        """
+        Evidencia estructural para Agents.
+        Por defecto NO incluye content de archivos (prompt lean).
+        """
+        file_entries: list[dict[str, Any]] = []
+        for file in self.files[:max_files]:
+            if include_file_content and hasattr(file, "to_architecture_dict"):
+                file_entries.append(file.to_architecture_dict())
+            else:
+                entry: dict[str, Any] = {
+                    "path": getattr(file, "path", ""),
+                }
+                ext = getattr(file, "extension", None)
+                lang = getattr(file, "language", None)
+                if ext:
+                    entry["extension"] = ext
+                if lang:
+                    entry["language"] = lang
+                file_entries.append(entry)
 
         return {
             "project": {
@@ -144,8 +165,9 @@ class ProjectSnapshot:
             "directories": [
                 directory.to_dict() for directory in self.directories[:max_directories]
             ],
-            "files": [file.to_architecture_dict() for file in self.files[:max_files]],
+            "files": file_entries,
             "metadata": dict(self.metadata),
+            "summary": self.summary(),
         }
 
     def to_prompt(
