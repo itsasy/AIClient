@@ -72,38 +72,27 @@ class IntentDetectors:
         if not normalized:
             return None
 
-        # Importante:
-        # los detectores específicos deben preceder a los genéricos.
         detectors = (
-            # Creación / scaffolding específico
             cls.project_creation,
             cls.module_scaffold,
             cls.ui_scaffold,
-            # Análisis/auditorías específicas
             cls.security_audit,
             cls.performance_audit,
             cls.architecture_audit,
             cls.quality_audit,
+            cls.project_analysis,
             cls.analyze_metrics,
-            # Operaciones específicas
             cls.testing,
             cls.docker,
-            # Transformación / mantenimiento
             cls.refactor,
             cls.debug,
-            # Generación
             cls.file_creation,
             cls.code_generation,
-            # Análisis general
-            cls.project_analysis,
-            # Planning / documentación
             cls.spec,
             cls.planning,
             cls.documentation,
-            # Memoria / estado
             cls.consolidation,
             cls.rollback,
-            # Ejecución genérica siempre al final
             cls.command_execution,
         )
 
@@ -212,39 +201,11 @@ class IntentDetectors:
         query: str,
         q: str,
     ) -> IntentResult | None:
-        analysis = re.search(
-            r"\b("
-            r"analiza|analizar|analice|"
-            r"revisa|revisar|revise|"
-            r"inspecciona|inspeccionar|"
-            r"evalua|evaluar|"
-            r"resume|resumir|resumen|"
-            r"lista|listar|"
-            r"muestra|mostrar|"
-            r"que\s+hay|"
-            r"archivos\s+que\s+ves"
-            r")\b",
-            q,
-        )
-
-        target = re.search(
-            r"\b("
-            r"proyecto|repo|repositorio|"
-            r"codigo|arquitectura|"
-            r"directorio|carpeta|archivos|"
-            r"cwd|workspace|"
-            r"estructura"
-            r")\b",
-            q,
-        )
-
         list_dir = re.search(
             r"\b(archivos|ficheros).{0,60}\b(directorio|carpeta|proyecto)\b"
-            r"|"
-            r"\b(directorio|carpeta).{0,60}\b(archivos|ficheros)\b",
+            r"|\b(directorio|carpeta).{0,60}\b(archivos|ficheros)\b",
             q,
         )
-
         if list_dir:
             return IntentResult(
                 intent="project_analysis",
@@ -252,17 +213,38 @@ class IntentDetectors:
                 category="project",
                 complexity="normal",
                 confidence=0.93,
-                entities={
-                    "task": query,
-                    "mode": "directory_summary",
-                },
-                signals=[
-                    "directory_listing",
-                ],
+                entities={"task": query, "mode": "directory_summary"},
+                signals=["directory_listing"],
                 original_query=query,
             )
 
+        analysis = re.search(
+            r"\b("
+            r"analiza|analizar|analice|"
+            r"revisa|revisar|revise|"
+            r"inspecciona|inspeccionar|"
+            r"evalua|evaluar|"
+            r"resume|resumir|resumen|"
+            r"lista|listar|muestra|mostrar"
+            r")\b",
+            q,
+        )
+        target = re.search(
+            r"\b("
+            r"proyecto|repo|repositorio|"
+            r"codigo|arquitectura|estructura|"
+            r"directorio|carpeta|archivos|"
+            r"cwd|workspace"
+            r")\b",
+            q,
+        )
         if not analysis or not target:
+            return None
+
+        if re.search(
+            r"\b(metricas|metrics|kpi|observabilidad|telemetria)\b",
+            q,
+        ):
             return None
 
         return IntentResult(
@@ -270,14 +252,9 @@ class IntentDetectors:
             domain="analysis",
             category="project",
             complexity="high",
-            confidence=0.92,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "analysis_keyword",
-                "project_target",
-            ],
+            confidence=0.95,
+            entities={"task": query},
+            signals=["analysis_keyword", "project_target"],
             original_query=query,
         )
 
@@ -1115,22 +1092,30 @@ class IntentDetectors:
         query: str,
         q: str,
     ) -> IntentResult | None:
-        analyze = re.search(
+        if not re.search(
+            r"\b(analiza|analizar|analyze|evalua|evaluar|revisa|revisar)\b",
+            q,
+        ):
+            return None
+
+        if not re.search(
             r"\b("
-            r"analiza|analizar|analice|"
-            r"evalua|evaluar|"
-            r"mide|medir|"
-            r"revisa|revisar"
+            r"metricas|metrics|kpi|"
+            r"observabilidad|telemetria|"
+            r"rendimiento|performance|latencia"
             r")\b",
             q,
-        )
+        ):
+            return None
 
-        metrics = re.search(
-            r"\b(" r"metricas|metrics|" r"observabilidad|" r"telemetria|" r")\b",
+        if re.search(
+            r"\b(proyecto|repo|repositorio|arquitectura|directorio|"
+            r"archivos|codigo|estructura)\b",
             q,
-        )
-
-        if not analyze or not metrics:
+        ) and not re.search(
+            r"\b(metricas|metrics|kpi|observabilidad|telemetria)\b",
+            q,
+        ):
             return None
 
         return IntentResult(
@@ -1138,14 +1123,9 @@ class IntentDetectors:
             domain="analytics",
             category="analysis",
             complexity="normal",
-            confidence=0.93,
-            entities={
-                "task": query,
-            },
-            signals=[
-                "metrics_keyword",
-                "analysis_keyword",
-            ],
+            confidence=0.90,
+            entities={"task": query},
+            signals=["metrics_keyword", "analysis_keyword"],
             original_query=query,
         )
 
