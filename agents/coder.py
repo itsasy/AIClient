@@ -18,7 +18,7 @@ class CoderAgent(Agent):
     Genera código y lo normaliza a code_artifact.
 
     Responsabilidad:
-        razonamiento de código → code_artifact
+        razonamiento de código -> code_artifact
 
     No escribe disco.
     La escritura corresponde a write_file.
@@ -33,7 +33,7 @@ class CoderAgent(Agent):
 
     name = "coder"
     role = "Ingeniero de software"
-    version = "2.6"
+    version = "2.7"
     aliases = ("code", "developer")
 
     capabilities = (
@@ -56,8 +56,7 @@ class CoderAgent(Agent):
         params = dict(step.params or {})
 
         # -----------------------------------------------------
-        # Tarea base:
-        # NO reemplazar el objetivo original del usuario.
+        # Tarea original
         # -----------------------------------------------------
 
         original_task = str(
@@ -104,17 +103,10 @@ class CoderAgent(Agent):
 
         dependency_text = context.get("dependency_text")
 
-        has_analysis = isinstance(
-            dependency_text,
-            str,
-        ) and bool(dependency_text.strip())
+        has_analysis = isinstance(dependency_text, str) and bool(dependency_text.strip())
 
         # -----------------------------------------------------
         # Determinar path objetivo
-        #
-        # Si existe uno explícito, conservarlo.
-        # Si no existe, usar output.html solamente para landing.
-        # Para código general se usa output.txt como fallback neutro.
         # -----------------------------------------------------
 
         if requested_paths:
@@ -292,7 +284,7 @@ REGLAS OBLIGATORIAS:
         )
 
         logger.info(
-            "CoderAgent respuesta LLM (1er intento) | " "chars=%s | prefix=%r",
+            "CoderAgent respuesta LLM (1er intento) | chars=%s | prefix=%r",
             len(raw) if isinstance(raw, str) else -1,
             raw[:250] if isinstance(raw, str) else raw,
         )
@@ -304,16 +296,14 @@ REGLAS OBLIGATORIAS:
         )
 
         # -----------------------------------------------------
-        # Código general:
-        # no necesita validación de landing.
+        # Código general
         # -----------------------------------------------------
 
         if not is_landing:
             return artifact
 
         # -----------------------------------------------------
-        # Landing:
-        # validar contrato.
+        # Landing: validar contrato
         # -----------------------------------------------------
 
         artifact = self._enforce_landing_contract(
@@ -396,18 +386,11 @@ REQUISITOS:
 - no devolver texto fuera del HTML
 
 PATH CONCEPTUAL:
+
 {target_path}
 """.strip(),
             "requested_paths": requested_paths,
         }
-
-        # -----------------------------------------------------
-        # Mantener el plan porque LLMRouter puede necesitarlo.
-        #
-        # La reducción real del contexto se hace mediante
-        # html_context, sin dependency_text ni requested_output
-        # del primer intento.
-        # -----------------------------------------------------
 
         raw2 = LLMRouter().generate(
             plan=plan,
@@ -415,7 +398,7 @@ PATH CONCEPTUAL:
         )
 
         logger.info(
-            "CoderAgent respuesta LLM (2º intento HTML) | " "chars=%s | prefix=%r",
+            "CoderAgent respuesta LLM (2º intento HTML) | chars=%s | prefix=%r",
             len(raw2) if isinstance(raw2, str) else -1,
             raw2[:250] if isinstance(raw2, str) else raw2,
         )
@@ -450,17 +433,14 @@ PATH CONCEPTUAL:
                     raw,
                     ensure_ascii=False,
                 ).strip()
-            except (
-                TypeError,
-                ValueError,
-            ):
+            except (TypeError, ValueError):
                 text = str(raw).strip()
 
         if not text:
             return {
                 "type": "code_artifact",
                 "files": [],
-                "error": ("La respuesta del LLM está vacía."),
+                "error": "La respuesta del LLM está vacía.",
             }
 
         # =====================================================
@@ -473,7 +453,7 @@ PATH CONCEPTUAL:
             path = (fallback_paths[0] if fallback_paths else None) or fallback_path or "output.html"
 
             logger.info(
-                "CoderAgent recibió HTML crudo | " "path=%s | chars=%s",
+                "CoderAgent recibió HTML crudo | path=%s | chars=%s",
                 path,
                 len(html_text),
             )
@@ -493,7 +473,7 @@ PATH CONCEPTUAL:
         # =====================================================
 
         fenced = re.search(
-            r"```(?:json|javascript|js|html)?\s*" r"([\s\S]*?)```",
+            r"```(?:json|javascript|js|html)?\s*([\s\S]*?)```",
             text,
             re.IGNORECASE,
         )
@@ -527,9 +507,7 @@ PATH CONCEPTUAL:
         data = self._try_load_json(text)
 
         if data is not None:
-            normalized = self._normalize_data(
-                data,
-            )
+            normalized = self._normalize_data(data)
 
             if normalized is not None:
                 return normalized
@@ -541,9 +519,7 @@ PATH CONCEPTUAL:
         candidates = self._extract_json_candidates(text)
 
         for candidate in candidates:
-            normalized = self._normalize_data(
-                candidate,
-            )
+            normalized = self._normalize_data(candidate)
 
             if normalized is not None:
                 return normalized
@@ -566,7 +542,7 @@ PATH CONCEPTUAL:
 
         if self._looks_like_confirmation(text):
             logger.error(
-                "CoderAgent recibió confirmación en lugar " "de código | chars=%s | response=%r",
+                "CoderAgent recibió confirmación en lugar de código | " "chars=%s | response=%r",
                 len(text),
                 text[:500],
             )
@@ -580,7 +556,7 @@ PATH CONCEPTUAL:
             }
 
         logger.warning(
-            "CoderAgent no pudo parsear JSON ni detectar HTML | " "chars=%s",
+            "CoderAgent no pudo parsear JSON ni detectar HTML | chars=%s",
             len(text),
         )
 
@@ -591,6 +567,69 @@ PATH CONCEPTUAL:
                 "La respuesta del LLM no pudo normalizarse " "correctamente como code_artifact."
             ),
         }
+
+    # =========================================================
+    # HTML NORMALIZATION
+    # =========================================================
+
+    @staticmethod
+    def _unescape_html_content(content: str) -> str:
+        """
+        Normaliza HTML que puede haber quedado doble-escapado
+        durante el parseo/reparación del JSON.
+        """
+
+        if not content:
+            return content
+
+        text = content
+
+        if "\\\n" in text or '\\"' in text or "\\/" in text:
+            try:
+                text = json.loads(f'"{text}"')
+            except Exception:
+                text = (
+                    content.replace("\\\r\n", "\n")
+                    .replace("\\\n", "\n")
+                    .replace("\\\r", "\r")
+                    .replace("\\\t", "\t")
+                    .replace('\\"', '"')
+                    .replace("\\/", "/")
+                    .replace("\\\\", "\\")
+                )
+
+        return text
+
+    @staticmethod
+    def _ensure_html_lang_es(content: str) -> str:
+        """
+        Garantiza lang="es" en el tag <html> cuando no existe.
+        """
+
+        if not content:
+            return content
+
+        if not re.search(
+            r"<html\b",
+            content,
+            re.IGNORECASE,
+        ):
+            return content
+
+        if re.search(
+            r"<html\b[^>]*\blang\s*=",
+            content,
+            re.IGNORECASE,
+        ):
+            return content
+
+        return re.sub(
+            r"<html\b",
+            '<html lang="es"',
+            content,
+            count=1,
+            flags=re.IGNORECASE,
+        )
 
     # =========================================================
     # LANDING CONTRACT
@@ -604,14 +643,8 @@ PATH CONCEPTUAL:
     ) -> dict[str, Any]:
         files = artifact.get("files")
 
-        if (
-            not isinstance(
-                files,
-                list,
-            )
-            or not files
-        ):
-            logger.error("CoderAgent landing inválida: " "no existe ningún archivo.")
+        if not isinstance(files, list) or not files:
+            logger.error("CoderAgent landing inválida: no existe ningún archivo.")
 
             return {
                 "type": "code_artifact",
@@ -627,10 +660,7 @@ PATH CONCEPTUAL:
 
         file = files[0]
 
-        if not isinstance(
-            file,
-            dict,
-        ):
+        if not isinstance(file, dict):
             logger.error("CoderAgent landing inválida: " "primer archivo no es dict.")
 
             return {
@@ -639,7 +669,14 @@ PATH CONCEPTUAL:
                 "error": ("La generación de landing falló: " "artifact inválido."),
             }
 
+        # =====================================================
+        # CONTENT
+        # =====================================================
+
         content = str(file.get("content") or "")
+
+        content = self._unescape_html_content(content)
+        content = self._ensure_html_lang_es(content)
 
         actual_path = str(file.get("path") or "")
 
@@ -706,6 +743,10 @@ PATH CONCEPTUAL:
 
             return result
 
+        # =====================================================
+        # RESULTADO NORMALIZADO
+        # =====================================================
+
         result = {
             "type": "code_artifact",
             "files": [
@@ -717,7 +758,7 @@ PATH CONCEPTUAL:
         }
 
         logger.info(
-            "CoderAgent landing válida | " "path=%s | chars=%s",
+            "CoderAgent landing válida | path=%s | chars=%s",
             actual_path,
             len(content),
         )
@@ -781,7 +822,7 @@ PATH CONCEPTUAL:
             return "La generación de landing falló: " "falta <html>."
 
         lang_match = re.search(
-            r'\blang\s*=\s*["\']([^"\']+)["\']',
+            r"""\blang\s*=\s*["']([^"']+)["']""",
             html_tag.group(1),
             re.IGNORECASE,
         )
@@ -836,6 +877,7 @@ PATH CONCEPTUAL:
         if not re.search(
             r'<meta\b[^>]*charset\s*=\s*["\']?\s*utf-8',
             lower,
+            re.IGNORECASE,
         ):
             return "La generación de landing falló: " 'falta <meta charset="UTF-8">.'
 
@@ -844,14 +886,14 @@ PATH CONCEPTUAL:
         # =====================================================
 
         viewport_match = re.search(
-            r'<meta\b[^>]*name\s*=\s*["\']viewport["\']' r'[^>]*content\s*=\s*["\']([^"\']+)["\']',
+            r'<meta\b[^>]*name\s*=\s*["\']viewport["\']' r'[^>]*content\s*=\s*["\'][^"\']+["\']',
             html,
             re.IGNORECASE,
         )
 
         if not viewport_match:
             viewport_match = re.search(
-                r'<meta\b[^>]*content\s*=\s*["\']([^"\']+)["\']'
+                r'<meta\b[^>]*content\s*=\s*["\'][^"\']+["\']'
                 r'[^>]*name\s*=\s*["\']viewport["\']',
                 html,
                 re.IGNORECASE,
@@ -1108,61 +1150,35 @@ PATH CONCEPTUAL:
             "discover",
         )
 
-        # -----------------------------------------------------
-        # Links
-        # -----------------------------------------------------
-
-        for match in re.finditer(
+        patterns = (
             r"<a\b[^>]*>([\s\S]*?)</a\s*>",
-            html,
-            re.IGNORECASE,
-        ):
-            text = re.sub(
-                r"<[^>]+>",
-                " ",
-                match.group(1),
-            )
-
-            text = (
-                re.sub(
-                    r"\s+",
-                    " ",
-                    text,
-                )
-                .strip()
-                .lower()
-            )
-
-            if any(word in text for word in conversion_words):
-                return True
-
-        # -----------------------------------------------------
-        # Buttons
-        # -----------------------------------------------------
-
-        for match in re.finditer(
             r"<button\b[^>]*>([\s\S]*?)</button\s*>",
-            html,
-            re.IGNORECASE,
-        ):
-            text = re.sub(
-                r"<[^>]+>",
-                " ",
-                match.group(1),
-            )
+        )
 
-            text = (
-                re.sub(
-                    r"\s+",
+        for pattern in patterns:
+            for match in re.finditer(
+                pattern,
+                html,
+                re.IGNORECASE,
+            ):
+                text = re.sub(
+                    r"<[^>]+>",
                     " ",
-                    text,
+                    match.group(1),
                 )
-                .strip()
-                .lower()
-            )
 
-            if any(word in text for word in conversion_words):
-                return True
+                text = (
+                    re.sub(
+                        r"\s+",
+                        " ",
+                        text,
+                    )
+                    .strip()
+                    .lower()
+                )
+
+                if any(word in text for word in conversion_words):
+                    return True
 
         return False
 
@@ -1249,8 +1265,6 @@ PATH CONCEPTUAL:
 
         # -----------------------------------------------------
         # HTML completo sin DOCTYPE
-        #
-        # Se detecta, pero el validator decidirá si es válido.
         # -----------------------------------------------------
 
         if re.match(
@@ -1307,7 +1321,6 @@ PATH CONCEPTUAL:
         """
 
         decoder = json.JSONDecoder()
-
         candidates: list[dict[str, Any]] = []
 
         for match in re.finditer(
@@ -1321,10 +1334,7 @@ PATH CONCEPTUAL:
             except json.JSONDecodeError:
                 continue
 
-            if not isinstance(
-                data,
-                dict,
-            ):
+            if not isinstance(data, dict):
                 continue
 
             if data not in candidates:
@@ -1401,10 +1411,7 @@ PATH CONCEPTUAL:
         try:
             content, _ = decoder.raw_decode(text[quote_start:])
 
-            if isinstance(
-                content,
-                str,
-            ):
+            if isinstance(content, str):
                 return {
                     "type": "code_artifact",
                     "files": [
@@ -1443,10 +1450,7 @@ PATH CONCEPTUAL:
         ):
             content = self._decode_repaired_content(raw_content)
 
-        if not isinstance(
-            content,
-            str,
-        ):
+        if not isinstance(content, str):
             return None
 
         return {
@@ -1498,10 +1502,10 @@ PATH CONCEPTUAL:
         raw_content: str,
     ) -> str:
         return (
-            raw_content.replace("\\r\\n", "\n")
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t")
+            raw_content.replace("\\\r\n", "\n")
+            .replace("\\\n", "\n")
+            .replace("\\\r", "\r")
+            .replace("\\\t", "\t")
             .replace('\\"', '"')
             .replace("\\/", "/")
             .replace("\\\\", "\\")
@@ -1515,10 +1519,7 @@ PATH CONCEPTUAL:
         self,
         data: Any,
     ) -> dict[str, Any] | None:
-        if not isinstance(
-            data,
-            dict,
-        ):
+        if not isinstance(data, dict):
             return None
 
         return self._normalize_dict(data)
@@ -1531,17 +1532,11 @@ PATH CONCEPTUAL:
         # code_artifact explícito
         # -----------------------------------------------------
 
-        if data.get("type") == "code_artifact" and isinstance(
-            data.get("files"),
-            list,
-        ):
+        if data.get("type") == "code_artifact" and isinstance(data.get("files"), list):
             files: list[dict[str, str]] = []
 
             for item in data["files"]:
-                if not isinstance(
-                    item,
-                    dict,
-                ):
+                if not isinstance(item, dict):
                     continue
 
                 path = item.get("path")
@@ -1554,10 +1549,7 @@ PATH CONCEPTUAL:
                 if content is None:
                     content = ""
 
-                if not isinstance(
-                    content,
-                    str,
-                ):
+                if not isinstance(content, str):
                     content = str(content)
 
                 files.append(
@@ -1570,10 +1562,7 @@ PATH CONCEPTUAL:
             if not files:
                 return None
 
-            result: dict[
-                str,
-                Any,
-            ] = {
+            result: dict[str, Any] = {
                 "type": "code_artifact",
                 "files": files,
             }
@@ -1592,7 +1581,6 @@ PATH CONCEPTUAL:
             list,
         ):
             normalized = dict(data)
-
             normalized["type"] = "code_artifact"
 
             return self._normalize_dict(normalized)
@@ -1607,10 +1595,7 @@ PATH CONCEPTUAL:
             if content is None:
                 content = ""
 
-            if not isinstance(
-                content,
-                str,
-            ):
+            if not isinstance(content, str):
                 content = str(content)
 
             return {
