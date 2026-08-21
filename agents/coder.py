@@ -293,10 +293,9 @@ REGLAS OBLIGATORIAS:
             raw[:250] if isinstance(raw, str) else raw,
         )
 
-        artifact = self._parse_artifact(
-            raw=raw,
-            fallback_paths=requested_paths,
-            fallback_path=(params.get("path") or target_path),
+        artifact = self._parse_llm_to_artifact(
+            response=raw,
+            default_path=target_path,
         )
 
         # -----------------------------------------------------
@@ -304,30 +303,41 @@ REGLAS OBLIGATORIAS:
         # -----------------------------------------------------
 
         if not is_landing:
-            return artifact
+            if artifact:
+                return artifact
+            return raw
 
         # -----------------------------------------------------
         # Landing:
         # NORMALIZAR HTML ANTES DE VALIDAR / ENFORCE
         # -----------------------------------------------------
 
-        artifact = self._normalize_landing_artifact(artifact)
+        if artifact:
+            finalized = self._finalize_landing_artifact(
+                artifact=artifact,
+                target_path=target_path,
+            )
 
-        # -----------------------------------------------------
-        # Landing: validar contrato
-        # -----------------------------------------------------
+            if isinstance(finalized, dict):
+                logger.info(
+                    "CoderAgent landing válida | path=%s | chars=%s",
+                    finalized["files"][0]["path"],
+                    len(finalized["files"][0]["content"]),
+                )
+                return finalized
 
-        artifact = self._enforce_landing_contract(
-            artifact=artifact,
-            expected_path=target_path,
-            raw=raw,
-        )
-
-        if artifact.get("files"):
-            return artifact
+            logger.error(
+                "CoderAgent landing inválida: %s",
+                finalized,
+            )
+        else:
+            logger.warning(
+                "CoderAgent no pudo parsear JSON ni detectar HTML | chars=%s",
+                len(raw or "") if isinstance(raw, str) else 0,
+            )
 
         # =====================================================
-        # SEGUNDO INTENTO
+        # SEGUNDO INTENTO: HTML PURO
         # =====================================================
 
         logger.warning(
@@ -336,109 +346,486 @@ REGLAS OBLIGATORIAS:
             "original y sin producto hardcodeado."
         )
 
-        html_context: dict[str, Any] = {
+        context_retry: dict[str, Any] = {
             "agent_role": self.role,
             "lean_prompt": True,
+            "requested_paths": [target_path],
             "coding_task": (
-                coding_task + "\n\n"
+                f"{original_task}\n\n"
+                f"Archivo objetivo: {target_path}\n"
                 "SEGUNDO INTENTO:\n"
                 "Devuelve ÚNICAMENTE HTML5 completo.\n"
-                "No devuelvas JSON.\n"
-                "No uses markdown.\n"
-                "No escribas prosa.\n"
+                "Debe empezar con <!DOCTYPE html> y terminar con </html>.\n"
+                "Sin markdown, sin JSON, sin explicaciones.\n"
                 "No escribas análisis.\n"
-                "No escribas explicaciones.\n"
                 "No escribas confirmaciones.\n"
-                f"El documento corresponde al path {target_path}."
+                "El contenido debe corresponder exactamente a la tarea original.\n"
+                "No inventes otro producto, marca o caso de uso.\n"
+                "Si pediste Tailwind, incluye el script CDN de Tailwind."
             ),
-            "requested_output": f"""
-SEGUNDO INTENTO — HTML PURO
-
-===========================
-
-DEVUELVE ÚNICAMENTE HTML PURO.
-
-No devuelvas JSON.
-No uses markdown.
-No uses ```html.
-No escribas análisis.
-No escribas explicaciones.
-No escribas confirmaciones.
-
-El resultado debe comenzar exactamente con:
-
-<!DOCTYPE html>
-
-Y terminar exactamente con:
-
-</html>
-
-REQUISITOS:
-
-- <html lang="es">
-- <head>
-- <meta charset="UTF-8">
-- meta viewport
-- <title>
-- meta description de máximo 155 caracteres
-- og:title
-- og:description
-- og:type="website"
-- <style> con CSS autocontenido
-- <body>
-- <header>
-- <main>
-- al menos 4 <section>
-- <footer>
-- exactamente un <h1>
-- CTA mediante <a> o <button>
-- diseño mobile-first
-- HTML completo
-- contenido específico de la TAREA DEL USUARIO
-- no inventar otro producto
-- no devolver confirmaciones
-- no devolver análisis
-- no devolver texto fuera del HTML
-
-PATH CONCEPTUAL:
-
-{target_path}
-
-""".strip(),
-            "requested_paths": requested_paths,
+            "requested_output": (
+                "Solo HTML5. Primera línea: <!DOCTYPE html>. " f"Path lógico: {target_path}."
+            ),
         }
 
-        raw2 = LLMRouter().generate(
+        if has_analysis:
+            context_retry["dependency_text"] = str(dependency_text)[:4000]
+
+        response2 = LLMRouter().generate(
             plan=plan,
-            context=html_context,
+            context=context_retry,
         )
 
         logger.info(
             "CoderAgent respuesta LLM (2º intento HTML) | chars=%s | prefix=%r",
-            len(raw2) if isinstance(raw2, str) else -1,
-            raw2[:250] if isinstance(raw2, str) else raw2,
+            len(response2) if isinstance(response2, str) else -1,
+            response2[:250] if isinstance(response2, str) else response2,
         )
 
-        artifact = self._parse_artifact(
-            raw=raw2,
-            fallback_paths=requested_paths,
-            fallback_path=(params.get("path") or target_path),
+        artifact2 = self._parse_llm_to_artifact(
+            response=response2,
+            default_path=target_path,
         )
+
+        if artifact2:
+            finalized2 = self._finalize_landing_artifact(
+                artifact=artifact2,
+                target_path=target_path,
+            )
+
+            if isinstance(finalized2, dict):
+                logger.info(
+                    "CoderAgent landing válida en 2º intento | path=%s | chars=%s",
+                    finalized2["files"][0]["path"],
+                    len(finalized2["files"][0]["content"]),
+                )
+                return finalized2
+
+            logger.error(
+                "CoderAgent landing inválida (2º): %s",
+                finalized2,
+            )
+        else:
+            logger.error(
+                "CoderAgent landing inválida: " "no se pudo parsear HTML del segundo intento."
+            )
 
         # -----------------------------------------------------
-        # SEGUNDO PUNTO DE NORMALIZACIÓN
+        # Fallback mínimo para no tumbar el engine
         # -----------------------------------------------------
 
-        artifact = self._normalize_landing_artifact(artifact)
-
-        return self._enforce_landing_contract(
-            artifact=artifact,
-            expected_path=target_path,
-            raw=raw2,
-        )
+        return {
+            "type": "code_artifact",
+            "files": [],
+            "error": "No se pudo obtener HTML válido para la landing.",
+        }
 
     # =========================================================
-    # PARSER
+    # PARSE / NORMALIZE
+    # =========================================================
+
+    @staticmethod
+    def _strip_fences(text: str) -> str:
+        """
+        Elimina fences markdown del tipo:
+
+            ```json
+            {...}
+            ```
+
+        o:
+
+            ```html
+            <!DOCTYPE html>
+            ...
+            ```
+
+        También tolera BOM y espacios alrededor.
+        """
+
+        t = (text or "").strip().lstrip("\ufeff")
+
+        if not t.startswith("```"):
+            return t
+
+        lines = t.splitlines()
+
+        if lines and lines[0].lstrip().startswith("```"):
+            lines = lines[1:]
+
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+
+        return "\n".join(lines).strip()
+
+    @staticmethod
+    def _unescape_html_content(content: str) -> str:
+        """
+        Desescapa HTML que haya quedado serializado dentro de
+        un JSON/string.
+
+        Ejemplos:
+
+            <html>\\n -> <html>\n
+            \\" -> "
+            \\/ -> /
+            \\\\ -> \\
+
+        """
+
+        if not content:
+            return content
+
+        text = content
+
+        # JSON escaped HTML.
+        if "\\n" in text or '\\"' in text or "\\/" in text:
+            try:
+                text = json.loads('"' + text.replace('"', '\\"') + '"')
+            except Exception:
+                try:
+                    text = json.loads(f'"{text}"')
+                except Exception:
+                    text = (
+                        content.replace("\\r\\n", "\n")
+                        .replace("\\n", "\n")
+                        .replace("\\r", "\r")
+                        .replace("\\t", "\t")
+                        .replace('\\"', '"')
+                        .replace("\\/", "/")
+                        .replace("\\\\", "\\")
+                    )
+
+        return text
+
+    @staticmethod
+    def _ensure_html_lang_es(content: str) -> str:
+        """
+        Garantiza lang="es" en <html> cuando no existe.
+        """
+
+        if not content:
+            return content
+
+        if not re.search(
+            r"<html\b",
+            content,
+            re.IGNORECASE,
+        ):
+            return content
+
+        if re.search(
+            r"<html\b[^>]*\blang\s*=",
+            content,
+            re.IGNORECASE,
+        ):
+            return content
+
+        return re.sub(
+            r"<html\b",
+            '<html lang="es"',
+            content,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+
+    def _extract_raw_html(
+        self,
+        text: str,
+    ) -> str | None:
+        """
+        Detecta HTML completo aunque exista:
+
+        - BOM
+        - fence markdown
+        - texto residual alrededor
+        - ausencia de cierre </html> en respuestas suficientemente largas
+        """
+
+        stripped = (text or "").strip().lstrip("\ufeff")
+
+        if not stripped:
+            return None
+
+        # Quitar fence ```html ... ```
+        if stripped.startswith("```"):
+            stripped = self._strip_fences(stripped)
+
+        # Volver a quitar BOM después del fence.
+        stripped = stripped.lstrip("\ufeff").strip()
+
+        lower = stripped.lower()
+
+        # -----------------------------------------------------
+        # Documento completo empezando directamente por DOCTYPE
+        # -----------------------------------------------------
+
+        if lower.startswith("<!doctype html"):
+            if re.search(
+                r"</html\s*>",
+                stripped,
+                re.IGNORECASE,
+            ):
+                return stripped
+
+            # El modelo puede haber cortado el cierre.
+            if len(stripped) > 400 and "<body" in lower:
+                return (stripped if stripped.rstrip().endswith(">") else stripped + "\n") + (
+                    "" if re.search(r"</html\s*>$", stripped, re.I) else "\n</html>"
+                )
+
+        # -----------------------------------------------------
+        # Documento completo empezando por <html>
+        # -----------------------------------------------------
+
+        if lower.startswith("<html"):
+            if re.search(
+                r"</html\s*>",
+                stripped,
+                re.IGNORECASE,
+            ):
+                return stripped
+
+            if len(stripped) > 400 and "<body" in lower:
+                return (
+                    stripped if stripped.rstrip().endswith(">") else stripped + "\n"
+                ) + "\n</html>"
+
+        # -----------------------------------------------------
+        # HTML completo rodeado de texto
+        # -----------------------------------------------------
+
+        match = re.search(
+            r"<!doctype\s+html[\s\S]*?</html\s*>",
+            stripped,
+            re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(0).strip()
+
+        match = re.search(
+            r"<html\b[\s\S]*?</html\s*>",
+            stripped,
+            re.IGNORECASE,
+        )
+
+        if match:
+            return match.group(0).strip()
+
+        return None
+
+    def _try_load_json(
+        self,
+        text: str,
+    ) -> Any | None:
+        try:
+            return json.loads(text)
+        except (
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+        ):
+            return None
+
+    def _extract_json_candidates(
+        self,
+        text: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Busca objetos JSON válidos dentro de una respuesta
+        que puede contener texto adicional o fences.
+        """
+
+        decoder = json.JSONDecoder()
+        candidates: list[dict[str, Any]] = []
+
+        body = self._strip_fences(text or "")
+
+        for match in re.finditer(
+            r"\{",
+            body,
+        ):
+            start = match.start()
+
+            try:
+                data, _ = decoder.raw_decode(body[start:])
+            except json.JSONDecodeError:
+                continue
+
+            if isinstance(data, dict) and data not in candidates:
+                candidates.append(data)
+
+        return candidates
+
+    def _normalize_dict(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, Any] | None:
+
+        # -----------------------------------------------------
+        # code_artifact explícito
+        # -----------------------------------------------------
+
+        if data.get("type") == "code_artifact" and isinstance(data.get("files"), list):
+            files: list[dict[str, str]] = []
+
+            for item in data["files"]:
+                if not isinstance(item, dict):
+                    continue
+
+                path = item.get("path")
+
+                if path is None:
+                    continue
+
+                content = item.get("content")
+
+                if content is None:
+                    content = ""
+
+                if not isinstance(content, str):
+                    content = str(content)
+
+                content = self._unescape_html_content(content)
+
+                files.append(
+                    {
+                        "path": str(path),
+                        "content": content,
+                    }
+                )
+
+            if not files:
+                return None
+
+            result: dict[str, Any] = {
+                "type": "code_artifact",
+                "files": files,
+            }
+
+            if data.get("error"):
+                result["error"] = str(data["error"])
+
+            return result
+
+        # -----------------------------------------------------
+        # files sin type
+        # -----------------------------------------------------
+
+        if isinstance(
+            data.get("files"),
+            list,
+        ):
+            normalized = dict(data)
+            normalized["type"] = "code_artifact"
+
+            return self._normalize_dict(normalized)
+
+        # -----------------------------------------------------
+        # path + content
+        # -----------------------------------------------------
+
+        if data.get("path") is not None and "content" in data:
+            content = data.get("content")
+
+            if content is None:
+                content = ""
+
+            if not isinstance(content, str):
+                content = str(content)
+
+            content = self._unescape_html_content(content)
+
+            return {
+                "type": "code_artifact",
+                "files": [
+                    {
+                        "path": str(data["path"]),
+                        "content": content,
+                    }
+                ],
+            }
+
+        return None
+
+    def _parse_llm_to_artifact(
+        self,
+        response: str,
+        default_path: str,
+    ) -> dict[str, Any] | None:
+        """
+        Única puerta de entrada:
+
+            texto LLM -> code_artifact | None
+
+        Acepta:
+
+        - JSON puro
+        - JSON con ```json
+        - JSON embebido
+        - HTML puro
+        - HTML con ```html
+        - HTML rodeado de texto
+        - HTML con BOM
+        - HTML sin </html> cuando la respuesta parece truncada
+        """
+
+        text = (response or "").strip()
+
+        if not text:
+            return None
+
+        # =====================================================
+        # 1) JSON DIRECTO / FENCES
+        # =====================================================
+
+        for candidate in (
+            text,
+            self._strip_fences(text),
+        ):
+            data = self._try_load_json(candidate)
+
+            if isinstance(data, dict):
+                artifact = self._normalize_dict(data)
+
+                if artifact:
+                    return artifact
+
+        # =====================================================
+        # 2) JSON EMBEBIDO
+        # =====================================================
+
+        for data in self._extract_json_candidates(text):
+            artifact = self._normalize_dict(data)
+
+            if artifact:
+                return artifact
+
+        # =====================================================
+        # 3) HTML CRUDO
+        # =====================================================
+
+        html = self._extract_raw_html(text)
+
+        if html:
+            html = self._unescape_html_content(html)
+            html = self._ensure_html_lang_es(html)
+
+            return {
+                "type": "code_artifact",
+                "files": [
+                    {
+                        "path": default_path,
+                        "content": html,
+                    }
+                ],
+            }
+
+        return None
+
+    # =========================================================
+    # COMPATIBILITY PARSER
     # =========================================================
 
     def _parse_artifact(
@@ -447,6 +834,11 @@ PATH CONCEPTUAL:
         fallback_paths: list[str] | None = None,
         fallback_path: str | None = None,
     ) -> dict[str, Any]:
+        """
+        Compatibilidad con versiones anteriores del CoderAgent.
+
+        El parser definitivo es _parse_llm_to_artifact().
+        """
 
         if isinstance(raw, str):
             text = raw.strip()
@@ -459,109 +851,17 @@ PATH CONCEPTUAL:
             except (TypeError, ValueError):
                 text = str(raw).strip()
 
-        if not text:
-            return {
-                "type": "code_artifact",
-                "files": [],
-                "error": "La respuesta del LLM está vacía.",
-            }
-
-        # =====================================================
-        # HTML PURO
-        # =====================================================
-
-        html_text = self._extract_raw_html(text)
-
-        if html_text is not None:
-            path = (fallback_paths[0] if fallback_paths else None) or fallback_path or "output.html"
-
-            logger.info(
-                "CoderAgent recibió HTML crudo | path=%s | chars=%s",
-                path,
-                len(html_text),
-            )
-
-            return {
-                "type": "code_artifact",
-                "files": [
-                    {
-                        "path": path,
-                        "content": html_text,
-                    }
-                ],
-            }
-
-        # =====================================================
-        # MARKDOWN FENCES
-        # =====================================================
-
-        fenced = re.search(
-            r"```(?:json|javascript|js|html)?\s*([\s\S]*?)```",
-            text,
-            re.IGNORECASE,
+        default_path = (
+            (fallback_paths[0] if fallback_paths else None) or fallback_path or "output.txt"
         )
 
-        if fenced:
-            text = fenced.group(1).strip()
+        artifact = self._parse_llm_to_artifact(
+            response=text,
+            default_path=default_path,
+        )
 
-            html_text = self._extract_raw_html(text)
-
-            if html_text is not None:
-                path = (
-                    (fallback_paths[0] if fallback_paths else None)
-                    or fallback_path
-                    or "output.html"
-                )
-
-                return {
-                    "type": "code_artifact",
-                    "files": [
-                        {
-                            "path": path,
-                            "content": html_text,
-                        }
-                    ],
-                }
-
-        # =====================================================
-        # JSON DIRECTO
-        # =====================================================
-
-        data = self._try_load_json(text)
-
-        if data is not None:
-            normalized = self._normalize_data(data)
-
-            if normalized is not None:
-                return normalized
-
-        # =====================================================
-        # JSON EMBEBIDO
-        # =====================================================
-
-        candidates = self._extract_json_candidates(text)
-
-        for candidate in candidates:
-            normalized = self._normalize_data(candidate)
-
-            if normalized is not None:
-                return normalized
-
-        # =====================================================
-        # REPAIR
-        # =====================================================
-
-        repaired = self._try_repair_code_artifact(text)
-
-        if repaired is not None:
-            normalized = self._normalize_dict(repaired)
-
-            if normalized is not None:
-                return normalized
-
-        # =====================================================
-        # CONFIRMACIÓN
-        # =====================================================
+        if artifact:
+            return artifact
 
         if self._looks_like_confirmation(text):
             logger.error(
@@ -595,82 +895,19 @@ PATH CONCEPTUAL:
     # HTML NORMALIZATION
     # =========================================================
 
-    @staticmethod
-    def _unescape_html_content(content: str) -> str:
-        """
-        Desescapa HTML que haya quedado serializado dentro de
-        un JSON/string.
-
-        Ejemplos:
-            <html>\\n -> <html>\n
-            \\" -> "
-            \\/ -> /
-            \\\\ -> \\
-        """
-
-        if not content:
-            return content
-
-        text = content
-
-        if "\\\n" in text or '\\"' in text or "\\/" in text:
-            try:
-                text = json.loads(f'"{text}"')
-            except Exception:
-                text = (
-                    content.replace("\\\r\n", "\n")
-                    .replace("\\\n", "\n")
-                    .replace("\\\r", "\r")
-                    .replace("\\\t", "\t")
-                    .replace('\\"', '"')
-                    .replace("\\/", "/")
-                    .replace("\\\\", "\\")
-                )
-
-        return text
-
-    @staticmethod
-    def _ensure_html_lang_es(content: str) -> str:
-        """
-        Garantiza lang="es" en el tag <html> cuando no existe.
-        """
-
-        if not content:
-            return content
-
-        if not re.search(
-            r"<html\b",
-            content,
-            re.IGNORECASE,
-        ):
-            return content
-
-        if re.search(
-            r"<html\b[^>]*\blang\s*=",
-            content,
-            re.IGNORECASE,
-        ):
-            return content
-
-        return re.sub(
-            r"<html\b",
-            '<html lang="es"',
-            content,
-            count=1,
-            flags=re.IGNORECASE,
-        )
-
     def _normalize_landing_artifact(
         self,
         artifact: dict[str, Any],
     ) -> dict[str, Any]:
         """
-        Normaliza el contenido HTML del artifact antes de que pase
-        por _validate_landing_content / _enforce_landing_contract.
+        Normaliza el contenido HTML del artifact.
 
         Flujo:
 
-            content -> unescape -> lang="es" -> artifact normalizado
+            content
+                -> unescape
+                -> lang="es"
+                -> artifact normalizado
         """
 
         files = artifact.get("files")
@@ -694,13 +931,9 @@ PATH CONCEPTUAL:
             if not isinstance(content, str):
                 content = str(content)
 
-            # 1) Desescapar HTML
             content = self._unescape_html_content(content)
-
-            # 2) Garantizar lang="es"
             content = self._ensure_html_lang_es(content)
 
-            # 3) Guardar contenido ya normalizado
             normalized_file["content"] = content
 
             normalized_files.append(normalized_file)
@@ -709,6 +942,64 @@ PATH CONCEPTUAL:
         normalized_artifact["files"] = normalized_files
 
         return normalized_artifact
+
+    # =========================================================
+    # LANDING FINALIZATION
+    # =========================================================
+
+    def _finalize_landing_artifact(
+        self,
+        artifact: dict[str, Any],
+        target_path: str,
+    ) -> dict[str, Any] | str:
+        """
+        Fuerza path, unescape, lang y validación mínima.
+
+        Returns:
+            artifact válido
+            o mensaje de error
+        """
+
+        files = artifact.get("files") or []
+
+        if not files:
+            return "no existe ningún archivo"
+
+        f0 = files[0]
+
+        if not isinstance(f0, dict):
+            return "el primer archivo no es válido"
+
+        content = self._unescape_html_content(str(f0.get("content") or ""))
+
+        # Si el parser obtuvo un HTML pero quedó rodeado de
+        # fences/texto residual, volver a extraerlo.
+        extracted_html = self._extract_raw_html(content)
+
+        if extracted_html:
+            content = extracted_html
+
+        content = self._ensure_html_lang_es(content)
+
+        path = str(f0.get("path") or target_path).strip() or target_path
+
+        # Preferir path planificado.
+        path = target_path or path
+
+        err = self._validate_landing_content(content)
+
+        if err:
+            return err
+
+        return {
+            "type": "code_artifact",
+            "files": [
+                {
+                    "path": path,
+                    "content": content,
+                }
+            ],
+        }
 
     # =========================================================
     # LANDING CONTRACT
@@ -720,132 +1011,39 @@ PATH CONCEPTUAL:
         expected_path: str | None,
         raw: Any,
     ) -> dict[str, Any]:
+        """
+        Compatibilidad con la implementación anterior.
 
-        files = artifact.get("files")
+        Mantiene el mismo contrato externo pero delega la
+        normalización/finalización en la nueva lógica.
+        """
 
-        if not isinstance(files, list) or not files:
-            logger.error("CoderAgent landing inválida: " "no existe ningún archivo.")
+        artifact = self._normalize_landing_artifact(artifact)
 
-            return {
-                "type": "code_artifact",
-                "files": [],
-                "error": ("La generación de landing falló: " "el CoderAgent no produjo HTML."),
-            }
-
-        if len(files) != 1:
-            logger.warning(
-                "CoderAgent landing devolvió %s archivos; " "se utilizará únicamente el primero.",
-                len(files),
-            )
-
-        file = files[0]
-
-        if not isinstance(file, dict):
-            logger.error("CoderAgent landing inválida: " "primer archivo no es dict.")
-
-            return {
-                "type": "code_artifact",
-                "files": [],
-                "error": ("La generación de landing falló: " "artifact inválido."),
-            }
-
-        # =====================================================
-        # CONTENT
-        # =====================================================
-
-        content = str(file.get("content") or "")
-
-        # Defensa adicional:
-        # aunque _normalize_landing_artifact ya lo hizo antes,
-        # se vuelve a garantizar aquí antes de validar.
-        content = self._unescape_html_content(content)
-        content = self._ensure_html_lang_es(content)
-
-        actual_path = str(file.get("path") or "")
-
-        # =====================================================
-        # PATH
-        # =====================================================
-
-        if expected_path:
-            expected_path = str(expected_path)
-
-            if actual_path != expected_path:
-                logger.warning(
-                    "CoderAgent corrigiendo path de landing | " "actual=%s | esperado=%s",
-                    actual_path,
-                    expected_path,
-                )
-
-            actual_path = expected_path
-
-        if not actual_path:
-            actual_path = "output.html"
-
-        # =====================================================
-        # VALIDAR EXTENSIÓN
-        # =====================================================
-
-        if not actual_path.lower().endswith((".html", ".htm")):
-            logger.warning(
-                "CoderAgent path de landing no termina en " ".html/.htm | path=%s",
-                actual_path,
-            )
-
-            return {
-                "type": "code_artifact",
-                "files": [],
-                "error": (
-                    "La generación de landing falló: " "el path debe terminar en .html o .htm."
-                ),
-            }
-
-        # =====================================================
-        # VALIDAR CONTENIDO
-        # =====================================================
-
-        validation_error = self._validate_landing_content(content)
-
-        if validation_error:
-            logger.error(
-                "CoderAgent landing inválida | " "path=%s | error=%s",
-                actual_path,
-                validation_error,
-            )
-
-            result: dict[str, Any] = {
-                "type": "code_artifact",
-                "files": [],
-                "error": validation_error,
-            }
-
-            if raw is not None:
-                raw_text = raw if isinstance(raw, str) else str(raw)
-                result["raw_response"] = raw_text[:2000]
-
-            return result
-
-        # =====================================================
-        # RESULTADO NORMALIZADO
-        # =====================================================
-
-        result = {
-            "type": "code_artifact",
-            "files": [
-                {
-                    "path": actual_path,
-                    "content": content,
-                }
-            ],
-        }
-
-        logger.info(
-            "CoderAgent landing válida | path=%s | chars=%s",
-            actual_path,
-            len(content),
+        result = self._finalize_landing_artifact(
+            artifact=artifact,
+            target_path=expected_path or "output.html",
         )
 
-        return result
+        if isinstance(result, dict):
+            return result
+
+        logger.error(
+            "CoderAgent landing inválida | error=%s",
+            result,
+        )
+
+        error_result: dict[str, Any] = {
+            "type": "code_artifact",
+            "files": [],
+            "error": result,
+        }
+
+        if raw is not None:
+            raw_text = raw if isinstance(raw, str) else str(raw)
+            error_result["raw_response"] = raw_text[:2000]
+
+        return error_result
 
     # =========================================================
     # LANDING VALIDATION
@@ -858,83 +1056,39 @@ PATH CONCEPTUAL:
 
         html = (content or "").strip()
 
-        if not html or len(html) < 200:
-            return "La generación de landing falló: " "HTML demasiado corto."
+        if len(html) < 400:
+            return "HTML demasiado corto."
 
         lower = html.lower()
 
-        if "<!doctype" not in lower and not re.search(r"<html\b", lower):
-            return "La generación de landing falló: " "falta DOCTYPE o <html>."
+        if "<!doctype" not in lower and "<html" not in lower:
+            return "Falta DOCTYPE o <html>."
 
-        if not re.search(r"<body\b", lower):
-            return "La generación de landing falló: " "falta <body>."
-
-        if re.search(r"<html\b", html, re.I) and not re.search(
-            r"<html\b[^>]*\blang\s*=",
-            html,
-            re.I,
+        if not re.search(
+            r"<body\b",
+            lower,
         ):
-            return "La generación de landing falló: " "falta lang= en <html>."
+            return "Falta <body>."
 
-        # Title recomendado pero no bloqueante si hay h1
-        has_title = bool(
+        if not re.search(
+            r"<h1\b",
+            lower,
+        ):
+            return "Falta <h1>."
+
+        # Tailwind o style.
+        has_style = bool(
             re.search(
-                r"<title\b[^>]*>\s*[^<]+</title\s*>",
-                html,
-                re.I,
-            )
-        )
-
-        h1_count = len(
-            re.findall(
-                r"<h1\b",
+                r"<style\b",
                 lower,
             )
         )
 
-        if not has_title and h1_count < 1:
-            return "La generación de landing falló: " "falta <title> o <h1>."
+        has_tw = "tailwindcss" in lower or "cdn.tailwindcss" in lower
 
-        if h1_count > 3:
-            return "La generación de landing falló: " f"demasiados H1 ({h1_count})."
+        if not has_style and not has_tw:
+            return "Falta <style> o Tailwind."
 
-        # Tailwind CDN cuenta como estilo;
-        # <style> no es obligatorio.
-        has_style = bool(
-            re.search(
-                r"<style\b[^>]*>[\s\S]*?</style\s*>",
-                html,
-                re.I,
-            )
-        )
-
-        has_tailwind = bool(
-            re.search(
-                r"cdn\.tailwindcss\.com|tailwindcss",
-                html,
-                re.I,
-            )
-        )
-
-        has_inline_or_link = bool(
-            re.search(
-                r"<link\b[^>]*stylesheet|\bstyle\s*=",
-                html,
-                re.I,
-            )
-        )
-
-        if not (has_style or has_tailwind or has_inline_or_link):
-            return "La generación de landing falló: " "sin <style>, Tailwind ni estilos."
-
-        if re.search(
-            r"\bTODO\b|\bFIXME\b|lorem ipsum",
-            html,
-            re.I,
-        ):
-            return "La generación de landing falló: " "placeholders (TODO/FIXME/lorem)."
-
-        # OG y 4 sections: opcionales (no fallar)
         return None
 
     # =========================================================
@@ -1132,115 +1286,8 @@ PATH CONCEPTUAL:
         return ordered
 
     # =========================================================
-    # RAW HTML
+    # JSON COMPATIBILITY
     # =========================================================
-
-    def _extract_raw_html(
-        self,
-        text: str,
-    ) -> str | None:
-
-        stripped = text.strip()
-
-        if not stripped:
-            return None
-
-        # -----------------------------------------------------
-        # Documento completo con DOCTYPE
-        # -----------------------------------------------------
-
-        if re.match(
-            r"^<!doctype\s+html\b",
-            stripped,
-            re.IGNORECASE,
-        ):
-            if re.search(
-                r"</html\s*>\s*$",
-                stripped,
-                re.IGNORECASE,
-            ):
-                return stripped
-
-        # -----------------------------------------------------
-        # HTML completo sin DOCTYPE
-        # -----------------------------------------------------
-
-        if re.match(
-            r"^<html\b",
-            stripped,
-            re.IGNORECASE,
-        ):
-            if re.search(
-                r"</html\s*>\s*$",
-                stripped,
-                re.IGNORECASE,
-            ):
-                return stripped
-
-        # -----------------------------------------------------
-        # HTML rodeado de texto
-        # -----------------------------------------------------
-
-        match = re.search(
-            r"<!doctype\s+html[\s\S]*?</html\s*>",
-            stripped,
-            re.IGNORECASE,
-        )
-
-        if match:
-            return match.group(0).strip()
-
-        return None
-
-    # =========================================================
-    # JSON
-    # =========================================================
-
-    def _try_load_json(
-        self,
-        text: str,
-    ) -> Any | None:
-
-        try:
-            return json.loads(text)
-
-        except (
-            json.JSONDecodeError,
-            TypeError,
-            ValueError,
-        ):
-            return None
-
-    def _extract_json_candidates(
-        self,
-        text: str,
-    ) -> list[dict[str, Any]]:
-        """
-        Busca objetos JSON válidos dentro de una respuesta
-        que puede contener texto adicional.
-        """
-
-        decoder = json.JSONDecoder()
-        candidates: list[dict[str, Any]] = []
-
-        for match in re.finditer(
-            r"\{",
-            text,
-        ):
-            start = match.start()
-
-            try:
-                data, _ = decoder.raw_decode(text[start:])
-            except json.JSONDecodeError:
-                continue
-
-            if not isinstance(data, dict):
-                continue
-
-            if data not in candidates:
-                candidates.append(data)
-
-        return candidates
 
     def _extract_json_object(
         self,
@@ -1254,6 +1301,16 @@ PATH CONCEPTUAL:
 
         return candidates[0] if candidates else None
 
+    def _normalize_data(
+        self,
+        data: Any,
+    ) -> dict[str, Any] | None:
+
+        if not isinstance(data, dict):
+            return None
+
+        return self._normalize_dict(data)
+
     # =========================================================
     # REPAIR
     # =========================================================
@@ -1264,6 +1321,8 @@ PATH CONCEPTUAL:
     ) -> dict[str, Any] | None:
         """
         Intenta reparar respuestas casi-JSON.
+
+        Se conserva para compatibilidad con versiones anteriores.
         """
 
         if "code_artifact" not in text and '"files"' not in text:
@@ -1284,7 +1343,6 @@ PATH CONCEPTUAL:
 
         try:
             path = json.loads('"' + path_match.group(1) + '"')
-
         except (
             json.JSONDecodeError,
             TypeError,
@@ -1343,7 +1401,6 @@ PATH CONCEPTUAL:
 
         try:
             content = json.loads('"' + raw_content + '"')
-
         except (
             json.JSONDecodeError,
             TypeError,
@@ -1413,107 +1470,6 @@ PATH CONCEPTUAL:
             .replace("\\/", "/")
             .replace("\\\\", "\\")
         )
-
-    # =========================================================
-    # NORMALIZATION
-    # =========================================================
-
-    def _normalize_data(
-        self,
-        data: Any,
-    ) -> dict[str, Any] | None:
-
-        if not isinstance(data, dict):
-            return None
-
-        return self._normalize_dict(data)
-
-    def _normalize_dict(
-        self,
-        data: dict[str, Any],
-    ) -> dict[str, Any] | None:
-
-        # -----------------------------------------------------
-        # code_artifact explícito
-        # -----------------------------------------------------
-
-        if data.get("type") == "code_artifact" and isinstance(data.get("files"), list):
-            files: list[dict[str, str]] = []
-
-            for item in data["files"]:
-                if not isinstance(item, dict):
-                    continue
-
-                path = item.get("path")
-
-                if path is None:
-                    continue
-
-                content = item.get("content")
-
-                if content is None:
-                    content = ""
-
-                if not isinstance(content, str):
-                    content = str(content)
-
-                files.append(
-                    {
-                        "path": str(path),
-                        "content": content,
-                    }
-                )
-
-            if not files:
-                return None
-
-            result: dict[str, Any] = {
-                "type": "code_artifact",
-                "files": files,
-            }
-
-            if data.get("error"):
-                result["error"] = str(data["error"])
-
-            return result
-
-        # -----------------------------------------------------
-        # files sin type
-        # -----------------------------------------------------
-
-        if isinstance(
-            data.get("files"),
-            list,
-        ):
-            normalized = dict(data)
-            normalized["type"] = "code_artifact"
-
-            return self._normalize_dict(normalized)
-
-        # -----------------------------------------------------
-        # path + content
-        # -----------------------------------------------------
-
-        if data.get("path") is not None and "content" in data:
-            content = data.get("content")
-
-            if content is None:
-                content = ""
-
-            if not isinstance(content, str):
-                content = str(content)
-
-            return {
-                "type": "code_artifact",
-                "files": [
-                    {
-                        "path": str(data["path"]),
-                        "content": content,
-                    }
-                ],
-            }
-
-        return None
 
     # =========================================================
     # CONFIRMATION DETECTION

@@ -957,14 +957,17 @@ class ExecutionPlan:
         self.error = str(error) if error is not None else None
         self._set_status("partial")
 
-    def mark_failed(
-        self,
-        error: str,
-    ) -> None:
-        if not error:
-            raise ValueError("ExecutionPlan.failed requiere un error.")
+    def mark_failed(self, error: str | None = None) -> None:
+        """
+        Marca el plan como fallido.
 
-        self.error = str(error)
+        error puede ser None; se normaliza a un mensaje no vacío
+        para no romper callers y mantener self.error siempre definido.
+        """
+        msg = (error or "").strip() or "Plan failed"
+        self.result = None
+        self.error = msg
+        self.metadata["last_error"] = msg
         self._set_status("failed")
 
     def mark_cancelled(

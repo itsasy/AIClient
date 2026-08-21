@@ -195,7 +195,7 @@ class ExecutionEngine:
         except Exception as exc:
             logger.exception("Error fatal en ExecutionEngine")
             try:
-                plan.mark_failed()
+                plan.mark_failed(str(exc))
             except Exception:
                 logger.exception("No se pudo marcar plan como failed")
 
@@ -206,7 +206,7 @@ class ExecutionEngine:
                 started_monotonic=started_monotonic,
                 started_at=started_at,
             )
-
+        
     # =========================================================
     # Helpers de estado
     # =========================================================
@@ -1459,10 +1459,10 @@ class ExecutionEngine:
         elif result.is_partial:
             plan.mark_partial()
         elif result.is_failure:
-            plan.mark_failed()
+            plan.mark_failed(result.error or "Plan failed")
         elif result.is_cancelled:
             plan.mark_cancelled()
-        elif result.is_retry:
+        elif getattr(result, "is_retry", False):
             logger.error("Intento de finalizar plan en retry | plan=%s", plan.id)
 
     def _update_metrics(self, result: ExecutionResult) -> None:

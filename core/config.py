@@ -128,14 +128,13 @@ class Config:
         .lower()
     )
 
-    CODE_PROVIDER = (
-        os.getenv(
-            "CODE_PROVIDER",
-            DEFAULT_PROVIDER,
-        )
-        .strip()
-        .lower()
-    )
+    CODE_PROVIDER = os.getenv("CODE_PROVIDER", DEFAULT_PROVIDER).strip().lower()
+
+    CODE_FALLBACKS = [
+        x.strip().lower()
+        for x in os.getenv("CODE_FALLBACKS", "gemini,deepseek").split(",")
+        if x.strip()
+    ]
 
     ARCHITECTURE_PROVIDER = (
         os.getenv(
