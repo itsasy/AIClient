@@ -389,12 +389,18 @@ class ExecutionEngine:
         dependencies: dict[str, Any],
         step_context: dict[str, Any],
     ) -> None:
+        """
+        Proyecta outputs tipados de dependencias a:
+        - step.params  (Skills, p.ej. write_file)
+        - step_context (Agents, p.ej. dependency_text, architecture)
+        """
         if not dependencies:
             return
 
         artifacts: list[dict[str, Any]] = []
         evidence_by_type: dict[str, Any] = {}
         plain_texts: list[str] = []
+        analysis_texts: list[str] = []
 
         for dep_id, dep_data in dependencies.items():
             raw: Any = None
@@ -424,16 +430,19 @@ class ExecutionEngine:
 
             if isinstance(raw, str):
                 if raw.strip():
-                    plain_texts.append(raw)
+                    plain_texts.append(raw.strip())
                 continue
 
             if not isinstance(raw, dict):
                 continue
 
             payload_type = raw.get("type")
+
             if payload_type == "code_artifact":
                 artifacts.append(raw)
-            elif payload_type in {
+                continue
+
+            if payload_type in {
                 "architecture_evidence",
                 "quality_evidence",
                 "security_evidence",
@@ -441,14 +450,56 @@ class ExecutionEngine:
                 "project_analysis",
             }:
                 evidence_by_type[payload_type] = raw
-            elif "architecture" in raw and payload_type is None:
-                evidence_by_type.setdefault("architecture_evidence", raw)
-            elif payload_type is None and (
-                "structure" in raw or "files" in raw or "project" in raw
-            ):
-                evidence_by_type.setdefault("project_analysis", raw)
+                continue
 
-        # write_file materialization
+            # scrape_job / análisis de página
+            if payload_type in {
+                "job_analysis",
+                "page_analysis",
+                "scrape_result",
+                "landing_analysis",
+            }:
+                parts: list[str] = []
+                title = raw.get("title")
+                url = raw.get("url")
+                if title:
+                    parts.append(f"Título: {title}")
+                if url:
+                    parts.append(f"URL: {url}")
+                body = (
+                    raw.get("description")
+                    or raw.get("text")
+                    or raw.get("content")
+                    or raw.get("summary")
+                    or ""
+                )
+                if body:
+                    parts.append(str(body).strip())
+                pain = raw.get("pain_points")
+                if pain:
+                    parts.append("Señales: " + ", ".join(str(x) for x in pain))
+                if parts:
+                    analysis_texts.append("\n".join(parts))
+                continue
+
+            if "architecture" in raw and payload_type is None:
+                evidence_by_type.setdefault("architecture_evidence", raw)
+                continue
+
+            if payload_type is None and ("structure" in raw or "files" in raw or "project" in raw):
+                evidence_by_type.setdefault("project_analysis", raw)
+                continue
+
+            # dict genérico con texto útil
+            for key in ("text", "content", "summary", "analysis", "description"):
+                val = raw.get(key)
+                if isinstance(val, str) and val.strip():
+                    plain_texts.append(val.strip())
+                    break
+
+        # -------------------------------------------------
+        # write_file
+        # -------------------------------------------------
         if step.unit_type == "skill" and step.unit_name == "write_file":
             params = dict(step.params or {})
             planned_path = params.get("path")
@@ -482,11 +533,10 @@ class ExecutionEngine:
                     if candidate.startswith("```"):
                         lines = candidate.split("\n")
                         if lines and lines[0].startswith("```"):
-                            lines = lines[1:]
+                            lines = lines[:1]
                         if lines and lines[-1].strip().startswith("```"):
                             lines = lines[:-1]
                         candidate = "\n".join(lines).strip()
-
                     try:
                         data = json.loads(candidate)
                     except json.JSONDecodeError:
@@ -498,7 +548,6 @@ class ExecutionEngine:
                                 data = json.loads(candidate[start : end + 1])
                             except json.JSONDecodeError:
                                 data = None
-
                     if isinstance(data, dict) and data.get("type") == "code_artifact":
                         files = data.get("files") or []
                         try:
@@ -531,58 +580,54 @@ class ExecutionEngine:
             )
             step.params = params
 
-            current = dict(step_context.get("execution") or {})
-            current_step = dict(current.get("current_step") or {})
-            current_step["params"] = dict(params)
-            current["current_step"] = current_step
-            step_context["execution"] = current
-
-            logger.info(
-                "Materializado write_file | path=%s | content_len=%s",
-                params.get("path"),
-                len(str(params.get("content", ""))),
-            )
-
-        # Agents evidence
-        if step.unit_type == "agent":
-            architecture_evidence = evidence_by_type.get("architecture_evidence")
-            if isinstance(architecture_evidence, dict):
-                step_context["architecture"] = architecture_evidence
-                if not step_context.get("project_summary"):
-                    step_context["project_summary"] = (
-                        architecture_evidence.get("summary")
-                        or architecture_evidence.get("project_summary")
-                        or ""
-                    )
-
-            project_analysis = evidence_by_type.get("project_analysis")
-            if isinstance(project_analysis, dict):
-                if "architecture" not in step_context:
-                    architecture = project_analysis.get("architecture_context")
-                    if isinstance(architecture, dict):
-                        step_context["architecture"] = architecture
-
-                summary = (
-                    project_analysis.get("summary") or project_analysis.get("project_summary") or ""
+            if params.get("content") is not None:
+                logger.info(
+                    "Materializado write_file | path=%s | content_len=%s",
+                    params.get("path"),
+                    len(str(params.get("content") or "")),
                 )
-                if summary and not step_context.get("project_summary"):
-                    step_context["project_summary"] = summary
 
-                step_context["project_analysis"] = {
-                    "summary": summary,
-                    "type": project_analysis.get("type", "project_analysis"),
-                }
+        # -------------------------------------------------
+        # Agents / contexto
+        # -------------------------------------------------
+        if artifacts:
+            step_context["code_artifacts"] = artifacts
 
-            for key in ("quality_evidence", "security_evidence", "performance_evidence"):
-                evidence = evidence_by_type.get(key)
-                if isinstance(evidence, dict):
-                    step_context[key] = evidence
+        project_analysis = evidence_by_type.get("project_analysis")
+        architecture_evidence = evidence_by_type.get("architecture_evidence")
 
-            if artifacts:
-                step_context["code_artifacts"] = artifacts
+        if isinstance(project_analysis, dict):
+            arch = project_analysis.get("architecture_context")
+            if arch and not step_context.get("architecture"):
+                step_context["architecture"] = arch
+            summary = (
+                project_analysis.get("summary") or project_analysis.get("project_summary") or ""
+            )
+            if summary and not step_context.get("project_summary"):
+                step_context["project_summary"] = summary
+            step_context["project_analysis"] = {
+                "summary": summary,
+                "type": project_analysis.get("type", "project_analysis"),
+            }
 
-            if plain_texts and not (architecture_evidence or project_analysis or artifacts):
-                step_context["dependency_text"] = plain_texts[0]
+        if isinstance(architecture_evidence, dict) and not step_context.get("architecture"):
+            step_context["architecture"] = architecture_evidence
+
+        for key in (
+            "quality_evidence",
+            "security_evidence",
+            "performance_evidence",
+        ):
+            evidence = evidence_by_type.get(key)
+            if isinstance(evidence, dict):
+                step_context[key] = evidence
+
+        # Texto de referencia (scrape / analysis / plain)
+        if analysis_texts and not step_context.get("dependency_text"):
+            step_context["dependency_text"] = analysis_texts[0][:6000]
+        elif plain_texts and not step_context.get("dependency_text"):
+            if not (architecture_evidence or project_analysis or artifacts):
+                step_context["dependency_text"] = plain_texts[0][:6000]
 
     # =========================================================
     # Timeout helper

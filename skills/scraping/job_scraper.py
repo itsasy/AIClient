@@ -113,14 +113,14 @@ class JobScraperSkill(Skill):
             return {
                 "ok": True,
                 "result": {
-                    "type": "job_analysis",
+                    "type": "job_analysis",  # o "page_analysis" si preferís
                     "platform": platform,
                     "title": title,
                     "description": description,
+                    "text": description,  # alias para materialize genérico
+                    "summary": f"{title}\n\n{description}"[:2000],
                     "pain_points": pain_points,
-                    "signals": self._build_signals(
-                        pain_points,
-                    ),
+                    "signals": self._build_signals(pain_points),
                     "url": url,
                 },
                 "error": None,
