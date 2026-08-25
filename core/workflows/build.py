@@ -22,16 +22,20 @@ except ImportError:
 
 
 ENRICH_CONSTRAINTS = """
-CONSTRAINTS (obligatorio):
-- Respetar Standards del contexto: Arquitectura-de-proyecto, Estilo-de-codigo,
-  UI-Design-System, Pagos-e-idempotencia / Pagos-y-facturacion.
-- Reutilizar services y contratos existentes (PaymentsService, protocols);
-  no duplicar cobros ni facturación en la vista o en otro service.
-- Mismo estilo de control de flujo y naming que el proyecto; no mezclar paradigmas.
-- Operaciones de pago/facturación: diseño idempotente (idempotency_key en metadata).
-- No inventar framework, ORM ni librería UI no pedidos en la tarea/spec.
-- No importar core/llm/runtime del orquestador AIClient.
-- Frontend: un primario + tokens; reutilizar layouts/componentes si existen en el repo.
+CONSTRAINTS (obligatorio — no negociable):
+1. Standards del contexto (Arquitectura, Estilo, UI, Pagos) mandan sobre el ejemplo.
+2. NO implementes cobros ni facturación dentro de PosService/CashService/CatalogService.
+   - Cobros → PaymentsService + PaymentProvider (factory/mock).
+   - Facturas → InvoicingService + ElectronicInvoiceProvider.
+3. POS resuelve líneas desde catálogo por SKU (inyectar CatalogService o aceptar
+   dict producto ya resuelto). NUNCA hardcodees precio (ej. cantidad * 100).
+4. Sin singletons globales ni "ejemplo de uso" al final del módulo.
+5. Type hints, if/else claro (evitar ternarios en cadena si el standard lo pide).
+6. No importar core/llm/runtime del orquestador AIClient.
+7. No inventar frameworks, JWT, ORM ni SDKs de país.
+8. Pagos: metadata puede incluir idempotency_key; no duplicar charge por reintento.
+9. Solo el path pedido en code_artifact; código completo ejecutable en memoria.
+10. API estable: create/add_line/pay/close (o nombres en español, pero UNA convención).
 """
 
 
@@ -131,29 +135,50 @@ class BuildWorkflow(BaseWorkflow):
 
     ENRICH_DOMAIN_HINTS = {
         "pos": (
-            "Pedidos en memoria, líneas desde catálogo (SKU), total, pay/close. "
-            "Sin SDKs de pago ni AFIP."
+            "PosService en memoria:\n"
+            "- __init__(self, catalog=None)\n"
+            "- create() -> pedido_id\n"
+            "- add_line_from_catalog(pedido_id, sku, qty) usa precio de catalog.get(sku)\n"
+            "- pay(pedido_id, metodo) solo marca estado/forma_pago; NO implementa cobro\n"
+            "- close(pedido_id) marca cerrado (no borres el pedido si sirve de historial)\n"
+            "Prohibido: precio hardcodeado (ej. * 100), PaymentsService/InvoicingService "
+            "embebidos, SDKs, singleton global, bloque 'ejemplo de uso' al final."
         ),
         "catalog": (
-            "Productos con SKU, nombre, precio, activo; add/update/get/list/deactivate. "
-            "Sin órdenes ni pagos."
+            "CatalogService: Producto(sku, nombre, precio, activo=True); "
+            "add/update/get/list/deactivate. Sin pedidos, sin pagos, sin totales de venta."
         ),
-        "cash": "Apertura/cierre de caja, movimientos, saldo; todo en memoria.",
-        "auth": "Registro/login/logout con hash local simple; sin framework JWT inventado.",
-        "payments": "PaymentsService delega en PaymentProvider; factory + mock; idempotency_key.",
-        "invoicing": "InvoicingService delega en ElectronicInvoiceProvider; factory + mock.",
-        "delivery": "Envíos/estados de entrega en memoria.",
-        "reports": "Resúmenes de ventas / listados simples en memoria.",
-        "patients": "Ficha de paciente id/nombre/documento/teléfono; CRUD en memoria.",
-        "agenda": "Turnos schedule/list/set_status en memoria.",
-        "odontogram": "Hallazgos por pieza y cara; summary por paciente.",
-        "clinical_history": "Notas de evolución por paciente.",
-        "prescriptions": "Recetas simples en memoria.",
-        "inventory": "Insumos cantidad/mínimo en memoria.",
-        "reservations": "Reservas mesa/hora/pax en memoria.",
-        "dashboard": "KPIs y listados para panel restaurant (o delegar en facade).",
-        "sales": "Líneas de venta producto/categoría/monto.",
-        "tasks": "Tareas pendientes prioridad/done.",
+        "cash": (
+            "CashService: open(initial_amount), add_movement(amount, description), "
+            "get_balance/list movements, close. Sin pedidos ni cobros de pasarela."
+        ),
+        "auth": (
+            "Registro/login/logout con hash local simple (ej. sha256). "
+            "Sin framework JWT inventado ni dependencias externas."
+        ),
+        "payments": (
+            "PaymentsService(provider) delega list_methods/charge/refund al PaymentProvider. "
+            "factory get_payment_provider(locale, use_mock=True). "
+            "charge(..., metadata) debe aceptar idempotency_key. Sin SDK de un solo país."
+        ),
+        "invoicing": (
+            "InvoicingService(provider) delega issue/cancel/status al "
+            "ElectronicInvoiceProvider. factory + mock. Sin AFIP/CFDI/SUNAT reales."
+        ),
+        "delivery": (
+            "Envíos en memoria: crear, set_status, listar por pedido. Sin logística externa."
+        ),
+        "reports": ("Resúmenes simples en memoria (totales, conteos). Sin BI ni SQL inventado."),
+        "patients": ("Ficha paciente id/nombre/documento/teléfono; CRUD en memoria."),
+        "agenda": ("Turnos schedule/list/set_status en memoria."),
+        "odontogram": ("Hallazgos por pieza y cara; summary por paciente. En memoria."),
+        "clinical_history": ("Notas de evolución por paciente. En memoria."),
+        "prescriptions": ("Recetas simples en memoria."),
+        "inventory": ("Insumos cantidad/mínimo en memoria."),
+        "reservations": ("Reservas mesa/hora/pax en memoria."),
+        "dashboard": ("KPIs y listados para panel; sin cobros. Puede orquestar lecturas, no SDKs."),
+        "sales": ("Líneas de venta producto/categoría/monto en memoria. Sin pasarela."),
+        "tasks": ("Tareas pendientes prioridad/done en memoria."),
     }
 
     def execute(
@@ -409,7 +434,7 @@ class BuildWorkflow(BaseWorkflow):
         plan.execution_policy["max_retries"] = 1
         plan.execution_policy["stop_on_error"] = True
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
         if locale_code:
