@@ -102,7 +102,7 @@ class ProjectInspector:
         self,
         path: str | None = None,
         *,
-        prefer_target: bool = False,
+        prefer_target: bool = True,
     ) -> ProjectSnapshot:
         root = self._resolve_root(path, prefer_target=prefer_target)
 
@@ -131,9 +131,9 @@ class ProjectInspector:
 
     def _resolve_root(
         self,
-        path: str | None = None,
+        path: str | Path | None = None,
         *,
-        prefer_target: bool = False,
+        prefer_target: bool = True,
     ) -> Path:
         base = (
             Path(Config.TARGET_PROJECT_ROOT).expanduser().resolve()
