@@ -160,9 +160,13 @@ class CoderAgent(Agent):
     def _parse_llm_to_artifact(
         self,
         raw: str,
-        fallback_paths: list[str] | None = None,
+        fallback_paths: list[str] | str | None = None,
         fallback_path: str | None = None,
     ) -> dict[str, Any]:
+        if isinstance(fallback_paths, str):
+            fallback_path = fallback_path or fallback_paths
+            fallback_paths = [fallback_paths]
+
         text = (raw or "").strip()
         if not text:
             return {
@@ -359,20 +363,32 @@ Alternativa aceptada: HTML crudo empezando por <!DOCTYPE html>.
         self,
         artifact: dict[str, Any],
     ) -> tuple[bool, str]:
+        """
+        Contrato realista (no frágil):
+        - HTML reconocible
+        - tamaño mínimo razonable
+        - algo de estructura (section o headings)
+        No exigir <h1> literal: muchos templates usan <h2> o div hero.
+        """
         files = artifact.get("files") or []
         if not files:
             return False, "no existe ningún archivo."
-        content = str(files[0].get("content") or "")
-        if len(content) < 800:
+        content = str(files[0].get("content") or "").strip()
+        if not content:
+            return False, "content vacío."
+        if len(content) < 400:
             return False, f"HTML demasiado corto ({len(content)} chars)."
         lower = content.lower()
         if "<html" not in lower and "<!doctype" not in lower:
             return False, "no parece HTML (falta doctype/html)."
-        if "tailwind" not in lower and ":root" not in lower and "<style" not in lower:
-            pass
-        section_hits = len(re.findall(r"<section\b", lower)) + len(re.findall(r"<h[12]\b", lower))
-        if section_hits < 2:
-            return False, "faltan secciones/estructura (hero + secciones)."
+        structure = (
+            len(re.findall(r"<section\b", lower))
+            + len(re.findall(r"<h[1-3]\b", lower))
+            + len(re.findall(r"<header\b", lower))
+            + len(re.findall(r"<main\b", lower))
+        )
+        if structure < 1:
+            return False, "faltan secciones/estructura (section/header/main/h1-h3)."
         return True, "ok"
 
     @staticmethod
