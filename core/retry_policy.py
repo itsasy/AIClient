@@ -18,7 +18,6 @@ class RetryDecision:
 class RetryPolicy:
     """
     Decide si un step/plan debe reintentarse.
-
     No ejecuta el step. Solo política.
     """
 
@@ -36,20 +35,40 @@ class RetryPolicy:
         "operation not permitted",
         "módulo no permitido",
         "intent no soportado",
+        "missing 1 required positional argument",
     )
 
     def decide(
         self,
         *,
-        plan: Any,
+        plan: Any = None,
         step: Any | None = None,
         error: str | Exception | None = None,
+        execution_result: Any | None = None,
+        result: Any | None = None,
         attempt: int = 0,
         evaluation: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+        **kwargs: Any,
     ) -> RetryDecision:
+        """
+        Firma amplia a propósito: el engine puede pasar
+        execution_result / result / error / evaluation.
+        kwargs absorbe claves futuras sin TypeError.
+        """
+        if kwargs:
+            logger.debug("RetryPolicy.decide kwargs extra: %s", list(kwargs.keys()))
+
         max_retries = self._max_retries(plan, step)
-        err_text = str(error or "").strip()
+        err_text = self._extract_error(
+            error=error,
+            execution_result=execution_result if execution_result is not None else result,
+        )
         err_lower = err_text.lower()
+
+        # evaluation puede venir en kwargs o embebida en result
+        if evaluation is None:
+            evaluation = self._extract_evaluation(execution_result or result)
 
         if attempt >= max_retries:
             return RetryDecision(
@@ -72,7 +91,6 @@ class RetryPolicy:
                 attempt=attempt,
             )
 
-        # SelfCritic falló con correcciones → permitir 1 retry si policy lo permite
         if evaluation and evaluation.get("pass") is False:
             if max_retries > 0 and attempt < max_retries:
                 return RetryDecision(
@@ -88,7 +106,15 @@ class RetryPolicy:
                 attempt=attempt,
             )
 
-        # Timeout / 5xx / red: reintentar solo si queda cupo
+        # Si el result ya es success, no retry
+        if self._is_success(execution_result or result):
+            return RetryDecision(
+                should_retry=False,
+                reason="resultado exitoso",
+                max_retries=max_retries,
+                attempt=attempt,
+            )
+
         if self._is_transient(err_lower):
             return RetryDecision(
                 should_retry=True,
@@ -97,7 +123,6 @@ class RetryPolicy:
                 attempt=attempt,
             )
 
-        # Por defecto: reintentar solo si max_retries > 0 y attempt < max
         if max_retries > 0 and attempt < max_retries and err_text:
             return RetryDecision(
                 should_retry=True,
@@ -113,8 +138,70 @@ class RetryPolicy:
             attempt=attempt,
         )
 
+    def _extract_error(
+        self,
+        *,
+        error: Any,
+        execution_result: Any,
+    ) -> str:
+        if error is not None:
+            return str(error).strip()
+
+        if execution_result is None:
+            return ""
+
+        # ExecutionResult-like
+        for attr in ("error", "message"):
+            val = getattr(execution_result, attr, None)
+            if val:
+                return str(val).strip()
+
+        if isinstance(execution_result, dict):
+            for key in ("error", "message", "reason"):
+                if execution_result.get(key):
+                    return str(execution_result[key]).strip()
+
+        # fallback: str del objeto si parece fallido
+        status = getattr(execution_result, "status", None)
+        if status is None and isinstance(execution_result, dict):
+            status = execution_result.get("status")
+        if status and str(status).lower() in {
+            "failed",
+            "failure",
+            "error",
+            "cancelled",
+        }:
+            return str(status)
+
+        return ""
+
+    @staticmethod
+    def _extract_evaluation(execution_result: Any) -> dict[str, Any] | None:
+        if execution_result is None:
+            return None
+        meta = getattr(execution_result, "metadata", None)
+        if isinstance(meta, dict) and isinstance(meta.get("evaluation"), dict):
+            return meta["evaluation"]
+        if isinstance(execution_result, dict):
+            ev = execution_result.get("evaluation")
+            if isinstance(ev, dict):
+                return ev
+        return None
+
+    @staticmethod
+    def _is_success(execution_result: Any) -> bool:
+        if execution_result is None:
+            return False
+        if getattr(execution_result, "is_success", None) is True:
+            return True
+        status = getattr(execution_result, "status", None)
+        if status is None and isinstance(execution_result, dict):
+            status = execution_result.get("status")
+            if execution_result.get("ok") is True:
+                return True
+        return str(status or "").lower() in {"completed", "success", "ok"}
+
     def _max_retries(self, plan: Any, step: Any | None) -> int:
-        # Step puede fijar timeout/metadata; policy del plan manda
         if plan is not None and hasattr(plan, "get_max_retries"):
             try:
                 return int(plan.get_max_retries())

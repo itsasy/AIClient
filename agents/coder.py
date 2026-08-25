@@ -59,7 +59,7 @@ class CoderAgent(Agent):
                 ),
             )
 
-        raw = LLMRouter.generate(plan=plan, context=context)
+        raw = LLMRouter().generate(plan=plan, context=context)
         if not isinstance(raw, str):
             raw = str(raw)
 
