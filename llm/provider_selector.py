@@ -76,6 +76,8 @@ class ProviderSelector:
         "execution": "code",
         "file": "code",
         "conversation": "fast",
+        "testing": "fast",
+        "documentation": "documentation",
     }
 
     @classmethod
@@ -240,14 +242,8 @@ class ProviderSelector:
         if not unit_type:
             return None
 
-        normalized = str(unit_type).strip().lower()
-
-        if normalized == "skill":
-            return "code"
-
-        if normalized == "agent":
-            return "architecture"
-
+        # No inferir categoría solo por unit_type.
+        # intent_category ya resolvió code/analysis/conversation.
         return None
 
     @staticmethod
@@ -255,9 +251,8 @@ class ProviderSelector:
         plan: ExecutionPlan,
     ) -> str | None:
 
-        if plan.is_multi_step():
-            return "architecture"
-
+        # multi_step no implica architecture.
+        # enrich y landings pueden ser planes de código.
         return None
 
     # ======================================================

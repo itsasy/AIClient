@@ -14,16 +14,34 @@ try:
 except ImportError:
 
     def resolve_locale(code: str | None, engram: Any | None = None) -> dict[str, Any]:
-        return {"locale_code": code, "locale_summary": "", "sources": ["default"]}
+        return {
+            "locale_code": code,
+            "locale_summary": "",
+            "sources": ["default"],
+        }
+
+
+ENRICH_CONSTRAINTS = """
+CONSTRAINTS (obligatorio):
+- Respetar Standards del contexto: Arquitectura-de-proyecto, Estilo-de-codigo,
+  UI-Design-System, Pagos-e-idempotencia / Pagos-y-facturacion.
+- Reutilizar services y contratos existentes (PaymentsService, protocols);
+  no duplicar cobros ni facturación en la vista o en otro service.
+- Mismo estilo de control de flujo y naming que el proyecto; no mezclar paradigmas.
+- Operaciones de pago/facturación: diseño idempotente (idempotency_key en metadata).
+- No inventar framework, ORM ni librería UI no pedidos en la tarea/spec.
+- No importar core/llm/runtime del orquestador AIClient.
+- Frontend: un primario + tokens; reutilizar layouts/componentes si existen en el repo.
+"""
 
 
 class BuildWorkflow(BaseWorkflow):
     """
-    /build <módulo|pos-stack|from-spec|ui-shell|enrich> [país=XX] [--ai]
+    /build <módulo|*-stack|from-spec|ui-shell|enrich ...> [país=XX] [--static]
     """
 
     name = "build"
-    description = "Scaffold de módulo(s), UI shell o enrich desde spec."
+    description = "Scaffold de módulos, UI shell o enrich de dominio/UI."
 
     ALLOWED = {
         "auth",
@@ -34,6 +52,16 @@ class BuildWorkflow(BaseWorkflow):
         "invoicing",
         "delivery",
         "reports",
+        "patients",
+        "agenda",
+        "odontogram",
+        "clinical_history",
+        "prescriptions",
+        "inventory",
+        "reservations",
+        "dashboard",
+        "sales",
+        "tasks",
     }
 
     ALIASES = {
@@ -46,53 +74,87 @@ class BuildWorkflow(BaseWorkflow):
         "catalogo": "catalog",
         "catálogo": "catalog",
         "reportes": "reports",
+        "pacientes": "patients",
+        "odontograma": "odontogram",
+        "reservas": "reservations",
+        "tareas": "tasks",
+        "ventas": "sales",
     }
 
-    POS_STACK = (
-        "auth",
-        "catalog",
-        "pos",
-        "cash",
-        "payments",
-        "invoicing",
-        "delivery",
-        "reports",
-    )
+    VERTICAL_STACKS: dict[str, tuple[str, ...]] = {
+        "pos": (
+            "auth",
+            "catalog",
+            "pos",
+            "cash",
+            "payments",
+            "invoicing",
+            "delivery",
+            "reports",
+        ),
+        "dental": (
+            "auth",
+            "patients",
+            "agenda",
+            "odontogram",
+            "clinical_history",
+            "prescriptions",
+            "payments",
+            "inventory",
+            "reports",
+        ),
+        "restaurant": (
+            "auth",
+            "catalog",
+            "reservations",
+            "dashboard",
+            "sales",
+            "tasks",
+            "reports",
+        ),
+    }
 
     STACK_ALIASES = frozenset(
         {
             "pos-stack",
             "pos_stack",
             "stack",
-            "full-pos",
-            "full_pos",
-            "pos-completo",
+            "full-stack",
+            "fullstack",
+            "dental-stack",
+            "dental_stack",
+            "restaurant-stack",
+            "restaurant_stack",
+            "resto-stack",
         }
     )
 
-    SPEC_STACK_ALIASES = frozenset(
-        {
-            "from-spec",
-            "from_spec",
-            "desde-spec",
-        }
-    )
-
-    UI_ALIASES = frozenset(
-        {
-            "ui",
-            "ui-shell",
-            "ui_shell",
-        }
-    )
-
-    ENRICH_ALIASES = frozenset(
-        {
-            "enrich",
-            "from-spec-code",
-            "implement",
-        }
-    )
+    ENRICH_DOMAIN_HINTS = {
+        "pos": (
+            "Pedidos en memoria, líneas desde catálogo (SKU), total, pay/close. "
+            "Sin SDKs de pago ni AFIP."
+        ),
+        "catalog": (
+            "Productos con SKU, nombre, precio, activo; add/update/get/list/deactivate. "
+            "Sin órdenes ni pagos."
+        ),
+        "cash": "Apertura/cierre de caja, movimientos, saldo; todo en memoria.",
+        "auth": "Registro/login/logout con hash local simple; sin framework JWT inventado.",
+        "payments": "PaymentsService delega en PaymentProvider; factory + mock; idempotency_key.",
+        "invoicing": "InvoicingService delega en ElectronicInvoiceProvider; factory + mock.",
+        "delivery": "Envíos/estados de entrega en memoria.",
+        "reports": "Resúmenes de ventas / listados simples en memoria.",
+        "patients": "Ficha de paciente id/nombre/documento/teléfono; CRUD en memoria.",
+        "agenda": "Turnos schedule/list/set_status en memoria.",
+        "odontogram": "Hallazgos por pieza y cara; summary por paciente.",
+        "clinical_history": "Notas de evolución por paciente.",
+        "prescriptions": "Recetas simples en memoria.",
+        "inventory": "Insumos cantidad/mínimo en memoria.",
+        "reservations": "Reservas mesa/hora/pax en memoria.",
+        "dashboard": "KPIs y listados para panel restaurant (o delegar en facade).",
+        "sales": "Líneas de venta producto/categoría/monto.",
+        "tasks": "Tareas pendientes prioridad/done.",
+    }
 
     def execute(
         self,
@@ -101,121 +163,214 @@ class BuildWorkflow(BaseWorkflow):
     ) -> ExecutionPlan:
         raw = (arguments or "").strip()
         locale_code = detect_locale(raw)
-        token = self._first_token(raw)
+        locale_info = resolve_locale(locale_code, engram=self._get_engram())
+        locale_summary = str(locale_info.get("locale_summary") or "")
+        lower = raw.lower()
+        static = "--static" in lower
 
-        if token in self.UI_ALIASES:
-            if "--ai" in raw.lower():
-                return self._plan_ui_shell(raw, locale_code)
-            return self._plan_ui_static(raw)
+        # --- enrich ---
+        if re.search(r"\benrich\b", lower):
+            if re.search(r"pos-?stack|stack completo|full.?stack", lower):
+                return self._plan_enrich_stack(
+                    raw, locale_code, locale_summary, modules=("catalog", "pos", "cash")
+                )
+            module = self._parse_module(re.sub(r"\benrich\b", " ", raw, flags=re.I))
+            if module in self.ALLOWED:
+                return self._plan_enrich_module(module, raw, locale_code, locale_summary)
+            return self._plan_enrich_stack(
+                raw, locale_code, locale_summary, modules=("catalog", "pos", "cash")
+            )
 
-        if token in self.ENRICH_ALIASES:
-            return self._plan_enrich_from_spec(raw, locale_code)
+        # --- ui-shell ---
+        if re.search(r"\bui-?shell\b", lower):
+            variant = "pos"
+            if re.search(r"\bdental\b", lower):
+                variant = "dental"
+            elif re.search(r"\b(restaurant|restó|resto)\b", lower):
+                variant = "restaurant"
+            if static:
+                return self._plan_ui_shell_static(raw, locale_code, variant=variant)
+            return self._plan_ui_shell(raw, locale_code, locale_summary, variant=variant)
 
-        if token in self.SPEC_STACK_ALIASES:
+        # --- from-spec ---
+        if re.search(r"\b(from-spec|from_spec|desde-spec)\b", lower):
             return self._plan_from_spec(raw, locale_code)
 
-        if token in self.STACK_ALIASES:
-            return self._plan_stack(raw, locale_code)
+        # --- vertical stacks ---
+        for vname, vmodules in self.VERTICAL_STACKS.items():
+            if re.search(rf"\b{re.escape(vname)}-?stack\b", lower):
+                return self._plan_scaffold_modules(list(vmodules), raw, locale_code)
 
+        token = self._first_token(raw)
+        if token in self.STACK_ALIASES:
+            if "dental" in token:
+                return self._plan_scaffold_modules(
+                    list(self.VERTICAL_STACKS["dental"]), raw, locale_code
+                )
+            if "restaurant" in token or "resto" in token:
+                return self._plan_scaffold_modules(
+                    list(self.VERTICAL_STACKS["restaurant"]), raw, locale_code
+                )
+            return self._plan_scaffold_modules(list(self.VERTICAL_STACKS["pos"]), raw, locale_code)
+
+        # --- single module ---
         module = self._parse_module(raw)
-        return self._plan_single(raw, module, locale_code)
+        if module in self.ALLOWED:
+            return self._plan_scaffold_module(module, raw, locale_code)
+
+        guessed = self._guess_modules_from_text(raw)
+        if len(guessed) > 1:
+            return self._plan_scaffold_modules(guessed, raw, locale_code)
+        if len(guessed) == 1:
+            return self._plan_scaffold_module(guessed[0], raw, locale_code)
+
+        return self._plan_scaffold_modules(list(self.VERTICAL_STACKS["pos"]), raw, locale_code)
 
     def validate(self, arguments: str) -> tuple[bool, str]:
-        raw = (arguments or "").strip()
-        if not raw:
-            return (
-                False,
-                "Uso: /build <módulo|pos-stack|from-spec|ui-shell|enrich> "
-                "[módulo] [país=XX] [--ai]",
-            )
-        token = self._first_token(raw)
-        if token in (
-            self.STACK_ALIASES | self.SPEC_STACK_ALIASES | self.UI_ALIASES | self.ENRICH_ALIASES
-        ):
-            return True, ""
-        module = self._parse_module(raw)
-        if module not in self.ALLOWED:
-            return (
-                False,
-                f"Módulo '{module}' no soportado. "
-                f"Permitidos: {', '.join(sorted(self.ALLOWED))}, "
-                "pos-stack, from-spec, ui-shell, enrich",
-            )
         return True, ""
 
-    def _plan_single(
+    # =========================================================
+    # Scaffold
+    # =========================================================
+
+    def _plan_scaffold_module(
         self,
-        raw: str,
         module: str,
+        raw: str,
         locale_code: str | None,
     ) -> ExecutionPlan:
         plan = ExecutionPlan(
-            original_task=f"/build {raw}".strip(),
+            original_task=f"/build {module}",
             intent="module_scaffold",
-            intent_category="development",
+            intent_category="code",
             objective=f"Scaffold módulo {module}",
             execution_mode="single",
         )
-        plan.context_requirements["project"] = False
         plan.governance["allow_write"] = True
-
-        params: dict[str, Any] = {"module": module}
+        plan.context_requirements["project"] = False
         if locale_code:
-            params["locale"] = locale_code
             plan.metadata["locale"] = locale_code
-            plan.metadata["locale_sources"] = resolve_locale(locale_code).get("sources", [])
-
         plan.set_execution_unit(
             unit_type="skill",
             unit_name="scaffold_module",
-            params=params,
+            params={"module": module, "locale": locale_code or ""},
         )
         plan.metadata["workflow"] = "build"
-        plan.metadata["module"] = module
         return plan
 
-    def _plan_stack(
+    def _plan_scaffold_modules(
+        self,
+        modules: list[str],
+        raw: str,
+        locale_code: str | None,
+    ) -> ExecutionPlan:
+        plan = ExecutionPlan(
+            original_task=f"/build {raw}",
+            intent="module_scaffold",
+            intent_category="code",
+            objective="Scaffold módulos",
+            execution_mode="multi_step",
+        )
+        plan.governance["allow_write"] = True
+        plan.execution_policy["stop_on_error"] = False
+        plan.context_requirements["project"] = False
+        if locale_code:
+            plan.metadata["locale"] = locale_code
+        plan.metadata["aggregate_results"] = True
+        plan.metadata["workflow"] = "build"
+
+        for mod in modules:
+            plan.add_step(
+                description=f"Scaffold {mod}",
+                unit_type="skill",
+                unit_name="scaffold_module",
+                params={"module": mod, "locale": locale_code or ""},
+                expected_output=f"Módulo {mod}",
+                metadata={"module": mod},
+                timeout=60,
+            )
+        return plan
+
+    def _plan_ui_shell_static(
         self,
         raw: str,
         locale_code: str | None,
-        modules: tuple[str, ...] | list[str] | None = None,
+        variant: str = "pos",
     ) -> ExecutionPlan:
-        stack = tuple(modules) if modules else self.POS_STACK
         plan = ExecutionPlan(
-            original_task=f"/build {raw}".strip(),
-            intent="module_scaffold",
-            intent_category="development",
-            objective="Scaffold stack POS",
-            execution_mode="multi_step",
+            original_task=f"/build ui-shell {variant} --static",
+            intent="ui_scaffold",
+            intent_category="code",
+            objective=f"UI shell {variant} estático",
+            execution_mode="single",
         )
-
-        plan.metadata["aggregate_results"] = True
-        plan.context_requirements["project"] = False
         plan.governance["allow_write"] = True
-
+        plan.context_requirements["project"] = False
         if locale_code:
             plan.metadata["locale"] = locale_code
-            plan.metadata["locale_sources"] = resolve_locale(locale_code).get("sources", [])
-
-        prev_id: str | None = None
-        for module in stack:
-            params: dict[str, Any] = {"module": module}
-            if locale_code and module in {"payments", "invoicing"}:
-                params["locale"] = locale_code
-            step = plan.add_step(
-                description=f"Scaffold módulo {module}",
-                unit_type="skill",
-                unit_name="scaffold_module",
-                params=params,
-                expected_output=f"Estructura base de {module}",
-                metadata={"stage": "scaffold", "module": module},
-            )
-            if prev_id:
-                step.depends_on.append(prev_id)
-            prev_id = step.id
-
+        plan.set_execution_unit(
+            unit_type="skill",
+            unit_name="scaffold_ui_shell",
+            params={"variant": variant, "locale": locale_code or ""},
+        )
         plan.metadata["workflow"] = "build"
-        plan.metadata["module"] = "pos-stack"
+        return plan
+
+    def _plan_ui_shell(
+        self,
+        raw: str,
+        locale_code: str | None,
+        locale_summary: str,
+        variant: str = "pos",
+    ) -> ExecutionPlan:
+        plan = ExecutionPlan(
+            original_task=f"/build ui-shell {raw}",
+            intent="ui_scaffold",
+            intent_category="code",
+            objective=f"Generar UI shell {variant}",
+            execution_mode="multi_step",
+        )
+        plan.execution_policy["max_retries"] = 1
+        plan.governance["allow_write"] = True
+        plan.context_requirements["project"] = False
+        plan.context_requirements["standards"] = True
+        plan.context_requirements["engram"] = True
+        if locale_code:
+            plan.metadata["locale"] = locale_code
+
+        base = {
+            "pos": "src/ui/pos_shell",
+            "dental": "src/ui/dental_shell",
+            "restaurant": "src/ui/restaurant_shell",
+        }.get(variant, "src/ui/pos_shell")
+
+        task = (
+            f"{raw}\n\n"
+            f"Generá shell UI variant={variant} bajo {base}/ "
+            f"(login, shell, vista principal, css, README).\n"
+            f"Priorizá Standards/UI-Design-System y notas UI del vertical.\n"
+            f"Locale: {locale_summary or locale_code or 'no asumir país'}\n"
+            f"{ENRICH_CONSTRAINTS}\n"
+            "Salida: code_artifact con varios files.\n"
+        )
+        gen = plan.add_step(
+            description="Generar UI shell",
+            unit_type="agent",
+            unit_name="coder",
+            params={"task": task, "path": f"{base}/shell.html"},
+            metadata={"stage": "generation", "produces": "code_artifact"},
+            timeout=180,
+        )
+        write = plan.add_step(
+            description="Materializar UI shell",
+            unit_type="skill",
+            unit_name="write_file",
+            params={"write_all": True},
+            metadata={"stage": "materialization", "consumes": "code_artifact"},
+            timeout=60,
+        )
+        write.depends_on.append(gen.id)
+        plan.metadata["workflow"] = "build"
         return plan
 
     def _plan_from_spec(
@@ -223,409 +378,204 @@ class BuildWorkflow(BaseWorkflow):
         raw: str,
         locale_code: str | None,
     ) -> ExecutionPlan:
-        root = Path(getattr(Config, "TARGET_PROJECT_ROOT", Path.cwd()))
-        specs_dir = root / ".specs"
-        modules: list[str] = list(self.POS_STACK)
-        spec_text = ""
-        spec_name = ""
-
-        if specs_dir.is_dir():
-            files = sorted(
-                list(specs_dir.glob("*.md")) + list(specs_dir.glob("*.json")),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-            rest = re.sub(
-                r"^(from-spec|from_spec|desde-spec)\s*",
-                "",
-                raw.strip(),
-                flags=re.I,
-            )
-            tokens = {t.lower() for t in rest.split() if len(t) > 2}
-
-            def score(path: Path, text: str) -> tuple[int, float]:
-                stem = path.stem.lower()
-                head = text.lower()[:4000]
-                s = 0
-                if "pos" in stem or "pos" in head:
-                    s += 10
-                if tokens:
-                    for t in tokens:
-                        if t in stem:
-                            s += 5
-                        if t in head:
-                            s += 2
-                try:
-                    mtime = path.stat().st_mtime
-                except OSError:
-                    mtime = 0.0
-                return (s, mtime)
-
-            ranked: list[tuple[tuple[int, float], Path, str]] = []
-            for path in files:
-                try:
-                    text = path.read_text(encoding="utf-8")
-                except OSError:
-                    continue
-                ranked.append((score(path, text), path, text))
-
-            ranked.sort(key=lambda x: x[0], reverse=True)
-            if ranked:
-                _, chosen, spec_text = ranked[0]
-                spec_name = chosen.name
-
-        inferred = self._modules_from_spec(spec_text)
-        if inferred:
-            modules = inferred
-        if not locale_code and spec_text:
-            locale_code = detect_locale(spec_text)
-
-        plan = self._plan_stack(raw, locale_code, modules=modules)
-        plan.metadata["from_spec"] = spec_name or True
-        plan.metadata["aggregate_results"] = True
-        plan.objective = f"Scaffold desde spec {spec_name or '(última)'}"
+        modules = self._modules_from_specs(raw)
+        if not modules:
+            modules = list(self.VERTICAL_STACKS["pos"])
+        plan = self._plan_scaffold_modules(modules, raw, locale_code)
+        plan.metadata["from_spec"] = True
         return plan
 
-    def _plan_ui_static(self, raw: str) -> ExecutionPlan:
-        plan = ExecutionPlan(
-            original_task=f"/build {raw}".strip(),
-            intent="ui_scaffold",
-            intent_category="frontend",
-            objective="UI shell estática (fallback)",
-            execution_mode="single",
-        )
-        plan.context_requirements["project"] = False
-        plan.governance["allow_write"] = True
-        plan.set_execution_unit(
-            unit_type="skill",
-            unit_name="scaffold_ui_shell",
-            params={},
-        )
-        plan.metadata["workflow"] = "build"
-        plan.metadata["module"] = "ui-shell-static"
-        return plan
+    # =========================================================
+    # Enrich
+    # =========================================================
 
-    def _plan_ui_shell(
+    def _plan_enrich_module(
         self,
+        module: str,
         raw: str,
         locale_code: str | None,
+        locale_summary: str = "",
     ) -> ExecutionPlan:
+        target = f"src/modules/{module}/service.py"
+        hint = self.ENRICH_DOMAIN_HINTS.get(module, f"Servicio de dominio {module}.")
+
         plan = ExecutionPlan(
-            original_task=f"/build {raw}".strip(),
-            intent="ui_scaffold",
-            intent_category="frontend",
-            objective="Generar UI shell POS con IA",
+            original_task=f"/build enrich {module}",
+            intent="code_generation",
+            intent_category="code",
+            objective=f"Enriquecer {target}",
             execution_mode="multi_step",
         )
+        plan.execution_policy["max_retries"] = 1
+        plan.execution_policy["stop_on_error"] = True
+        plan.governance["allow_write"] = True
         plan.context_requirements["project"] = False
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
-        plan.context_requirements["spec"] = True
-        plan.governance["allow_write"] = True
-
-        locale_hint = ""
         if locale_code:
             plan.metadata["locale"] = locale_code
-            info = resolve_locale(locale_code)
-            locale_hint = str(info.get("locale_summary") or "")
-            plan.metadata["locale_sources"] = info.get("sources", [])
-
-        prompt = f"""
-Genera una UI POS limpia (login centrado, sidebar operativa, dashboard con KPIs).
-
-Si en el contexto hay standards o notas UI-POS-Shell, síguelas con prioridad.
-No copies un diseño de un solo país; labels/moneda según LOCALE.
-
-Entrega UN ÚNICO JSON code_artifact:
-{{
-  "type": "code_artifact",
-  "files": [
-    {{"path": "src/ui/pos_shell/login.html", "content": "..."}},
-    {{"path": "src/ui/pos_shell/shell.html", "content": "..."}},
-    {{"path": "src/ui/pos_shell/dashboard.html", "content": "..."}},
-    {{"path": "src/ui/pos_shell/pos.css", "content": "..."}}
-  ]
-}}
-
-Reglas:
-- Un color primario + neutros; CTA claro.
-- Sidebar: Operación / Catálogo / Gestión.
-- Login: card, recordarme, estado terminal, versión.
-- Dashboard: KPIs + tabla recientes.
-- Si el proyecto es React/Vue/Next y está en contexto, genera ese stack.
-- SOLO JSON válido, sin markdown envolvente.
-
-LOCALE:
-{locale_hint or "No asumir país ni moneda concreta."}
-""".strip()
-
-        gen = plan.add_step(
-            description="Generar UI shell POS",
-            unit_type="agent",
-            unit_name="coder",
-            params={"task": prompt, "mode": "ui_shell"},
-            expected_output="code_artifact con archivos UI",
-            metadata={"stage": "generation", "produces": "code_artifact"},
-        )
-
-        for index, rel in enumerate(
-            (
-                "src/ui/pos_shell/login.html",
-                "src/ui/pos_shell/shell.html",
-                "src/ui/pos_shell/dashboard.html",
-                "src/ui/pos_shell/pos.css",
-            )
-        ):
-            write = plan.add_step(
-                description=f"Escribir {rel}",
-                unit_type="skill",
-                unit_name="write_file",
-                params={"path": rel, "file_index": index},
-                expected_output=f"Archivo {rel}",
-                metadata={"stage": "materialization", "consumes": "code_artifact"},
-            )
-            write.depends_on.append(gen.id)
-
         plan.metadata["workflow"] = "build"
-        plan.metadata["module"] = "ui-shell"
-        return plan
+        plan.metadata["enrich"] = module
 
-    def _plan_enrich_from_spec(
-        self,
-        raw: str,
-        locale_code: str | None,
-    ) -> ExecutionPlan:
-        """coder → write_file: service.py de un módulo desde .specs/ + locale."""
-        rest = re.sub(
-            r"^(enrich|from-spec-code|implement)\s*",
-            "",
-            raw.strip(),
-            flags=re.I,
+        task = (
+            f"{raw}\n\n"
+            f"Reescribe {target} con dominio usable en memoria.\n"
+            f"{hint}\n"
+            f"Locale orientativo: {locale_summary or locale_code or 'N/A'}\n"
+            f"{ENRICH_CONSTRAINTS}\n"
+            "Python 3.11+, type hints.\n"
+            f"Salida: code_artifact path={target}."
         )
-        module = self._parse_module(rest) if rest.strip() else "pos"
-        if module not in self.ALLOWED:
-            module = "pos"
-
-        root = Path(getattr(Config, "TARGET_PROJECT_ROOT", Path.cwd()))
-        specs_dir = root / ".specs"
-        spec_excerpt = ""
-        spec_name = ""
-
-        if specs_dir.is_dir():
-            files = list(specs_dir.glob("*.md")) + list(specs_dir.glob("*.json"))
-
-            def score(p: Path) -> tuple[int, float]:
-                stem = p.stem.lower()
-                s = 0
-
-                if module in stem:
-                    s += 20
-
-                if module == "pos" and "pos" in stem:
-                    s += 5
-
-                if module != "pos" and "pos" in stem and module not in stem:
-                    s -= 10
-
-                try:
-                    mtime = p.stat().st_mtime
-                except OSError:
-                    mtime = 0.0
-
-                return (s, mtime)
-
-            ranked = sorted(files, key=score, reverse=True)
-            if ranked:
-                chosen = ranked[0]
-                spec_name = chosen.name
-                try:
-                    spec_excerpt = chosen.read_text(encoding="utf-8")[:12000]
-                except OSError:
-                    spec_excerpt = ""
-
-        locale_block = ""
-        if locale_code:
-            try:
-                from core.locale.packs import locale_summary
-
-                locale_block = locale_summary(locale_code)
-            except Exception:
-                locale_block = f"locale={locale_code}"
-
-        module_hints = {
-            "pos": (
-                "Dominio POS: pedidos/tickets/líneas/estados en memoria; "
-                "create/add_line/pay/close. Sin catálogo de productos completo."
-            ),
-            "catalog": (
-                "Dominio CATÁLOGO: productos/SKU/nombre/precio/activo en memoria; "
-                "add/update/get/list/deactivate. NO implementes órdenes ni pagos."
-            ),
-            "cash": (
-                "Dominio CAJA: apertura/cierre, movimientos, saldo; " "sin facturación fiscal."
-            ),
-            "auth": (
-                "Dominio AUTH: usuarios, login, hash de password en memoria; "
-                "sin JWT de frameworks."
-            ),
-            "payments": (
-                "Dominio PAYMENTS: delega en PaymentsService/factory; "
-                "no reimplementes el Protocol."
-            ),
-            "invoicing": (
-                "Dominio INVOICING: delega en InvoicingService/factory; " "sin AFIP SDK."
-            ),
-            "delivery": ("Dominio DELIVERY: envíos y estados; sin cobros."),
-            "reports": ("Dominio REPORTS: agregaciones simples sobre listas en memoria."),
-        }
-
-        domain_hint = module_hints.get(
-            module,
-            f"Dominio del módulo {module}: " "lógica de negocio en memoria, sin orquestador.",
-        )
-
-        target = f"src/modules/{module}/service.py"
-
-        prompt = f"""Implementa la lógica de dominio del módulo "{module}" del POS.
-
-Archivo de salida único: {target}
-
-DOMINIO OBLIGATORIO PARA ESTE ARCHIVO:
-{domain_hint}
-
-Reglas:
-- Python 3.11+, type hints.
-- Respeta el dominio indicado arriba como restricción obligatoria.
-- Usa la SPEC como fuente de requisitos del módulo, pero NO copies el dominio de otra
-  parte de la spec si contradice el dominio obligatorio.
-- NO inventes framework (Vue, React, Laravel, Django, FastAPI) salvo que la spec lo pida.
-- NO inventes SDKs de pago/fiscal; usa Protocols/mocks si hace falta.
-- Mantén el dominio autocontenido y sin dependencias del orquestador.
-
-Reglas específicas del módulo:
-- Si el módulo es pos: implementa pedidos/tickets, líneas y estados en memoria;
-  expón create, add_line, pay y close.
-- Si el módulo es catalog: implementa productos en memoria, con SKU/nombre/precio/activo;
-  expón add, update, get, list y deactivate. NO implementes Order, pedidos, pay ni close.
-- Si el módulo es payments/invoicing: delega en factory/service existentes del módulo.
-- Para los demás módulos: implementa únicamente las responsabilidades de su dominio.
-- No agregues responsabilidades pertenecientes a otro módulo.
-
-IMPORTANTE — aislamiento:
-- Estás generando código del PRODUCTO destino (POS), NO del orquestador AIClient.
-- PROHIBIDO importar: core.*, runtime.*, llm.*, agents.*, skills.*, ExecutionPlan, ProviderManager.
-- POS no emite facturas AFIP ni calcula régimen fiscal; eso es invoicing + adapters.
-- No implementes funcionalidades de otro módulo solo porque aparezcan en la spec.
-
-Devuelve SOLO JSON:
-{{
-  "type": "code_artifact",
-  "files": [
-    {{"path": "{target}", "content": "..."}}
-  ]
-}}
-
-=== SPEC ({spec_name or "ninguna"}) ===
-{spec_excerpt or "(sin spec; implementa el esqueleto mínimo del dominio solicitado y documenta supuestos)"}
-=== FIN SPEC ===
-
-=== LOCALE ===
-{locale_block or "no especificado"}
-=== FIN LOCALE ===
-"""
-
-        plan = ExecutionPlan(
-            original_task=f"/build {raw}".strip(),
-            intent="code_generation",
-            intent_category="development",
-            objective=f"Implementar {target} desde spec",
-            execution_mode="multi_step",
-        )
-        plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
-        plan.context_requirements["standards"] = False
-        plan.metadata["workflow"] = "build"
-        plan.metadata["module"] = module
-        plan.metadata["aggregate_results"] = False
-
-        if locale_code:
-            plan.metadata["locale"] = locale_code
-        if spec_name:
-            plan.metadata["from_spec"] = spec_name
-
         gen = plan.add_step(
             description=f"Generar {target}",
             unit_type="agent",
             unit_name="coder",
-            params={
-                "task": prompt,
-                "mode": "enrich_module",
-                "requested_output": "code_artifact",
-            },
+            params={"task": task, "path": target},
             expected_output="code_artifact",
             metadata={"stage": "generation", "produces": "code_artifact"},
+            timeout=180,
         )
-
         write = plan.add_step(
             description=f"Escribir {target}",
             unit_type="skill",
             unit_name="write_file",
             params={"path": target, "file_index": 0},
             expected_output=f"Archivo {target}",
-            metadata={
-                "stage": "materialization",
-                "consumes": "code_artifact",
-            },
+            metadata={"stage": "materialization", "consumes": "code_artifact"},
+            timeout=60,
         )
         write.depends_on.append(gen.id)
+        return plan
+
+    def _plan_enrich_stack(
+        self,
+        raw: str,
+        locale_code: str | None,
+        locale_summary: str = "",
+        modules: tuple[str, ...] = ("catalog", "pos", "cash"),
+    ) -> ExecutionPlan:
+        plan = ExecutionPlan(
+            original_task=f"/build enrich stack {raw}",
+            intent="code_generation",
+            intent_category="code",
+            objective="Enriquecer módulos en memoria",
+            execution_mode="multi_step",
+        )
+        plan.execution_policy["max_retries"] = 1
+        plan.execution_policy["stop_on_error"] = True
+        plan.governance["allow_write"] = True
+        plan.context_requirements["project"] = False
+        plan.context_requirements["standards"] = True
+        plan.context_requirements["engram"] = True
+        if locale_code:
+            plan.metadata["locale"] = locale_code
+        plan.metadata["workflow"] = "build"
+        plan.metadata["enrich"] = "stack"
+
+        prev_id: str | None = None
+        for mod in modules:
+            target = f"src/modules/{mod}/service.py"
+            hint = self.ENRICH_DOMAIN_HINTS.get(mod, "")
+            gen = plan.add_step(
+                description=f"Enrich generar {mod}",
+                unit_type="agent",
+                unit_name="coder",
+                params={
+                    "path": target,
+                    "task": (
+                        f"Enriquecer {target}. {hint}\n{raw}\n"
+                        f"Locale: {locale_summary or locale_code or ''}\n"
+                        f"{ENRICH_CONSTRAINTS}\n"
+                        "code_artifact con ese path."
+                    ),
+                },
+                metadata={"stage": "generation", "module": mod},
+                timeout=180,
+            )
+            write = plan.add_step(
+                description=f"Enrich escribir {mod}",
+                unit_type="skill",
+                unit_name="write_file",
+                params={"path": target, "file_index": 0},
+                metadata={"stage": "materialization", "module": mod},
+                timeout=60,
+            )
+            write.depends_on.append(gen.id)
+            if prev_id:
+                gen.depends_on.append(prev_id)
+            prev_id = write.id
 
         return plan
 
-    def _modules_from_spec(self, text: str) -> list[str]:
-        if not text:
-            return []
-        lower = text.lower()
+    # =========================================================
+    # Helpers
+    # =========================================================
 
-        if (
-            any(
-                k in lower
-                for k in (
-                    "punto de venta",
-                    " pos",
-                    "pos ",
-                    "restaurante",
-                    "multiestación",
-                    "multiestacion",
-                    "offline",
-                )
-            )
-            or "pos_" in lower
-        ):
-            return list(self.POS_STACK)
-
-        keywords = {
-            "auth": ("auth", "autentic", "login", "jwt", "sesión", "sesion"),
-            "catalog": ("catalog", "producto", "menú", "menu", "precio"),
-            "pos": ("punto de venta", " ticket", "pedido", "turno"),
-            "cash": ("caja", "cash", "cierre de caja"),
-            "payments": ("pago", "payment", "pasarela", "cobro"),
-            "invoicing": ("factura", "invoice", "afip", "cfdi", "fiscal"),
-            "delivery": ("delivery", "envio", "envío", "reparto"),
-            "reports": ("reporte", "report", "historial de ventas"),
-        }
-        found = [mod for mod, keys in keywords.items() if any(k in lower for k in keys)]
-        return [m for m in self.POS_STACK if m in found]
+    def _get_engram(self) -> Any | None:
+        return None
 
     def _first_token(self, raw: str) -> str:
         cleaned = re.sub(
             r"\b(pa[ií]s|country|locale)\s*[=:]\s*[A-Za-z]{2}\b",
             " ",
             raw,
-            flags=re.IGNORECASE,
+            flags=re.I,
         )
-        cleaned = re.sub(r"--(?:static|ai)\b", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"--static", " ", cleaned, flags=re.I)
+        cleaned = re.sub(r"\benrich\b", " ", cleaned, flags=re.I)
         return (cleaned.split() or [""])[0].strip().lower()
 
     def _parse_module(self, raw: str) -> str:
         token = self._first_token(raw)
         return self.ALIASES.get(token, token)
+
+    def _guess_modules_from_text(self, raw: str) -> list[str]:
+        lower = raw.lower()
+        keywords = {
+            "auth": ("auth", "autentic", "login", "jwt"),
+            "catalog": ("catalog", "producto", "menú", "menu"),
+            "pos": ("punto de venta", "pedido", "ticket"),
+            "cash": ("caja", "cash", "cierre de caja"),
+            "payments": ("pago", "payment", "pasarela", "cobro"),
+            "invoicing": ("factura", "invoice", "afip", "cfdi", "fiscal"),
+            "delivery": ("delivery", "envío", "envio", "reparto"),
+            "reports": ("reporte", "report", "historial de ventas"),
+            "patients": ("paciente", "patient"),
+            "agenda": ("agenda", "turno", "cita"),
+            "odontogram": ("odontogram", "odontograma", "pieza dental"),
+        }
+        found = [m for m, keys in keywords.items() if any(k in lower for k in keys)]
+        order = list(self.VERTICAL_STACKS["pos"]) + list(self.VERTICAL_STACKS["dental"])
+        seen: list[str] = []
+        for m in order:
+            if m in found and m not in seen:
+                seen.append(m)
+        return seen
+
+    def _modules_from_specs(self, raw: str) -> list[str]:
+        root = Path(getattr(Config, "TARGET_PROJECT_ROOT", Path.cwd()))
+        specs = root / ".specs"
+        if not specs.is_dir():
+            return self._guess_modules_from_text(raw) or list(self.VERTICAL_STACKS["pos"])
+
+        files = sorted(
+            list(specs.glob("*.md")) + list(specs.glob("*.json")),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            return list(self.VERTICAL_STACKS["pos"])
+
+        try:
+            text = files[0].read_text(encoding="utf-8", errors="ignore")[:8000]
+        except OSError:
+            return list(self.VERTICAL_STACKS["pos"])
+
+        lower = (text + " " + raw).lower()
+        if "dental" in lower or "odontogram" in lower:
+            return list(self.VERTICAL_STACKS["dental"])
+        if "restaurant" in lower or "reserva" in lower:
+            return list(self.VERTICAL_STACKS["restaurant"])
+        if "pos" in lower or "punto de venta" in lower:
+            return list(self.VERTICAL_STACKS["pos"])
+        return self._guess_modules_from_text(lower) or list(self.VERTICAL_STACKS["pos"])

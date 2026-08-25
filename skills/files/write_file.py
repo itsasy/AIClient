@@ -2,191 +2,107 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.governance.capability_guard import (
-    CapabilityGuard,
-    CapabilityError,
-)
 from core.execution_plan import ExecutionPlan
 from core.execution_step import ExecutionStep
-from core.tools.path_policy import PathPolicy
-from core.tools.security_policy import SecurityPolicy
+from core.tools.file import FileTool
 from skills.base import Skill
 
 
 class WriteFileSkill(Skill):
     name = "write_file"
-    description = "Escribe contenido en un archivo del sistema."
-    version = "2.1"
-    capabilities = ("file_write",)
+    description = "Escribe archivo(s) dentro de TARGET_PROJECT_ROOT."
+    version = "2.2"
+    capabilities = ("file_write", "filesystem_operation")
+
+    def __init__(self) -> None:
+        self.tool = FileTool()
 
     def execute(
         self,
         plan: ExecutionPlan,
         step: ExecutionStep,
-        context: dict[str, Any] | None = None,
+        context: dict[str, Any],
     ) -> dict[str, Any]:
-        """
-        Ejecuta la escritura de un archivo.
+        params = dict(step.params or {})
 
-        Orden de seguridad:
+        # Batch multi-file
+        if params.get("write_all") and isinstance(params.get("files"), list):
+            return self._write_all(params["files"])
 
-            1. Validar parámetros.
-            2. CapabilityGuard.
-            3. SecurityPolicy.
-            4. Política de escritura del plan.
-            5. Normalizar path.
-            6. Verificar límites del proyecto.
-            7. Crear directorio.
-            8. Escribir archivo.
-
-        CapabilityGuard debe ejecutarse antes de cualquier
-        operación que modifique el filesystem.
-        """
-
-        guard = CapabilityGuard()
-
-        params = step.params or {}
-
-        path = params.get("path")
+        path = str(params.get("path") or "").strip()
         content = params.get("content")
-
-        # ======================================================
-        # Validación básica
-        # ======================================================
 
         if not path:
             return {
                 "ok": False,
                 "result": None,
-                "error": "No se proporcionó una ruta de archivo.",
+                "error": "write_file: falta path.",
             }
 
-        if content is None:
+        if content is None or (isinstance(content, str) and content == ""):
             return {
                 "ok": False,
                 "result": None,
-                "error": "No se proporcionó contenido para escribir.",
+                "error": (
+                    "write_file: content vacío "
+                    "(coder no produjo artifact usable o el engine no materializó)."
+                ),
             }
 
-        # ======================================================
-        # Capability Guard
-        # ======================================================
-        #
-        # IMPORTANTE:
-        #
-        # Esto debe ocurrir antes de cualquier modificación
-        # del filesystem.
-        #
-        # CapabilityGuard es la autoridad que determina si
-        # el actor está autorizado a realizar esta capacidad.
-        #
+        if not isinstance(content, str):
+            content = str(content)
 
         try:
-            guard.require_write(
-                plan,
-                actor="write_file",
+            return self.tool.execute(
+                operation="write",
                 path=path,
+                content=content,
             )
-
-        except CapabilityError as exc:
+        except Exception as exc:
             return {
                 "ok": False,
                 "result": None,
                 "error": str(exc),
             }
 
-        # ======================================================
-        # Security Policy
-        # ======================================================
+    def _write_all(self, files: list[Any]) -> dict[str, Any]:
+        created: list[dict[str, Any]] = []
+        errors: list[str] = []
 
-        ok, error = SecurityPolicy.check_path(
-            str(path),
-            plan,
-        )
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path") or "").strip()
+            content = item.get("content")
+            if not path:
+                errors.append("file sin path")
+                continue
+            if content is None or content == "":
+                errors.append(f"{path}: content vacío")
+                continue
+            result = self.tool.execute(
+                operation="write",
+                path=path,
+                content=str(content),
+            )
+            if result.get("ok"):
+                created.append(result.get("result") or {"path": path})
+            else:
+                errors.append(f"{path}: {result.get('error')}")
 
-        if not ok:
+        if not created:
             return {
                 "ok": False,
                 "result": None,
-                "error": error,
+                "error": "; ".join(errors) or "write_all: ningún archivo escrito",
             }
 
-        # ======================================================
-        # Plan write policy
-        # ======================================================
-
-        if not plan.allows_write():
-            return {
-                "ok": False,
-                "result": None,
-                "error": ("Política de escritura no permitida " "en este plan."),
-            }
-
-        # ======================================================
-        # Path normalization + containment
-        # ======================================================
-
-        try:
-            normalized_path = PathPolicy.normalize(
-                path,
-            )
-
-            if not PathPolicy.is_within_project(
-                normalized_path,
-            ):
-                return {
-                    "ok": False,
-                    "result": None,
-                    "error": (f"Path traversal bloqueado: " f"'{path}' → '{normalized_path}'"),
-                }
-
-            # ==================================================
-            # Filesystem mutation
-            # ==================================================
-
-            normalized_path.parent.mkdir(
-                parents=True,
-                exist_ok=True,
-            )
-
-            normalized_path.write_text(
-                str(content),
-                encoding="utf-8",
-            )
-
-            # ==================================================
-            # Relative path
-            # ==================================================
-
-            try:
-                rel = str(
-                    normalized_path.relative_to(
-                        PathPolicy.project_root(),
-                    )
-                )
-
-            except ValueError:
-                rel = str(
-                    normalized_path,
-                )
-
-            return {
-                "ok": True,
-                "result": {
-                    "path": rel,
-                    "absolute_path": str(
-                        normalized_path,
-                    ),
-                    "size": len(
-                        str(content),
-                    ),
-                },
-                "error": None,
-            }
-
-        except Exception as exc:
-            return {
-                "ok": False,
-                "result": None,
-                "error": (f"Error al escribir archivo: {exc}"),
-            }
+        return {
+            "ok": True,
+            "result": {
+                "type": "write_batch",
+                "created": created,
+                "errors": errors,
+            },
+            "error": None if not errors else "; ".join(errors),
+        }
