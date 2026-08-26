@@ -132,6 +132,7 @@ class ElectronicInvoiceProvider(Protocol):
         params = dict(step.params or {})
         module = str(params.get("module") or "").strip().lower()
         locale = str(params.get("locale") or plan.metadata.get("locale") or "").strip().upper()
+        force = bool(params.get("force"))
 
         if module not in self.ALLOWED_MODULES:
             return self._error(f"Módulo no permitido: {module}")
@@ -144,7 +145,7 @@ class ElectronicInvoiceProvider(Protocol):
         created: list[str] = []
         for filename in files:
             path = mod_dir / filename
-            if path.exists():
+            if path.exists() and not force:
                 continue
             path.write_text(self._file_content(module, filename), encoding="utf-8")
             created.append(str(path.relative_to(root)))

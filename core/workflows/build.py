@@ -23,20 +23,31 @@ except ImportError:
 
 ENRICH_CONSTRAINTS = """
 CONSTRAINTS (obligatorio — no negociable):
-1. Standards del contexto (Arquitectura, Estilo, UI, Pagos) mandan sobre el ejemplo.
-2. NO implementes cobros ni facturación dentro de PosService/CashService/CatalogService.
-   - Cobros → PaymentsService + PaymentProvider (factory/mock).
-   - Facturas → InvoicingService + ElectronicInvoiceProvider.
-3. POS resuelve líneas desde catálogo por SKU (inyectar CatalogService o aceptar
-   dict producto ya resuelto). NUNCA hardcodees precio (ej. cantidad * 100).
-4. Sin singletons globales ni "ejemplo de uso" al final del módulo.
-5. Type hints, if/else claro (evitar ternarios en cadena si el standard lo pide).
-6. No importar core/llm/runtime del orquestador AIClient.
-7. No inventar frameworks, JWT, ORM ni SDKs de país.
-8. Pagos: metadata puede incluir idempotency_key; no duplicar charge por reintento.
-9. Solo el path pedido en code_artifact; código completo ejecutable en memoria.
-10. API estable: create/add_line/pay/close (o nombres en español, pero UNA convención).
+1. Standards del contexto mandan (Arquitectura, Estilo, UI, Pagos).
+2. NO implementar cobros ni facturación dentro de PosService/CashService/CatalogService.
+   Cobros → PaymentsService + PaymentProvider. Facturas → InvoicingService.
+3. POS: inyectar CatalogService; add_line_from_catalog usa catalog.get(sku).precio.
+   NUNCA hardcodear precio (ej. cantidad * 100). pay() solo marca estado; NO cobra.
+4. CashService API canónica: is_open (property), open/open_cash_box, close/close_cash_box,
+   add_movement, get_balance, get_movements.
+5. Sin singletons globales ni "ejemplo de uso" al final del archivo.
+6. Type hints; una sola convención de naming; no importar core/llm/runtime del orquestador.
+7. No inventar JWT/ORM/SDKs de país. Pagos: metadata.idempotency_key.
+8. Salida SOLO code_artifact con el path pedido; código ejecutable en memoria.
+9. Si el archivo ya expone la API canónica, PRESERVAR firmas públicas y solo completar huecos.
 """
+
+# Stubs deterministas en scaffold_module. Enrich por defecto = skill, no LLM.
+CANONICAL_ENRICH_MODULES = frozenset(
+    {
+        "pos",
+        "catalog",
+        "cash",
+        "payments",
+        "invoicing",
+        "auth",
+    }
+)
 
 
 class BuildWorkflow(BaseWorkflow):
@@ -135,50 +146,37 @@ class BuildWorkflow(BaseWorkflow):
 
     ENRICH_DOMAIN_HINTS = {
         "pos": (
-            "PosService en memoria:\n"
-            "- __init__(self, catalog=None)\n"
-            "- create() -> pedido_id\n"
-            "- add_line_from_catalog(pedido_id, sku, qty) usa precio de catalog.get(sku)\n"
-            "- pay(pedido_id, metodo) solo marca estado/forma_pago; NO implementa cobro\n"
-            "- close(pedido_id) marca cerrado (no borres el pedido si sirve de historial)\n"
-            "Prohibido: precio hardcodeado (ej. * 100), PaymentsService/InvoicingService "
-            "embebidos, SDKs, singleton global, bloque 'ejemplo de uso' al final."
+            "PosService(catalog=None): create()->id; add_line_from_catalog(id,sku,qty) via "
+            "catalog.get(sku); pay(id, metodo) solo estado; close(id). Sin PaymentsService."
         ),
         "catalog": (
-            "CatalogService: Producto(sku, nombre, precio, activo=True); "
-            "add/update/get/list/deactivate. Sin pedidos, sin pagos, sin totales de venta."
+            "Producto(sku,nombre,precio,activo=True); CatalogService add/update/get/list/deactivate. "
+            "Sin pedidos ni pagos."
         ),
         "cash": (
-            "CashService: open(initial_amount), add_movement(amount, description), "
-            "get_balance/list movements, close. Sin pedidos ni cobros de pasarela."
+            "CashService: @property is_open; open/open_cash_box; close/close_cash_box; "
+            "add_movement; get_balance; get_movements. Sin pedidos."
         ),
-        "auth": (
-            "Registro/login/logout con hash local simple (ej. sha256). "
-            "Sin framework JWT inventado ni dependencias externas."
-        ),
+        "auth": "AuthService register/login/logout con hash local; sin JWT de framework.",
         "payments": (
-            "PaymentsService(provider) delega list_methods/charge/refund al PaymentProvider. "
-            "factory get_payment_provider(locale, use_mock=True). "
-            "charge(..., metadata) debe aceptar idempotency_key. Sin SDK de un solo país."
+            "PaymentsService(provider): charge/refund/list_methods; Mock + factory; "
+            "charge(..., metadata) con idempotency_key → payment_id estable."
         ),
         "invoicing": (
-            "InvoicingService(provider) delega issue/cancel/status al "
-            "ElectronicInvoiceProvider. factory + mock. Sin AFIP/CFDI/SUNAT reales."
+            "InvoicingService(provider): issue/cancel/status; Mock + factory; sin AFIP real."
         ),
-        "delivery": (
-            "Envíos en memoria: crear, set_status, listar por pedido. Sin logística externa."
-        ),
-        "reports": ("Resúmenes simples en memoria (totales, conteos). Sin BI ni SQL inventado."),
-        "patients": ("Ficha paciente id/nombre/documento/teléfono; CRUD en memoria."),
-        "agenda": ("Turnos schedule/list/set_status en memoria."),
-        "odontogram": ("Hallazgos por pieza y cara; summary por paciente. En memoria."),
-        "clinical_history": ("Notas de evolución por paciente. En memoria."),
-        "prescriptions": ("Recetas simples en memoria."),
-        "inventory": ("Insumos cantidad/mínimo en memoria."),
-        "reservations": ("Reservas mesa/hora/pax en memoria."),
-        "dashboard": ("KPIs y listados para panel; sin cobros. Puede orquestar lecturas, no SDKs."),
-        "sales": ("Líneas de venta producto/categoría/monto en memoria. Sin pasarela."),
-        "tasks": ("Tareas pendientes prioridad/done en memoria."),
+        "delivery": "Envíos/estados de entrega en memoria.",
+        "reports": "Resúmenes de ventas / listados simples en memoria.",
+        "patients": "Ficha de paciente id/nombre/documento/teléfono; CRUD en memoria.",
+        "agenda": "Turnos schedule/list/set_status en memoria.",
+        "odontogram": "Hallazgos por pieza y cara; summary por paciente.",
+        "clinical_history": "Notas de evolución por paciente.",
+        "prescriptions": "Recetas simples en memoria.",
+        "inventory": "Insumos cantidad/mínimo en memoria.",
+        "reservations": "Reservas mesa/hora/pax en memoria.",
+        "dashboard": "KPIs y listados para panel restaurant (o delegar en facade).",
+        "sales": "Líneas de venta producto/categoría/monto.",
+        "tasks": "Tareas pendientes prioridad/done.",
     }
 
     def execute(
@@ -195,13 +193,24 @@ class BuildWorkflow(BaseWorkflow):
 
         # --- enrich ---
         if re.search(r"\benrich\b", lower):
+            use_llm = "--llm" in lower
             if re.search(r"pos-?stack|stack completo|full.?stack", lower):
                 return self._plan_enrich_stack(
-                    raw, locale_code, locale_summary, modules=("catalog", "pos", "cash")
+                    raw,
+                    locale_code,
+                    locale_summary,
+                    modules=("catalog", "pos", "cash"),
+                    use_llm=use_llm,
                 )
             module = self._parse_module(re.sub(r"\benrich\b", " ", raw, flags=re.I))
             if module in self.ALLOWED:
-                return self._plan_enrich_module(module, raw, locale_code, locale_summary)
+                return self._plan_enrich_module(
+                    module,
+                    raw,
+                    locale_code,
+                    locale_summary,
+                    use_llm=use_llm,
+                )
             return self._plan_enrich_stack(
                 raw, locale_code, locale_summary, modules=("catalog", "pos", "cash")
             )
@@ -420,10 +429,49 @@ class BuildWorkflow(BaseWorkflow):
         raw: str,
         locale_code: str | None,
         locale_summary: str = "",
+        *,
+        use_llm: bool = False,
     ) -> ExecutionPlan:
+        """
+        Enrich de un módulo.
+
+        - Módulos canónicos (pos/catalog/cash/payments/invoicing/auth):
+          por defecto skill scaffold_module (determinista, no pisa con basura LLM).
+          Con --llm: coder + constraints estrictas + project context ON.
+        - Resto: coder + write_file.
+        """
         target = f"src/modules/{module}/service.py"
         hint = self.ENRICH_DOMAIN_HINTS.get(module, f"Servicio de dominio {module}.")
 
+        # --- canónico sin --llm: restaurar stub del skill ---
+        if module in CANONICAL_ENRICH_MODULES and not use_llm:
+            plan = ExecutionPlan(
+                original_task=f"/build enrich {module}",
+                intent="module_scaffold",
+                intent_category="code",
+                objective=f"Restaurar stub canónico de {module}",
+                execution_mode="single",
+            )
+            plan.governance["allow_write"] = True
+            plan.context_requirements["project"] = False
+            plan.context_requirements["standards"] = False
+            if locale_code:
+                plan.metadata["locale"] = locale_code
+            plan.metadata["workflow"] = "build"
+            plan.metadata["enrich"] = module
+            plan.metadata["enrich_mode"] = "canonical_scaffold"
+            plan.set_execution_unit(
+                unit_type="skill",
+                unit_name="scaffold_module",
+                params={
+                    "module": module,
+                    "locale": locale_code or "AR",
+                    "force": True,
+                },
+            )
+            return plan
+
+        # --- LLM enrich ---
         plan = ExecutionPlan(
             original_task=f"/build enrich {module}",
             intent="code_generation",
@@ -434,6 +482,7 @@ class BuildWorkflow(BaseWorkflow):
         plan.execution_policy["max_retries"] = 1
         plan.execution_policy["stop_on_error"] = True
         plan.governance["allow_write"] = True
+        # Ver servicios ya en TARGET (CatalogService, facades, etc.)
         plan.context_requirements["project"] = True
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
@@ -441,15 +490,17 @@ class BuildWorkflow(BaseWorkflow):
             plan.metadata["locale"] = locale_code
         plan.metadata["workflow"] = "build"
         plan.metadata["enrich"] = module
+        plan.metadata["enrich_mode"] = "llm"
 
         task = (
-            f"{raw}\n\n"
-            f"Reescribe {target} con dominio usable en memoria.\n"
-            f"{hint}\n"
-            f"Locale orientativo: {locale_summary or locale_code or 'N/A'}\n"
-            f"{ENRICH_CONSTRAINTS}\n"
-            "Python 3.11+, type hints.\n"
-            f"Salida: code_artifact path={target}."
+            f"Módulo: {module}\n"
+            f"Target: {target}\n"
+            f"{hint}\n\n"
+            f"{ENRICH_CONSTRAINTS}\n\n"
+            f"Locale orientativo (no hardcodear pasarela): "
+            f"{locale_summary or locale_code or 'N/A'}\n"
+            f"Pedido del usuario: {raw}\n"
+            f"Salida SOLO code_artifact path={target}."
         )
         gen = plan.add_step(
             description=f"Generar {target}",
@@ -478,27 +529,50 @@ class BuildWorkflow(BaseWorkflow):
         locale_code: str | None,
         locale_summary: str = "",
         modules: tuple[str, ...] = ("catalog", "pos", "cash"),
+        *,
+        use_llm: bool = False,
     ) -> ExecutionPlan:
+        """Enrich de varios módulos. Canónicos → scaffold; resto → LLM si use_llm o no canónico."""
         plan = ExecutionPlan(
             original_task=f"/build enrich stack {raw}",
             intent="code_generation",
             intent_category="code",
-            objective="Enriquecer módulos en memoria",
+            objective="Enriquecer módulos de dominio",
             execution_mode="multi_step",
         )
         plan.execution_policy["max_retries"] = 1
         plan.execution_policy["stop_on_error"] = True
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = bool(use_llm)
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
         plan.metadata["workflow"] = "build"
         plan.metadata["enrich"] = "stack"
+        plan.metadata["enrich_mode"] = "llm" if use_llm else "mixed"
 
         prev_id: str | None = None
         for mod in modules:
+            if mod in CANONICAL_ENRICH_MODULES and not use_llm:
+                step = plan.add_step(
+                    description=f"Restaurar canónico {mod}",
+                    unit_type="skill",
+                    unit_name="scaffold_module",
+                    params={
+                        "module": mod,
+                        "locale": locale_code or "AR",
+                        "force": True,
+                    },
+                    expected_output=f"stub {mod}",
+                    metadata={"stage": "canonical_scaffold", "module": mod},
+                    timeout=60,
+                )
+                if prev_id:
+                    step.depends_on.append(prev_id)
+                prev_id = step.id
+                continue
+
             target = f"src/modules/{mod}/service.py"
             hint = self.ENRICH_DOMAIN_HINTS.get(mod, "")
             gen = plan.add_step(
@@ -529,12 +603,7 @@ class BuildWorkflow(BaseWorkflow):
             if prev_id:
                 gen.depends_on.append(prev_id)
             prev_id = write.id
-
         return plan
-
-    # =========================================================
-    # Helpers
-    # =========================================================
 
     def _get_engram(self) -> Any | None:
         return None
