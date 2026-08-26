@@ -653,10 +653,20 @@ class CashService:
         self._saldo = 0.0
         self._movimientos: list[dict[str, Any]] = []
 
+    @property
+    def is_open(self) -> bool:
+        return self._open
+
+    def open(self, initial_amount: float = 0.0) -> None:
+        self.open_cash_box(initial_amount)
+
     def open_cash_box(self, initial_amount: float) -> None:
         self._open = True
         self._saldo = float(initial_amount)
         self._movimientos = []
+
+    def close(self) -> None:
+        self.close_cash_box()
 
     def close_cash_box(self) -> None:
         self._open = False
@@ -902,7 +912,10 @@ class SaleFacade:
         self.invoicing = InvoicingService(
             get_invoice_provider(self.locale, use_mock=use_mock)
         )
-        self.cash.open_cash_box(100.0)
+
+    def ensure_cash_open(self, initial: float = 100.0) -> None:
+        if not self.cash.is_open:
+            self.cash.open_cash_box(initial)
 
     def seed_product(self, sku: str, nombre: str, precio: float) -> None:
         self.catalog.add(Producto(sku, nombre, precio))
@@ -911,17 +924,20 @@ class SaleFacade:
         self,
         lines: list[tuple[str, int]],
         method: str = "efectivo",
+        currency: str | None = None,
     ) -> dict[str, Any]:
+        self.ensure_cash_open()
         pid = self.pos.create()
         for sku, qty in lines:
             self.pos.add_line_from_catalog(pid, sku, qty)
         total = float(self.pos.pedidos[pid].get("total") or 0)
         self.pos.pay(pid, method)
+        cur = currency or self._currency()
         payment = self.payments.charge(
             total,
-            self._currency(),
+            cur,
             method,
-            metadata={"idempotency_key": f"ticket:{pid}:pay:1"},
+            metadata={"idempotency_key": f"pedido-{pid}", "pedido_id": pid},
         )
         if payment.get("ok"):
             self.cash.add_movement(total, f"venta {pid}")
