@@ -142,8 +142,17 @@ class ElectronicInvoiceProvider(Protocol):
         mod_dir = root / rel_dir
         mod_dir.mkdir(parents=True, exist_ok=True)
 
+        # Nunca pisar facades / orquestadores de demo (ni con force=True).
+        protected_names = {
+            "sale_facade.py",
+            "session_facade.py",
+            "dashboard_facade.py",
+        }
+
         created: list[str] = []
         for filename in files:
+            if filename in protected_names:
+                continue
             path = mod_dir / filename
             if path.exists() and not force:
                 continue
@@ -154,7 +163,7 @@ class ElectronicInvoiceProvider(Protocol):
         if module in {"payments", "invoicing"} and locale:
             adapters_created = self._scaffold_adapters(root, module, locale)
 
-        # Facades idempotentes
+        # Facades: solo crear si no existen (nunca overwrite)
         created.extend(self._ensure_facades(root, module))
 
         return {

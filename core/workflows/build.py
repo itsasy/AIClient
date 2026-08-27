@@ -146,40 +146,37 @@ class BuildWorkflow(BaseWorkflow):
 
     ENRICH_DOMAIN_HINTS = {
         "pos": (
-            "PosService: pedidos en memoria; __init__(catalog: CatalogService | None). "
-            "create() -> id; add_line_from_catalog(pid, sku, qty) usa catalog.get(sku); "
-            "total en pedido; pay(pid, method); close(pid). "
-            "NO reimplementar pagos/AFIP. NO borrar sale_facade.py."
+            "PosService(catalog=None): create()->id; add_line_from_catalog(id,sku,qty) via "
+            "catalog.get(sku); pay(id, metodo) solo estado; close(id). Sin PaymentsService."
         ),
         "catalog": (
-            "CatalogService + Producto(sku, nombre, precio, activo=True). "
-            "add/update/get/list/deactivate. get(sku) obligatorio. Sin órdenes ni pagos."
+            "Producto(sku,nombre,precio,activo=True); CatalogService add/update/get/list/deactivate. "
+            "Sin pedidos ni pagos."
         ),
         "cash": (
-            "CashService: property is_open; open(initial)/open_cash_box; close/close_cash_box; "
-            "add_movement(amount, description); get_balance(); get_movements(). "
-            "Estado en memoria. Alias open/close para SaleFacade. NUNCA solo _open sin is_open."
+            "CashService: @property is_open; open/open_cash_box; close/close_cash_box; "
+            "add_movement; get_balance; get_movements. Sin pedidos."
         ),
-        "auth": "Registro/login/logout con hash local; sin JWT inventado.",
+        "auth": "AuthService register/login/logout con hash local; sin JWT de framework.",
         "payments": (
-            "PaymentsService + PaymentProvider; factory get_payment_provider; mock; "
-            "idempotency_key en metadata. Sin SDK real."
+            "PaymentsService(provider): charge/refund/list_methods; Mock + factory; "
+            "charge(..., metadata) con idempotency_key → payment_id estable."
         ),
         "invoicing": (
-            "InvoicingService + ElectronicInvoiceProvider; factory + mock issue/cancel/status."
+            "InvoicingService(provider): issue/cancel/status; Mock + factory; sin AFIP real."
         ),
-        "delivery": "Envíos/estados en memoria.",
-        "reports": "Resúmenes simples en memoria.",
-        "patients": "Ficha paciente id/nombre/documento/teléfono; CRUD memoria.",
+        "delivery": "Envíos/estados de entrega en memoria.",
+        "reports": "Resúmenes de ventas / listados simples en memoria.",
+        "patients": "Ficha de paciente id/nombre/documento/teléfono; CRUD en memoria.",
         "agenda": "Turnos schedule/list/set_status en memoria.",
-        "odontogram": "Hallazgos por pieza/cara; summary por paciente.",
+        "odontogram": "Hallazgos por pieza y cara; summary por paciente.",
         "clinical_history": "Notas de evolución por paciente.",
         "prescriptions": "Recetas simples en memoria.",
         "inventory": "Insumos cantidad/mínimo en memoria.",
         "reservations": "Reservas mesa/hora/pax en memoria.",
-        "dashboard": "KPIs panel restaurant o facade.",
-        "sales": "Líneas producto/categoría/monto.",
-        "tasks": "Tareas prioridad/done.",
+        "dashboard": "KPIs y listados para panel restaurant (o delegar en facade).",
+        "sales": "Líneas de venta producto/categoría/monto.",
+        "tasks": "Tareas pendientes prioridad/done.",
     }
 
     def execute(
