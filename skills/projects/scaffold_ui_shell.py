@@ -38,14 +38,17 @@ class ScaffoldUiShellSkill(Skill):
         if variant not in self.VARIANTS:
             variant = "pos"
 
-        templates_root = Path(__file__).resolve().parent / "ui_templates" / variant
-        if not templates_root.is_dir():
+        force = bool(params.get("force"))
+        templates_root = self._resolve_templates_root(variant)
+        if templates_root is None:
             return {
                 "ok": False,
                 "result": None,
                 "error": (
-                    f"No hay semillas en {templates_root}. "
-                    "Creá skills/projects/ui_templates/{variant}/ con los HTML/CSS."
+                    f"No hay semillas ui_templates/{variant}/. "
+                    "Copiá artifacts/ui_templates/{variant} a "
+                    "skills/projects/ui_templates/{variant}/ "
+                    "(o env UI_TEMPLATES_ROOT)."
                 ),
             }
 
@@ -57,9 +60,11 @@ class ScaffoldUiShellSkill(Skill):
         for path in sorted(templates_root.rglob("*")):
             if not path.is_file():
                 continue
+            if path.name.upper() == "README.MD" and not force:
+                continue
             rel = path.relative_to(templates_root)
             target = dest / rel
-            if target.exists():
+            if target.exists() and not force:
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)

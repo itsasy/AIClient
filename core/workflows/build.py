@@ -216,15 +216,18 @@ class BuildWorkflow(BaseWorkflow):
             )
 
         # --- ui-shell ---
+        # Default: seeds estáticos (ui_templates). --llm / --ai → generación LLM.
         if re.search(r"\bui-?shell\b", lower):
             variant = "pos"
             if re.search(r"\bdental\b", lower):
                 variant = "dental"
             elif re.search(r"\b(restaurant|restó|resto)\b", lower):
                 variant = "restaurant"
-            if static:
-                return self._plan_ui_shell_static(raw, locale_code, variant=variant)
-            return self._plan_ui_shell(raw, locale_code, locale_summary, variant=variant)
+            use_llm = bool(re.search(r"--llm|--ai\b", lower))
+            force = bool(re.search(r"--force\b", lower))
+            if use_llm and not static:
+                return self._plan_ui_shell(raw, locale_code, locale_summary, variant=variant)
+            return self._plan_ui_shell_static(raw, locale_code, variant=variant, force=force)
 
         # --- from-spec ---
         if re.search(r"\b(from-spec|from_spec|desde-spec)\b", lower):
@@ -330,12 +333,14 @@ class BuildWorkflow(BaseWorkflow):
         raw: str,
         locale_code: str | None,
         variant: str = "pos",
+        *,
+        force: bool = False,
     ) -> ExecutionPlan:
         plan = ExecutionPlan(
-            original_task=f"/build ui-shell {variant} --static",
+            original_task=f"/build ui-shell {variant}",
             intent="ui_scaffold",
             intent_category="code",
-            objective=f"UI shell {variant} estático",
+            objective=f"UI shell {variant} desde semillas",
             execution_mode="single",
         )
         plan.governance["allow_write"] = True
@@ -345,9 +350,14 @@ class BuildWorkflow(BaseWorkflow):
         plan.set_execution_unit(
             unit_type="skill",
             unit_name="scaffold_ui_shell",
-            params={"variant": variant, "locale": locale_code or ""},
+            params={
+                "variant": variant,
+                "locale": locale_code or "",
+                "force": force,
+            },
         )
         plan.metadata["workflow"] = "build"
+        plan.metadata["ui_shell_mode"] = "static_seeds"
         return plan
 
     def _plan_ui_shell(
