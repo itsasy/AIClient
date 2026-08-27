@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,7 @@ class ScaffoldUiShellSkill(Skill):
 
     name = "scaffold_ui_shell"
     description = "Copia semillas HTML/CSS de shell operativo al proyecto destino."
-    version = "2.0"
+    version = "2.1"
     capabilities = ("ui_scaffold", "static_ui", "pos_shell")
 
     VARIANTS = {
@@ -26,6 +27,34 @@ class ScaffoldUiShellSkill(Skill):
         "dental": "src/ui/dental_shell",
         "restaurant": "src/ui/restaurant_shell",
     }
+
+    def _resolve_templates_root(self, variant: str) -> Path | None:
+        """Busca semillas en varios orígenes."""
+        candidates: list[Path] = []
+
+        env = (os.getenv("UI_TEMPLATES_ROOT") or "").strip()
+        if env:
+            candidates.append(Path(env).expanduser().resolve() / variant)
+
+        here = Path(__file__).resolve().parent
+        candidates.append(here / "ui_templates" / variant)
+        candidates.append(Path.cwd() / "skills" / "projects" / "ui_templates" / variant)
+        candidates.append(Path.cwd() / "ui_templates" / variant)
+
+        # si PROJECT_ROOT apunta a AIClient
+        try:
+            proj = Path(Config.PROJECT_ROOT).expanduser().resolve()
+            candidates.append(proj / "skills" / "projects" / "ui_templates" / variant)
+        except Exception:
+            pass
+
+        for c in candidates:
+            try:
+                if c.is_dir() and any(c.iterdir()):
+                    return c
+            except OSError:
+                continue
+        return None
 
     def execute(
         self,
@@ -46,9 +75,9 @@ class ScaffoldUiShellSkill(Skill):
                 "result": None,
                 "error": (
                     f"No hay semillas ui_templates/{variant}/. "
-                    "Copiá artifacts/ui_templates/{variant} a "
-                    "skills/projects/ui_templates/{variant}/ "
-                    "(o env UI_TEMPLATES_ROOT)."
+                    "Copiá shell.html, pos-pay.html, pos.css a "
+                    "AIClient/skills/projects/ui_templates/pos/ "
+                    "(o export UI_TEMPLATES_ROOT=...)."
                 ),
             }
 

@@ -14,6 +14,14 @@ class RetryDecision:
     max_retries: int = 0
     attempt: int = 0
 
+    def to_dict(self) -> dict:
+        return {
+            "should_retry": self.should_retry,
+            "reason": self.reason,
+            "max_retries": self.max_retries,
+            "attempt": self.attempt,
+        }
+
 
 class RetryPolicy:
     """
