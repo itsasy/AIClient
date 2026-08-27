@@ -239,6 +239,7 @@ class ElectronicInvoiceProvider(Protocol):
                 "odontogram": self._odontogram_service_source,
                 "agenda": self._agenda_service_source,
                 "delivery": self._delivery_service_source,
+                "reports": self._reports_service_source,
             }
             if module in generators:
                 return generators[module]()
@@ -745,6 +746,71 @@ class DeliveryService:
             st = str(d.get("status") or "unknown")
             out[st] = out.get(st, 0) + 1
         return out
+'''
+
+    def _reports_service_source(self) -> str:
+        return '''"""Reportes demo — resumen de catálogo, caja y delivery."""
+from __future__ import annotations
+
+from typing import Any
+
+
+class ReportsService:
+    def __init__(
+        self,
+        catalog: Any | None = None,
+        cash: Any | None = None,
+        delivery: Any | None = None,
+        *,
+        locale: str = "AR",
+    ) -> None:
+        self.catalog = catalog
+        self.cash = cash
+        self.delivery = delivery
+        self.locale = locale
+
+    def summary(self) -> dict[str, Any]:
+        items: list[Any] = []
+        cat = self.catalog
+        if cat is not None:
+            if hasattr(cat, "list"):
+                items = list(cat.list())
+            elif hasattr(cat, "productos"):
+                items = list(cat.productos.values())
+        is_open = False
+        balance = 0.0
+        movements_count = 0
+        cash = self.cash
+        if cash is not None:
+            is_open = bool(getattr(cash, "is_open", False))
+            if hasattr(cash, "get_balance"):
+                balance = float(cash.get_balance())
+            if hasattr(cash, "get_movements"):
+                movements_count = len(cash.get_movements())
+        deliveries: list[Any] = []
+        by_status: dict[str, int] = {}
+        dsvc = self.delivery
+        if dsvc is not None:
+            if hasattr(dsvc, "list"):
+                deliveries = list(dsvc.list())
+            if hasattr(dsvc, "count_by_status"):
+                by_status = dict(dsvc.count_by_status())
+            else:
+                for d in deliveries:
+                    st = str((d or {}).get("status") if isinstance(d, dict) else "unknown")
+                    by_status[st] = by_status.get(st, 0) + 1
+        return {
+            "ok": True,
+            "locale": self.locale,
+            "catalog_count": len(items),
+            "cash": {
+                "is_open": is_open,
+                "balance": balance,
+                "movements_count": movements_count,
+            },
+            "delivery_count": len(deliveries),
+            "deliveries_by_status": by_status,
+        }
 '''
 
     def _auth_service_source(self) -> str:
