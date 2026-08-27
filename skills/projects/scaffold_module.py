@@ -131,7 +131,9 @@ class ElectronicInvoiceProvider(Protocol):
     ) -> dict[str, Any]:
         params = dict(step.params or {})
         module = str(params.get("module") or "").strip().lower()
-        locale = str(params.get("locale") or plan.metadata.get("locale") or "").strip().upper()
+        locale = str(
+            params.get("locale") or plan.metadata.get("locale") or ""
+        ).strip().upper()
         force = bool(params.get("force"))
 
         if module not in self.ALLOWED_MODULES:
@@ -236,6 +238,7 @@ class ElectronicInvoiceProvider(Protocol):
                 "patients": self._patients_service_source,
                 "odontogram": self._odontogram_service_source,
                 "agenda": self._agenda_service_source,
+                "delivery": self._delivery_service_source,
             }
             if module in generators:
                 return generators[module]()
@@ -695,6 +698,53 @@ class CashService:
 
     def get_movements(self) -> list[dict[str, Any]]:
         return list(self._movimientos)
+'''
+
+    def _delivery_service_source(self) -> str:
+        return '''"""Envíos en memoria."""
+from __future__ import annotations
+
+from typing import Any
+
+
+class DeliveryService:
+    def __init__(self) -> None:
+        self._items: dict[str, dict[str, Any]] = {}
+        self._seq = 0
+
+    def list(self) -> list[dict[str, Any]]:
+        return list(self._items.values())
+
+    def create(
+        self,
+        address: str,
+        *,
+        note: str = "",
+        status: str = "pendiente",
+    ) -> dict[str, Any]:
+        self._seq += 1
+        item = {
+            "id": f"d{self._seq}",
+            "address": address or "Sin dirección",
+            "status": status or "pendiente",
+            "note": note or "",
+        }
+        self._items[item["id"]] = item
+        return dict(item)
+
+    def set_status(self, delivery_id: str, status: str) -> dict[str, Any] | None:
+        item = self._items.get(delivery_id)
+        if not item:
+            return None
+        item["status"] = status
+        return dict(item)
+
+    def count_by_status(self) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for d in self._items.values():
+            st = str(d.get("status") or "unknown")
+            out[st] = out.get(st, 0) + 1
+        return out
 '''
 
     def _auth_service_source(self) -> str:
