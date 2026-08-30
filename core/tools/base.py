@@ -47,6 +47,23 @@ class Tool(ABC):
             ),
         }
 
+    def get_schema(self) -> dict[str, Any]:
+        """
+        Devuelve el schema de la herramienta en formato OpenAI JSON Schema.
+        """
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {},
+                    "required": []
+                }
+            }
+        }
+
     @abstractmethod
     def execute(
         self,

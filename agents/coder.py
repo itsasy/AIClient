@@ -66,11 +66,12 @@ class CoderAgent(Agent):
             context.setdefault(
                 "requested_output",
                 (
-                    "Responde SOLO con JSON code_artifact válido.\n"
-                    'Formato: {"type":"code_artifact",'
-                    '"files":[{"path":"...","content":"..."}]}\n'
-                    "content debe contener el código completo.\n"
-                    "No envíes markdown ni explicaciones."
+                    "Eres un ingeniero de software. Escribe el código necesario para resolver la tarea.\n"
+                    "IMPORTANTE: Utiliza la herramienta 'file' proporcionada para guardar el código generado en el disco.\n"
+                    "La operación a usar es 'write', especifica el 'path' correcto y en 'content' pon el código completo.\n"
+                    "Si no tienes la herramienta 'file' disponible, responde SOLO con JSON code_artifact válido.\n"
+                    'Formato fallback: {"type":"code_artifact","files":[{"path":"...","content":"..."}]}\n'
+                    "Una vez hayas usado la herramienta, responde con un breve resumen de los archivos creados."
                 ),
             )
 
@@ -431,14 +432,11 @@ Generá una landing page HTML completa y profesional para:
 
 {path}
 
-FORMATO DE SALIDA:
-- HTML crudo.
-- NO JSON.
-- NO markdown.
-- NO ``` fences.
-- NO explicaciones.
-- La primera línea debe ser <!DOCTYPE html>.
-- La última línea debe ser </html>.
+FORMATO DE SALIDA Y HERRAMIENTAS:
+- IMPORTANTE: Utilizá la herramienta 'file' (operación 'write') para guardar el HTML directamente en {path}.
+- Si no tenés la herramienta, respondé con el documento HTML crudo en texto plano.
+- La primera línea del HTML debe ser <!DOCTYPE html>.
+- La última línea del HTML debe ser </html>.
 
 REQUISITOS:
 - <html lang="es">
@@ -462,14 +460,8 @@ REQUISITOS:
 IMPORTANTE:
 - Priorizá terminar el documento antes que agregar contenido innecesario.
 - No dejes tags abiertos.
-- No termines dentro de un atributo.
-- No termines dentro de un string.
-- No termines dentro de un script.
-- Antes de responder verificá que existan:
-  </body>
-  </html>
-
-La respuesta debe ser exclusivamente el documento HTML completo.
+- Antes de responder verificá que existan </body> y </html>.
+- Guardá todo usando la herramienta 'file' en un solo llamado.
 """.strip()
 
     @staticmethod

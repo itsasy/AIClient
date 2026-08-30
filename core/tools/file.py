@@ -16,6 +16,34 @@ class FileTool(Tool):
         "filesystem_operation",
     )
 
+    def get_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "operation": {
+                            "type": "string",
+                            "enum": ["write"],
+                            "description": "La operación a realizar."
+                        },
+                        "path": {
+                            "type": "string",
+                            "description": "Ruta del archivo (relativa al proyecto)."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Contenido a escribir en el archivo."
+                        }
+                    },
+                    "required": ["operation", "path", "content"]
+                }
+            }
+        }
+
     @staticmethod
     def _resolve_target(path: str | Path) -> Path:
         root = Path(Config.TARGET_PROJECT_ROOT).expanduser().resolve()

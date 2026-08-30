@@ -65,3 +65,21 @@ class LLMProvider(ABC):
                 Para errores normalizados de proveedor.
         """
         raise NotImplementedError
+
+    def generate_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        system_prompt: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """
+        Genera contenido soportando historial de mensajes y tool calls.
+        Retorna un LLMResponse.
+        Por defecto, lanza NotImplementedError si el provider no lo soporta.
+        """
+        raise NotImplementedError("Este proveedor no soporta function calling nativo.")

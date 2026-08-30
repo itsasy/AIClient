@@ -31,6 +31,25 @@ class DockerTool(Tool):
         "docker inspect",
     )
 
+    def get_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "El comando docker a ejecutar (ej: docker ps)."
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        }
+
     def execute(
         self,
         command: str,

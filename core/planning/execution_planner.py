@@ -70,6 +70,7 @@ class ExecutionPlanner:
             "code_generation",
             "module_scaffold",
             "ui_scaffold",
+            "build_fullstack",
             "project_creation",
             "refactor",
             "debug",
@@ -207,22 +208,12 @@ class ExecutionPlanner:
                 metadata={"stage": "generation", "produces": "code_artifact"},
                 timeout=180,
             )
-            write = plan.add_step(
-                description=f"Escribir {path}",
-                unit_type="skill",
-                unit_name="write_file",
-                params={"path": path, "file_index": 0},
-                expected_output=f"Archivo {path}",
-                metadata={"stage": "materialization", "consumes": "code_artifact"},
-                timeout=60,
-            )
             gen.depends_on.append(scrape.id)
-            write.depends_on.append(gen.id)
             cls._mark_data_flow(scrape, produces="dependency_text")
             cls._mark_data_flow(gen, produces="code_artifact", consumes="dependency_text")
             return
 
-        plan.execution_mode = "multi_step"
+        plan.execution_mode = "single"
         plan.objective = f"Crear archivo {path}"
         gen = plan.add_step(
             description=f"Generar contenido para {path}",
@@ -233,16 +224,6 @@ class ExecutionPlanner:
             metadata={"stage": "generation", "produces": "code_artifact"},
             timeout=180,
         )
-        write = plan.add_step(
-            description=f"Escribir {path}",
-            unit_type="skill",
-            unit_name="write_file",
-            params={"path": path, "file_index": 0},
-            expected_output=f"Archivo {path}",
-            metadata={"stage": "materialization", "consumes": "code_artifact"},
-            timeout=60,
-        )
-        write.depends_on.append(gen.id)
 
     @classmethod
     def _plan_code_generation(
@@ -378,6 +359,41 @@ class ExecutionPlanner:
                 "locale": entities.get("locale") or "",
             },
         )
+
+    @classmethod
+    def _plan_build_fullstack(
+        cls,
+        plan: ExecutionPlan,
+        task: str,
+        intent: IntentResult,
+    ) -> None:
+        plan.intent_category = "code"
+        plan.execution_mode = "multi_step"
+        plan.governance["allow_write"] = True
+        plan.context_requirements["project"] = True
+        plan.context_requirements["architecture"] = True
+        
+        from core.execution_step import ExecutionStep
+        entities = getattr(intent, "entities", None) or {}
+
+        # Paso 1: Backend/DB
+        step1 = ExecutionStep(
+            description="Generar backend y DB schema",
+            unit_type="skill",
+            unit_name="scaffold_module",
+            params={"module": entities.get("module") or "api", "task": task},
+        )
+        plan.steps.append(step1)
+
+        # Paso 2: Frontend
+        step2 = ExecutionStep(
+            description="Generar frontend consumiendo API",
+            unit_type="skill",
+            unit_name="scaffold_ui_shell",
+            params={"variant": entities.get("variant") or "dashboard", "task": task},
+            depends_on=[step1.id],
+        )
+        plan.steps.append(step2)
 
     @classmethod
     def _plan_architecture_audit(

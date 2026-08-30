@@ -15,6 +15,7 @@ from core.context.registry import ContextRegistry
 from core.context.spec_provider import SpecProvider
 from core.context.standards_provider import StandardsProvider
 from core.context.swarmforge_provider import SwarmForgeProvider
+from core.context.template_provider import TemplateProvider
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ class ContextManager:
         DocumentsProvider,
         SpecProvider,
         SwarmForgeProvider,
+        TemplateProvider,
     )
 
     def __init__(
@@ -425,6 +427,7 @@ class ContextManager:
             "obsidian",
             "documents",
             "spec",
+            "template",
         ):
             if key in context and context[key]:
                 agent_context[key] = context[key]

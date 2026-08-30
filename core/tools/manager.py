@@ -82,3 +82,13 @@ class ToolManager:
     ) -> list[dict]:
 
         return self.registry.metadata()
+
+    def get_schemas(self, allowed_names: list[str] | None = None) -> list[dict]:
+        schemas = []
+        for name in self.list():
+            if allowed_names is not None and name not in allowed_names:
+                continue
+            tool = self.get(name)
+            if tool and hasattr(tool, "get_schema"):
+                schemas.append(tool.get_schema())
+        return schemas

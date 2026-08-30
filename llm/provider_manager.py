@@ -143,6 +143,50 @@ class ProviderManager:
 
         raise AllProvidersFailedError(errors)
 
+    def generate_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        provider_name: str,
+        fallback_chain: list[str] | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+
+        if not messages:
+            raise ProviderError("Los mensajes no pueden estar vacíos.")
+
+        chain = self._build_chain(
+            provider_name,
+            fallback_chain,
+        )
+
+        logger.info(
+            "Cadena LLM (Tools)=%s",
+            " -> ".join(chain),
+        )
+
+        errors: dict[str, Exception] = {}
+
+        for provider_name in chain:
+            self._ensure_stats(provider_name)
+            try:
+                return self._execute_with_tools(
+                    provider_name,
+                    messages,
+                    tools=tools,
+                    **kwargs,
+                )
+            except Exception as exc:
+                self._stats[provider_name]["errors"] += 1
+                errors[provider_name] = exc
+                logger.warning(
+                    "Provider falló con tools | provider=%s | error=%s",
+                    provider_name,
+                    exc,
+                )
+
+        raise AllProvidersFailedError(errors)
+
     # =========================================================
     # Provider execution
     # =========================================================
@@ -177,6 +221,31 @@ class ProviderManager:
 
         if not result:
             raise ProviderError(f"El provider '{provider_name}' devolvió una respuesta vacía.")
+
+        self._stats[provider_name]["success"] += 1
+
+        return result
+
+    def _execute_with_tools(
+        self,
+        provider_name: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+
+        provider = self._get_provider(provider_name)
+
+        self._stats[provider_name]["calls"] += 1
+
+        try:
+            result = provider.generate_with_tools(
+                messages,
+                tools=tools,
+                **kwargs,
+            )
+        except Exception:
+            raise
 
         self._stats[provider_name]["success"] += 1
 

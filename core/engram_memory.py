@@ -34,7 +34,7 @@ class EngramMemory:
     ):
         # Unificado con el directorio por defecto de Engram
         self.data_dir = data_dir or Path.home() / ".engram"
-        self.project = project or Config.PROJECT_ROOT.name
+        self.project = project or Config.TARGET_PROJECT_ROOT.name
         self.async_save = async_save
         self._cache: Dict[str, Any] = {}
 

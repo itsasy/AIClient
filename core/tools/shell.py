@@ -49,6 +49,29 @@ class ShellTool(Tool):
         "npx ",
     )
 
+    def get_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "command": {
+                            "type": "string",
+                            "description": "El comando shell a ejecutar."
+                        },
+                        "timeout": {
+                            "type": "integer",
+                            "description": "Timeout opcional en segundos."
+                        }
+                    },
+                    "required": ["command"]
+                }
+            }
+        }
+
     def execute(
         self,
         command: str,
