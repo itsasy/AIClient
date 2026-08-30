@@ -18,14 +18,16 @@ class ProjectAnalyzerSkill(Skill):
     Params de step (opcionales):
       - path: ruta absoluta o relativa al root base
       - prefer_target / target: True → TARGET_PROJECT_ROOT
-      - task: texto original (solo metadata)
+      - task: texto original (metadata)
 
-    Sin prefer_target y path="." → PROJECT_ROOT (AIClient).
+    Sin flag explícito → prefer_target=True (producto / TARGET).
     """
 
     name = "analyze_project"
-    description = "Analiza la estructura, archivos y arquitectura de un proyecto existente."
-    version = "2.3"
+    description = (
+        "Analiza la estructura, archivos y arquitectura de un proyecto existente."
+    )
+    version = "2.4"
     capabilities = (
         "project_analysis",
         "repository_inspection",
@@ -44,7 +46,7 @@ class ProjectAnalyzerSkill(Skill):
         try:
             params = getattr(step, "params", None) or {}
             path = params.get("path")
-            prefer_target = bool(params.get("prefer_target") or params.get("target") or False)
+            prefer_target = self._resolve_prefer_target(plan, params)
 
             snapshot = self.inspector.inspect_snapshot(
                 path=path,
@@ -81,3 +83,32 @@ class ProjectAnalyzerSkill(Skill):
                 "result": None,
                 "error": str(exc),
             }
+
+    @staticmethod
+    def _resolve_prefer_target(
+        plan: ExecutionPlan,
+        params: dict[str, Any],
+    ) -> bool:
+        if "prefer_target" in params:
+            return bool(params.get("prefer_target"))
+        if "target" in params:
+            return bool(params.get("target"))
+
+        task = str(
+            params.get("task")
+            or getattr(plan, "original_task", None)
+            or ""
+        ).lower()
+
+        if any(
+            token in task
+            for token in (
+                "aiclient",
+                "orquestador",
+                "analiza aiclient",
+                "analizar aiclient",
+            )
+        ):
+            return False
+
+        return True

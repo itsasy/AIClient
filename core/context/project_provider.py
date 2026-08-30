@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Any
 
 from core.context.base import BaseContextProvider
@@ -6,6 +8,12 @@ from core.project_inspector import ProjectInspector
 
 
 class ProjectProvider(BaseContextProvider):
+    """
+    Inspección estructural del proyecto objetivo.
+
+    Por defecto usa TARGET_PROJECT_ROOT (producto).
+    No ejecuta DiscoveryEngine, TransformationPlanner ni SkillRegistry P8.
+    """
 
     key = "project"
     name = "Project Context"
@@ -19,59 +27,60 @@ class ProjectProvider(BaseContextProvider):
         plan: ExecutionPlan,
         context: dict[str, Any],
     ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if context:
+            execution = context.get("execution") or {}
+            current = execution.get("current_step") or {}
+            params = dict(current.get("params") or {})
 
-        snapshot = self.inspector.inspect_snapshot()
-        from core.discovery.engine import DiscoveryEngine
-        from core.discovery.understanding import UnderstandingEngine
-        from core.discovery.analysis import AnalysisEngine
-        from core.discovery.task_analysis import TaskReuseAnalyzer
-        from core.discovery.context_selection import ContextSelector
-        from core.discovery.transformation import TransformationPlanner
-        from core.discovery.transformation_policy import TransformationPolicyEvaluator
-        from core.skills.discovery import SkillDiscovery
-        from core.skills.registry import SkillRegistry
-        from core.config import Config
-        root = Config.TARGET_PROJECT_ROOT.expanduser().resolve()
-        
-        env = DiscoveryEngine(root).discover()
-        understanding = UnderstandingEngine(root, env).analyze()
-        analysis = AnalysisEngine(root, env, understanding).analyze()
-        
-        task = plan.objective or plan.original_task or ""
-        task_analysis = TaskReuseAnalyzer(task, understanding, analysis).analyze()
-        
-        transformation = TransformationPlanner(
-            root, env, understanding, analysis, task_analysis
-        ).plan()
-        
-        policy = TransformationPolicyEvaluator(transformation).evaluate()
-        
-        # Skill Registry setup
-        skill_discovery = SkillDiscovery([str(Config.APP_DATA_DIR / "builtin" / "skills")])
-        registry = SkillRegistry()
-        registry.load_from_discovery(skill_discovery)
-        
-        # The complete Project Knowledge
-        knowledge = {
-            "snapshot": snapshot.to_architecture_context(),
-            "environment": env.to_dict(),
-            "understanding": understanding.to_dict(),
-            "coupling_analysis": [b.to_dict() for b in analysis.boundaries],
-            "reuse_analysis": [r.to_dict() for r in analysis.reuse_analysis],
-            "task_analysis": task_analysis.to_dict() if task else None,
-            "transformation_plan": transformation.to_dict(),
-            "transformation_policy": policy.to_dict(),
-            "skills_available": [s.to_dict() for s in registry.get_all()]
+        path = params.get("path")
+        prefer_target = self._resolve_prefer_target(plan, params)
+
+        snapshot = self.inspector.inspect_snapshot(
+            path=path,
+            prefer_target=prefer_target,
+        )
+
+        architecture_context = snapshot.to_architecture_context(
+            max_files=80,
+            max_directories=60,
+            include_file_content=False,
+        )
+
+        return {
+            "summary": snapshot.summary(),
+            "root_path": snapshot.root_path,
+            "file_count": snapshot.file_count,
+            "directory_count": getattr(snapshot, "directory_count", 0),
+            "architecture_context": architecture_context,
+            "prefer_target": prefer_target,
         }
-        
-        # Capability Match injected for context mapping later
-        knowledge["capability_matches"] = {}
-        if task_analysis:
-            for cand in task_analysis.relevant_candidates:
-                # Naive requirement for testing P8 match
-                match = registry.match_capabilities(cand.module, ["move_files", "rewrite_imports"])
-                knowledge["capability_matches"][cand.module] = match.to_dict()
-        
-        # LLM Context generated via Selector
-        selector = ContextSelector(plan=plan, budget=12000)
-        return selector.select(knowledge)
+
+    @staticmethod
+    def _resolve_prefer_target(
+        plan: ExecutionPlan,
+        params: dict[str, Any],
+    ) -> bool:
+        if "prefer_target" in params:
+            return bool(params.get("prefer_target"))
+        if "target" in params:
+            return bool(params.get("target"))
+
+        task = (
+            str(getattr(plan, "original_task", None) or "")
+            + " "
+            + str(getattr(plan, "objective", None) or "")
+        ).lower()
+
+        if any(
+            token in task
+            for token in (
+                "aiclient",
+                "orquestador",
+                "analiza aiclient",
+                "analizar aiclient",
+            )
+        ):
+            return False
+
+        return True

@@ -284,13 +284,17 @@ class ExecutionPlanner:
         plan.execution_policy["max_retries"] = 1
 
         entities = getattr(intent, "entities", None) or {}
-        path = entities.get("path") or entities.get("directory") or "."
+        path = entities.get("path") or entities.get("directory") or None
 
         inspect = plan.add_step(
             description="Inspeccionar estructura y componentes del proyecto",
             unit_type="skill",
             unit_name="analyze_project",
-            params={"path": path, "task": task},
+            params={
+                "path": path,
+                "task": task,
+                "prefer_target": True,
+            },
             expected_output="Snapshot estructurado del proyecto",
             metadata={"stage": "inspection"},
             timeout=90,
@@ -715,3 +719,4 @@ class ExecutionPlanner:
             or cls._extract_path(task)
         )
         return has_url and has_analyze and has_generate and has_write
+ 
