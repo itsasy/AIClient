@@ -1,32 +1,16 @@
-﻿from __future__ import annotations
-import json
-import logging
+﻿import logging
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
-from core.analytics.metrics_store import MetricsStore
+from core.analysis.validation_runner import ValidationRunner
 from core.analytics.models import ExecutionMetric
-from core.context.manager import ContextManager
-from core.engram_memory import EngramMemory
-from core.evaluation_result import EvaluationResult
-from core.retry_policy import RetryPolicy
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
-from core.execution_step import ExecutionStep
-from core.intent import IntentAnalyzer
-from core.learner import ContinuousLearner
-from core.planning import PlanBuilder
-from core.self_critic import SelfCritic
-from runtime.dispatcher import UnitDispatcher
-from runtime.registry.agent_registry import AgentRegistry
-from runtime.registry.skill_registry import SkillRegistry
-from core.governance.capability_guard import CapabilityGuard
+
 
 logger = logging.getLogger(__name__)
+
 
 class EngineLifecycleMixin:
     def _finalize(
@@ -50,7 +34,8 @@ class EngineLifecycleMixin:
         if result.is_retry:
             result = ExecutionResult.fail(
                 plan_id=plan.id,
-                error=result.error or "La ejecución terminó en retry inesperadamente.",
+                error=result.error
+                or "La ejecución terminó en retry inesperadamente.",
                 executor=result.executor or self.name,
                 retries=result.retries,
                 metadata={
@@ -61,18 +46,46 @@ class EngineLifecycleMixin:
             )
 
         finished_at = datetime.now(timezone.utc)
-        result.set_execution_window(started_at=started_at, finished_at=finished_at)
+        result.set_execution_window(
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
+        # Post-validation antes de aplicar el estado final del plan.
+        if result.is_success or result.is_partial:
+            val_res = self._post_execution_check(plan)
+
+            if val_res.is_partial:
+                result = ExecutionResult.partial(
+                    plan_id=plan.id,
+                    result=result.result,
+                    error=(
+                        (result.error or "")
+                        + " | Linter warning: "
+                        + str(val_res.error)
+                    ),
+                    executor=result.executor or self.name,
+                    retries=result.retries,
+                    metadata={
+                        **dict(result.metadata or {}),
+                        "post_check": "lint_failed",
+                    },
+                    started_at=result.started_at or started_at,
+                )
+            elif not val_res.is_success:
+                result.error = (
+                    (result.error or "")
+                    + " | Linter warning: "
+                    + str(val_res.error)
+                )
 
         self._apply_plan_state(plan, result)
 
-        if result.is_success or result.is_partial:
-            val_res = self._post_execution_check(plan)
-            # Si val_res no es success, podríamos mutar el result,
-            # pero por ahora lo mantenemos como advertencia en el plan
-            if not val_res.is_success:
-                result.error = (result.error or "") + " | Linter warning: " + str(val_res.error)
+        duration = max(
+            0.0,
+            round(time.monotonic() - started_monotonic, 3),
+        )
 
-        duration = max(0.0, round(time.monotonic() - started_monotonic, 3))
         result.metadata.update(
             {
                 "engine": self.name,
@@ -103,7 +116,10 @@ class EngineLifecycleMixin:
                 intent=plan.intent or "unknown",
                 provider=plan.metadata.get("provider", "unknown"),
                 model=plan.metadata.get("model", "unknown"),
-                started_at=(result.started_at or datetime.now(timezone.utc)),
+                started_at=(
+                    result.started_at
+                    or datetime.now(timezone.utc)
+                ),
                 duration=duration,
                 status=result.status,
                 retry_count=result.retries,
@@ -115,7 +131,11 @@ class EngineLifecycleMixin:
         except Exception as exc:
             logger.warning("No se pudo guardar métrica: %s", exc)
 
-    def _apply_plan_state(self, plan: ExecutionPlan, result: ExecutionResult) -> None:
+    def _apply_plan_state(
+        self,
+        plan: ExecutionPlan,
+        result: ExecutionResult,
+    ) -> None:
         if result.is_success:
             plan.mark_completed()
         elif result.is_partial:
@@ -125,7 +145,10 @@ class EngineLifecycleMixin:
         elif result.is_cancelled:
             plan.mark_cancelled()
         elif getattr(result, "is_retry", False):
-            logger.error("Intento de finalizar plan en retry | plan=%s", plan.id)
+            logger.error(
+                "Intento de finalizar plan en retry | plan=%s",
+                plan.id,
+            )
 
     def _update_metrics(self, result: ExecutionResult) -> None:
         if result.is_success:
@@ -140,29 +163,98 @@ class EngineLifecycleMixin:
     def get_metrics(self) -> dict[str, int]:
         return dict(self.metrics)
 
-    def _fail(self, plan: ExecutionPlan, error: str) -> ExecutionResult:
+    def _fail(
+        self,
+        plan: ExecutionPlan,
+        error: str,
+    ) -> ExecutionResult:
         logger.error("Plan %s falló: %s", plan.id, error)
+
         return ExecutionResult.fail(
             plan_id=plan.id,
             error=error,
             executor=self.name,
         )
 
-    def _post_execution_check(self, plan: ExecutionPlan) -> ExecutionResult:
-        # Si fue cancelado, terminamos
-        if ExecutionPlan.status == "cancelled":
-            return ExecutionResult(False, "Plan cancelado durante la ejecución.")
+    def _post_execution_check(
+        self,
+        plan: ExecutionPlan,
+    ) -> ExecutionResult:
+        """
+        Chequeo post-ejecución (linter / validación opcional).
 
-        # Post-validation (Fase 3 Action)
-        if plan.metadata.get("executed_tools"):
-            from core.analysis.validation_runner import ValidationRunner
+        Siempre devuelve un ExecutionResult válido con plan_id,
+        status y executor.
+        """
+        plan_id = getattr(plan, "id", None) or "unknown"
+
+        status = str(
+            getattr(plan, "status", "") or ""
+        ).strip().lower()
+
+        if status == "cancelled":
+            return ExecutionResult.cancelled(
+                plan_id=plan_id,
+                executor=self.name,
+            )
+
+        if not plan.metadata.get("executed_tools"):
+            return ExecutionResult.success(
+                plan_id=plan_id,
+                result={"post_check": "skipped"},
+                executor=self.name,
+                metadata={"post_check": "skipped"},
+            )
+
+        try:
             val_res = ValidationRunner().run_post_step_validation(plan)
-            if not val_res.get("ok"):
-                # Podemos dejar el plan marcado con warning o error si el linter falló
-                logger.warning("Post-validation detectó errores. Revisar lint_error.")
-                return ExecutionResult(False, str(val_res.get("error", "Linter fail")))
+        except Exception as exc:
+            logger.warning(
+                "Post-validation no disponible: %s",
+                exc,
+            )
 
-        return ExecutionResult(
-            plan.status in ("completed", "success"),
-            plan.error or "Plan ejecutado completamente.",
+            return ExecutionResult.success(
+                plan_id=plan_id,
+                result={
+                    "post_check": "skipped",
+                    "reason": str(exc),
+                },
+                executor=self.name,
+                metadata={"post_check": "skipped"},
+            )
+
+        if not isinstance(val_res, dict):
+            val_res = {
+                "ok": False,
+                "error": "validación inválida",
+            }
+
+        if not val_res.get("ok"):
+            err = str(
+                val_res.get("error") or "Linter fail"
+            )
+
+            logger.warning(
+                "Post-validation detectó errores. "
+                "Revisar lint_error."
+            )
+
+            plan.metadata["lint_error"] = err
+
+            return ExecutionResult.partial(
+                plan_id=plan_id,
+                result=val_res,
+                error=err,
+                executor=self.name,
+                metadata={
+                    "post_check": "lint_failed",
+                },
+            )
+
+        return ExecutionResult.success(
+            plan_id=plan_id,
+            result={"post_check": "ok"},
+            executor=self.name,
+            metadata={"post_check": "ok"},
         )
