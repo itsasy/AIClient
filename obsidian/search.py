@@ -1,4 +1,5 @@
 from pathlib import Path
+
 from core.config import Config
 from obsidian.index import ObsidianIndex
 from obsidian.semantic import SemanticIndex
@@ -10,32 +11,78 @@ class ObsidianSearch:
         self.fts_index = ObsidianIndex()
         self.semantic_index = SemanticIndex()
 
-    def search(self, query: str, max_results: int = 5, alpha: float = 0.5):
+    def search(
+        self,
+        query: str,
+        max_results: int = 5,
+        alpha: float = 0.5,
+    ):
         """
         Búsqueda híbrida: combina FTS5 y semántica.
+
         alpha: ponderación entre FTS (1-alpha) y semántica (alpha).
         """
         if not self.vault_path.exists():
             return []
 
         words = query.split()
+
         # Solo usar semántica si la consulta tiene >= 3 palabras
-        # Y si contiene palabras que sugieren búsqueda en notas
-        semantic_keywords = {"busca", "encuentra", "en mis notas", "obsidian", "nota", "apunte"}
-        use_semantic = len(words) >= 3 and any(k in query.lower() for k in semantic_keywords)
+        # y contiene palabras que sugieren búsqueda en notas.
+        semantic_keywords = {
+            "busca",
+            "encuentra",
+            "en mis notas",
+            "obsidian",
+            "nota",
+            "apunte",
+        }
+
+        use_semantic = (
+            len(words) >= 3
+            and any(k in query.lower() for k in semantic_keywords)
+        )
 
         # 1. FTS (siempre)
-        fts_results = self.fts_index.search(query, max_results=max_results * 2)
+        fts_results = self.fts_index.search(
+            query,
+            max_results=max_results * 2,
+        )
 
         # 2. Semántica (solo si corresponde)
         semantic_results = []
+
         if use_semantic:
-            semantic_results = self.semantic_index.search(query, top_k=max_results * 2)
+            semantic_results = self.semantic_index.search(
+                query,
+                top_k=max_results * 2,
+            )
 
         # 3. Fusionar resultados
         combined = {}
+
         for r in fts_results:
-            score_fts = -r["rank"]
+            # FTS5 puede exponer rank como:
+            # - r["rank"]
+            # - r["bm25"]
+            # - r["score"]
+            # - o no exponerlo.
+            #
+            # Usamos score como fallback porque index.py ya lo
+            # normaliza defensivamente.
+            if isinstance(r, dict):
+                raw_rank = r.get(
+                    "rank",
+                    r.get("bm25", r.get("score", 0)),
+                )
+            else:
+                raw_rank = 0
+
+            try:
+                score_fts = -float(raw_rank)
+            except (TypeError, ValueError):
+                score_fts = 0.0
+
             combined[r["path"]] = {
                 "path": r["path"],
                 "score_fts": score_fts,
@@ -46,6 +93,7 @@ class ObsidianSearch:
 
         for r in semantic_results:
             path = r["path"]
+
             if path in combined:
                 combined[path]["score_semantic"] = r["score"]
             else:
@@ -58,15 +106,40 @@ class ObsidianSearch:
                 }
 
         # 4. Normalizar y calcular final_score
-        max_fts = max([d["score_fts"] for d in combined.values()], default=1)
-        max_sem = max([d["score_semantic"] for d in combined.values()], default=1)
+        max_fts = max(
+            [d["score_fts"] for d in combined.values()],
+            default=1,
+        )
+
+        max_sem = max(
+            [d["score_semantic"] for d in combined.values()],
+            default=1,
+        )
 
         for path, data in combined.items():
-            norm_fts = data["score_fts"] / max_fts if max_fts > 0 else 0
-            norm_sem = data["score_semantic"] / max_sem if max_sem > 0 else 0
-            data["final_score"] = (1 - alpha) * norm_fts + alpha * norm_sem
+            norm_fts = (
+                data["score_fts"] / max_fts
+                if max_fts > 0
+                else 0
+            )
 
-        sorted_items = sorted(combined.values(), key=lambda x: x["final_score"], reverse=True)
+            norm_sem = (
+                data["score_semantic"] / max_sem
+                if max_sem > 0
+                else 0
+            )
+
+            data["final_score"] = (
+                (1 - alpha) * norm_fts
+                + alpha * norm_sem
+            )
+
+        sorted_items = sorted(
+            combined.values(),
+            key=lambda x: x["final_score"],
+            reverse=True,
+        )
+
         top_results = sorted_items[:max_results]
 
         # 5. Rellenar contenido faltante
@@ -74,8 +147,13 @@ class ObsidianSearch:
             if not r["content"] and r["path"]:
                 try:
                     filepath = self.vault_path / r["path"]
+
                     if filepath.exists():
-                        r["content"] = filepath.read_text(encoding="utf-8", errors="ignore")[:1200]
+                        r["content"] = filepath.read_text(
+                            encoding="utf-8",
+                            errors="ignore",
+                        )[:1200]
+
                 except Exception:
                     pass
 
@@ -83,10 +161,19 @@ class ObsidianSearch:
 
     def build_context(self, query: str) -> str:
         results = self.search(query)
+
         if not results:
             return ""
 
-        context = "=== CONOCIMIENTO RELEVANTE (RAG HÍBRIDO) ===\n\n"
+        context = (
+            "=== CONOCIMIENTO RELEVANTE (RAG HÍBRIDO) ===\n\n"
+        )
+
         for r in results:
-            context += f"📄 {r['path']}\n{r['content'][:1000]}\n{'─' * 80}\n\n"
+            context += (
+                f"📄 {r['path']}\n"
+                f"{r['content'][:1000]}\n"
+                f"{'─' * 80}\n\n"
+            )
+
         return context

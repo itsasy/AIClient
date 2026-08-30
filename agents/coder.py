@@ -91,7 +91,7 @@ class CoderAgent(Agent):
                     "Generar HTML completo con hero, ≥3 secciones, CTA y footer.",
                     "Incluir Tailwind CDN o CSS :root con tokens.",
                 ]
-                raw2 = LLMRouter.generate(plan=plan, context=context)
+                raw2 = LLMRouter().generate(plan=plan, context=context)
                 if not isinstance(raw2, str):
                     raw2 = str(raw2)
                 logger.info(
@@ -317,27 +317,36 @@ class CoderAgent(Agent):
     @staticmethod
     def _landing_requested_output(path: str) -> str:
         return f"""
-Generá una landing page HTML completa y profesional para el path: {path}
+    Generá una landing page HTML completa y profesional para el path: {path}
 
-Contrato mínimo:
-- <!DOCTYPE html> y <html lang="es">
-- <head> con charset, viewport, title, meta description
-- Tailwind CDN (https://cdn.tailwindcss.com) O CSS propio con :root tokens
-- Hero con título, subtítulo y CTA primario
-- Al menos 3 secciones de valor (beneficios, características, testimonios o similar)
-- Footer
-- Mínimo ~1200 caracteres de HTML útil
-- Mobile-first, limpia, un color primario + neutros
+    Contrato mínimo:
+    - <!DOCTYPE html> y <html lang="es">
+    - <head> con charset, viewport, title, meta description
+    - Tailwind CDN (https://cdn.tailwindcss.com) O CSS propio con :root tokens
+    - Hero con título, subtítulo y CTA primario
+    - Al menos 3 secciones de valor (beneficios, características, testimonios o similar)
+    - Footer
+    - Mínimo ~2500 caracteres de HTML útil
+    - DEBE ser un documento HTML completo y válido.
+    - DEBE terminar EXACTAMENTE con </body></html> (permitiendo únicamente whitespace después).
+    - NO puede terminar dentro de un tag, atributo, string, script, comentario o bloque HTML incompleto.
+    - NO cortes ni trunques la respuesta antes del cierre completo.
+    - Priorizá siempre completar </body></html> aunque tengas que reducir contenido no esencial.
+    - Antes de finalizar, verificá que existan </body> y </html> y que sean los últimos tags del documento.
+    - Incluí footer con nombre del negocio
+    - Mobile-first, limpia, un color primario + neutros
 
-Prohibido:
-- Confirmaciones ("archivo creado", "he ejecutado write_file")
-- Copiar marcas, logos o claims de sitios de referencia (Slack, etc.)
-- HTML de una sola línea vacía o placeholder de 2 frases
+    Prohibido:
+    - Confirmaciones ("archivo creado", "he ejecutado write_file")
+    - Copiar marcas, logos o claims de sitios de referencia (Slack, etc.)
+    - HTML de una sola línea vacía o placeholder de 2 frases
 
-Preferí JSON code_artifact:
-{{"type":"code_artifact","files":[{{"path":"{path}","content":"<!DOCTYPE html>..."}}]}}
-Alternativa aceptada: HTML crudo empezando por <!DOCTYPE html>.
-""".strip()
+    Preferí JSON code_artifact:
+    {{"type":"code_artifact","files":[{{"path":"{path}","content":"<!DOCTYPE html>..."}}]}}
+    Alternativa aceptada: HTML crudo empezando por <!DOCTYPE html>.
+
+    IMPORTANTE: La salida solo se considera válida si el HTML está completo y termina con </body></html>.
+    """.strip()
 
     def _finalize_landing_artifact(
         self,
@@ -364,31 +373,62 @@ Alternativa aceptada: HTML crudo empezando por <!DOCTYPE html>.
         artifact: dict[str, Any],
     ) -> tuple[bool, str]:
         """
-        Contrato realista (no frágil):
-        - HTML reconocible
-        - tamaño mínimo razonable
-        - algo de estructura (section o headings)
-        No exigir <h1> literal: muchos templates usan <h2> o div hero.
+        Valida que el artefacto contenga HTML razonablemente completo.
+
+        El objetivo es detectar:
+        - archivo inexistente o vacío
+        - contenido demasiado corto
+        - contenido que no parece HTML
+        - HTML de documento incompleto/truncado
+        - falta de estructura mínima
+
+        No exige una estructura concreta de landing (footer, número de
+        sections, etc.) para evitar falsos negativos con templates válidos.
         """
         files = artifact.get("files") or []
         if not files:
             return False, "no existe ningún archivo."
+
         content = str(files[0].get("content") or "").strip()
         if not content:
             return False, "content vacío."
+
         if len(content) < 400:
             return False, f"HTML demasiado corto ({len(content)} chars)."
+
         lower = content.lower()
-        if "<html" not in lower and "<!doctype" not in lower:
+
+        if "<!doctype" not in lower and "<html" not in lower:
             return False, "no parece HTML (falta doctype/html)."
+
+        if "<html" in lower and "</html>" not in lower:
+            return False, "HTML incompleto: falta </html> (posible truncado)."
+
+        stripped = content.rstrip()
+
+        if stripped.endswith("\\") or stripped.endswith('="'):
+            return False, "HTML truncado a mitad de atributo/escape."
+
+        if re.search(
+            r'<(?:p|div|span|a|h[1-6])\s+class\s*=\s*\\?\s*$',
+            content,
+            re.IGNORECASE | re.MULTILINE,
+        ):
+            return False, "HTML truncado en atributo class."
+
         structure = (
             len(re.findall(r"<section\b", lower))
             + len(re.findall(r"<h[1-3]\b", lower))
             + len(re.findall(r"<header\b", lower))
             + len(re.findall(r"<main\b", lower))
         )
+
         if structure < 1:
-            return False, "faltan secciones/estructura (section/header/main/h1-h3)."
+            return False, (
+                "faltan secciones/estructura "
+                "(section/header/main/h1-h3)."
+            )
+
         return True, "ok"
 
     @staticmethod

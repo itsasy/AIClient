@@ -16,37 +16,25 @@ class ArchitectAgent(Agent):
     Analiza la arquitectura de un proyecto.
 
     Responsabilidad:
+        evidencia (analyze_project) → razonamiento → análisis ejecutivo
 
-        Project architecture
-            ↓
-        architectural reasoning
-            ↓
-        executive analysis
-
-    No inspecciona directamente el filesystem.
-    El proyecto debe llegar mediante el contexto producido
-    por analyze_project.
+    No inspecciona el filesystem; usa context['architecture'].
     """
 
     name = "architect"
-
     description = (
-        "Analiza arquitecturas de software y genera " "evaluaciones arquitectónicas ejecutivas."
+        "Analiza arquitecturas de software y genera evaluaciones arquitectónicas ejecutivas."
     )
-
-    version = "2.0"
-
+    version = "2.1"
     aliases = (
         "architecture",
         "software_architect",
     )
-
     capabilities = (
         "architecture_analysis",
         "project_analysis",
         "architecture_review",
     )
-
     role = "Arquitecto de Software"
 
     def process(
@@ -55,7 +43,6 @@ class ArchitectAgent(Agent):
         step: ExecutionStep,
         context: dict[str, Any] | None = None,
     ) -> str:
-
         context = dict(context or {})
 
         raw_architecture = context.get("architecture")
@@ -88,6 +75,14 @@ class ArchitectAgent(Agent):
                 "must_distinguish_observed_from_inferred": True,
                 "language": "es",
                 "preferred_layers_if_present": [
+                    "src/modules",
+                    "src/api",
+                    "src/adapters",
+                    "src/ui",
+                    "modules",
+                    "api",
+                    "adapters",
+                    "ui",
                     "core/planning",
                     "core/intent",
                     "runtime",
@@ -97,13 +92,19 @@ class ArchitectAgent(Agent):
                     "core/commands",
                     "workflows",
                 ],
+                "product_flow_hint": (
+                    "Si root es un producto (p.ej. pos-demo con modules/api/ui): "
+                    "UI shell → API/blueprints → modules/services y facades → "
+                    "adapters (pagos/fisco por locale) → persistencia. "
+                    "No describas ExecutionEngine/AIClient salvo evidencia en paths."
+                ),
                 "aiclient_flow_hint": (
-                    "Si los paths corresponden a AIClient, describe: "
+                    "Si los paths corresponden al orquestador AIClient: "
                     "Intent → PlanBuilder/ExecutionPlanner → "
                     "ExecutionEngine → Dispatcher → Agent|Skill → "
                     "(opcional) SelfCritic. "
                     "Menciona TARGET_PROJECT_ROOT vs PROJECT_ROOT solo "
-                    "si aparece evidencia o es inferencia explícita."
+                    "si hay evidencia o es inferencia explícita."
                 ),
             },
             "requested_output": {
@@ -165,14 +166,18 @@ class ArchitectAgent(Agent):
                 )
             langs = architecture.get("languages") or {}
             if langs:
-                parts.append("languages: " + ", ".join(f"{k}:{v}" for k, v in langs.items()))
+                parts.append(
+                    "languages: " + ", ".join(f"{k}:{v}" for k, v in langs.items())
+                )
             dirs = architecture.get("directories") or []
             if isinstance(dirs, list):
-                paths = [(d.get("path") if isinstance(d, dict) else str(d)) for d in dirs[:50]]
+                paths = [
+                    (d.get("path") if isinstance(d, dict) else str(d)) for d in dirs[:50]
+                ]
                 parts.append("dirs:\n" + "\n".join(f"- {p}" for p in paths if p))
             files = architecture.get("files") or []
             if isinstance(files, list):
-                fpaths = []
+                fpaths: list[str] = []
                 for f in files[:80]:
                     if isinstance(f, dict):
                         fpaths.append(str(f.get("path") or ""))
