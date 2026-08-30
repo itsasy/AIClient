@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import secrets
 from pathlib import Path
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class Config:
     """
-    Configuración global del sistema, cargada desde variables de entorno.
+    ConfiguraciÃ³n global del sistema, cargada desde variables de entorno.
     """
 
     AVAILABLE_PROVIDERS = {
@@ -32,6 +32,13 @@ class Config:
     }
 
     PROJECT_ROOT = PROJECT_ROOT
+
+    APP_DATA_DIR = Path(
+        os.getenv(
+            "APP_DATA_DIR",
+            str(Path.home() / ".aiclient"),
+        )
+    ).expanduser()
 
     TARGET_PROJECT_ROOT = Path(
         os.getenv(
@@ -116,7 +123,7 @@ class Config:
     GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
 
     # ==========================================================
-    # Providers por categoría
+    # Providers por categorÃ­a
     # ==========================================================
 
     DEFAULT_PROVIDER = (
@@ -361,7 +368,7 @@ class Config:
 
         if invalid:
 
-            raise ValueError(f"Proveedores LLM inválidos: {invalid}")
+            raise ValueError(f"Proveedores LLM invÃ¡lidos: {invalid}")
 
     @classmethod
     def validate(
@@ -373,7 +380,7 @@ class Config:
         if cls.POWER_MODE not in cls.POWER_MODES:
 
             logger.warning(
-                "POWER_MODE inválido '%s'. Usando safe.",
+                "POWER_MODE invÃ¡lido '%s'. Usando safe.",
                 cls.POWER_MODE,
             )
 
@@ -413,7 +420,7 @@ class Config:
         )
 
         logger.info(
-            "Modo operación: %s",
+            "Modo operaciÃ³n: %s",
             cls.POWER_MODE,
         )
 
@@ -421,7 +428,7 @@ class Config:
 
             cls.DASHBOARD_API_KEY = secrets.token_urlsafe(32)
 
-            logger.warning("DASHBOARD_API_KEY generada automáticamente.")
+            logger.warning("DASHBOARD_API_KEY generada automÃ¡ticamente.")
 
         if not cls.OBSIDIAN_VAULT_PATH.exists():
 
