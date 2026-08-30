@@ -63,6 +63,7 @@ class ExecutionPlan:
             "failed",
             "cancelled",
             "paused",
+            "not_available",
         }
     )
 

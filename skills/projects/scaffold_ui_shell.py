@@ -23,9 +23,9 @@ class ScaffoldUiShellSkill(Skill):
     capabilities = ("ui_scaffold", "static_ui", "pos_shell")
 
     VARIANTS = {
-        "pos": "src/ui/pos_shell",
-        "dental": "src/ui/dental_shell",
-        "restaurant": "src/ui/restaurant_shell",
+        "pos": "ui/pos_shell",
+        "dental": "ui/dental_shell",
+        "restaurant": "ui/restaurant_shell",
     }
 
     def _resolve_templates_root(self, variant: str) -> Path | None:
@@ -86,6 +86,7 @@ class ScaffoldUiShellSkill(Skill):
         dest.mkdir(parents=True, exist_ok=True)
 
         created: list[str] = []
+        skipped: list[str] = []
         for path in sorted(templates_root.rglob("*")):
             if not path.is_file():
                 continue
@@ -94,6 +95,7 @@ class ScaffoldUiShellSkill(Skill):
             rel = path.relative_to(templates_root)
             target = dest / rel
             if target.exists() and not force:
+                skipped.append(str(target.relative_to(root)))
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
@@ -106,6 +108,7 @@ class ScaffoldUiShellSkill(Skill):
                 "path": self.VARIANTS[variant],
                 "variant": variant,
                 "created": created,
+                "skipped": skipped,
                 "source": str(templates_root),
             },
             "error": None,

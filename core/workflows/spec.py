@@ -95,7 +95,7 @@ class SpecWorkflow(BaseWorkflow):
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
         plan.context_requirements["obsidian"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
 
         if locale_code:
             plan.metadata["locale"] = locale_code

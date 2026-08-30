@@ -438,10 +438,25 @@ class ExecutionPlanner:
         plan.execution_mode = "single"
         plan.governance["allow_shell"] = True
         plan.context_requirements["project"] = False
+        
+        from core.discovery.engine import DiscoveryEngine
+        from core.config import Config
+        root = Config.TARGET_PROJECT_ROOT.expanduser().resolve()
+        env = DiscoveryEngine(root).discover()
+        
+        test_cmds = env.commands.get("test", [])
+        if not test_cmds:
+            plan.status = "not_available"
+            plan.error = "No test command could be determined from project evidence."
+            return
+            
+        test_cmd = test_cmds[0].value
+        cmd = f'cd "{root}" && ' + test_cmd
+        
         plan.set_execution_unit(
             unit_type="skill",
             unit_name="shell",
-            params={"command": "pytest -q"},
+            params={"command": cmd},
         )
 
     @classmethod

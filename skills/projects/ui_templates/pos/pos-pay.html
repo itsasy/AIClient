@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>POS — Cobro</title>
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+  <link rel="stylesheet" href="./css/pos.css" />
+</head>
+<body>
+  <div class="pos-layout">
+    <header class="pos-header"><a href="shell.html">← Shell</a><strong>POS · Cobro</strong><span class="badge" id="apiBadge">API…</span></header>
+    <main><h1>Pedido actual</h1><div class="row"><label for="productPicker">Agregar producto</label><select id="productPicker"></select></div><table><thead><tr><th>SKU</th><th>Producto</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead><tbody id="lines"></tbody></table><p class="hint">Pedido conectado a <code>POST /api/sell</code>.</p></main>
+    <aside><div class="hint">Total</div><div class="total" id="total">0.00</div><div class="hint">Moneda</div><select id="currency"><option value="ARS">ARS</option><option value="USD">USD</option><option value="EUR">EUR</option></select><div class="hint">Medio de pago</div><div class="methods"><button class="active" data-method="efectivo" type="button">Efectivo</button><button data-method="tarjeta" type="button">Tarjeta</button><button data-method="qr" type="button">QR</button><button data-method="transferencia" type="button">Transferencia</button></div><p class="hint">La clave idempotente se conserva durante este cobro.</p><p id="status" role="status"></p><button class="btn-primary" id="pay" type="button">Cobrar</button></aside>
+  </div>
+  <script type="module" src="./js/pos.js"></script>
+</body>
+</html>

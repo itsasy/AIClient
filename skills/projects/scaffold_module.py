@@ -21,35 +21,35 @@ class ScaffoldModuleSkill(Skill):
     )
 
     ALLOWED_MODULES: dict[str, tuple[str, tuple[str, ...]]] = {
-        "auth": ("src/modules/auth", ("__init__.py", "service.py", "routes.py")),
-        "pos": ("src/modules/pos", ("__init__.py", "service.py", "routes.py")),
-        "catalog": ("src/modules/catalog", ("__init__.py", "service.py", "routes.py")),
-        "cash": ("src/modules/cash", ("__init__.py", "service.py", "routes.py")),
+        "auth": ("modules/auth", ("__init__.py", "service.py", "routes.py")),
+        "pos": ("modules/pos", ("__init__.py", "service.py", "routes.py")),
+        "catalog": ("modules/catalog", ("__init__.py", "service.py", "routes.py")),
+        "cash": ("modules/cash", ("__init__.py", "service.py", "routes.py")),
         "payments": (
-            "src/modules/payments",
+            "modules/payments",
             ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
         "invoicing": (
-            "src/modules/invoicing",
+            "modules/invoicing",
             ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
-        "delivery": ("src/modules/delivery", ("__init__.py", "service.py")),
-        "reports": ("src/modules/reports", ("__init__.py", "service.py")),
+        "delivery": ("modules/delivery", ("__init__.py", "service.py")),
+        "reports": ("modules/reports", ("__init__.py", "service.py")),
         # dental
-        "patients": ("src/modules/patients", ("__init__.py", "service.py", "routes.py")),
-        "agenda": ("src/modules/agenda", ("__init__.py", "service.py", "routes.py")),
+        "patients": ("modules/patients", ("__init__.py", "service.py", "routes.py")),
+        "agenda": ("modules/agenda", ("__init__.py", "service.py", "routes.py")),
         "odontogram": (
-            "src/modules/odontogram",
+            "modules/odontogram",
             ("__init__.py", "service.py", "models.py"),
         ),
-        "clinical_history": ("src/modules/clinical_history", ("__init__.py", "service.py")),
-        "prescriptions": ("src/modules/prescriptions", ("__init__.py", "service.py")),
-        "inventory": ("src/modules/inventory", ("__init__.py", "service.py")),
+        "clinical_history": ("modules/clinical_history", ("__init__.py", "service.py")),
+        "prescriptions": ("modules/prescriptions", ("__init__.py", "service.py")),
+        "inventory": ("modules/inventory", ("__init__.py", "service.py")),
         # restaurant
-        "reservations": ("src/modules/reservations", ("__init__.py", "service.py")),
-        "dashboard": ("src/modules/dashboard", ("__init__.py", "service.py")),
-        "sales": ("src/modules/sales", ("__init__.py", "service.py")),
-        "tasks": ("src/modules/tasks", ("__init__.py", "service.py")),
+        "reservations": ("modules/reservations", ("__init__.py", "service.py")),
+        "dashboard": ("modules/dashboard", ("__init__.py", "service.py")),
+        "sales": ("modules/sales", ("__init__.py", "service.py")),
+        "tasks": ("modules/tasks", ("__init__.py", "service.py")),
     }
 
     INTERFACE_STUBS = {
@@ -184,13 +184,13 @@ class ElectronicInvoiceProvider(Protocol):
         created: list[str] = []
 
         if module == "pos":
-            facade = root / "src/modules/pos/sale_facade.py"
+            facade = root / "modules/pos/sale_facade.py"
             if not facade.exists():
                 facade.write_text(self._sale_facade_source(), encoding="utf-8")
                 created.append(str(facade.relative_to(root)))
 
         if module in {"odontogram", "patients", "agenda"}:
-            clinical_dir = root / "src/modules/clinical"
+            clinical_dir = root / "modules/clinical"
             clinical_dir.mkdir(parents=True, exist_ok=True)
             init = clinical_dir / "__init__.py"
             if not init.exists():
@@ -202,7 +202,7 @@ class ElectronicInvoiceProvider(Protocol):
                 created.append(str(facade.relative_to(root)))
 
         if module in {"dashboard", "reservations", "sales", "tasks"}:
-            resto_dir = root / "src/modules/restaurant"
+            resto_dir = root / "modules/restaurant"
             resto_dir.mkdir(parents=True, exist_ok=True)
             init = resto_dir / "__init__.py"
             if not init.exists():
@@ -351,7 +351,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.modules.payments.provider import PaymentProvider
+from modules.payments.provider import PaymentProvider
 
 
 class MockPaymentProvider:
@@ -421,7 +421,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.modules.invoicing.provider import ElectronicInvoiceProvider
+from modules.invoicing.provider import ElectronicInvoiceProvider
 
 
 class MockInvoiceProvider:
@@ -476,8 +476,8 @@ class InvoicingService:
         return '''"""Selección de PaymentProvider según locale / config."""
 from __future__ import annotations
 
-from src.modules.payments.provider import PaymentProvider
-from src.modules.payments.service import MockPaymentProvider
+from modules.payments.provider import PaymentProvider
+from modules.payments.service import MockPaymentProvider
 
 
 def get_payment_provider(
@@ -489,22 +489,22 @@ def get_payment_provider(
     if use_mock:
         return MockPaymentProvider()
     if code == "AR":
-        from src.adapters.ar.mercadopago import MercadoPagoProvider
+        from adapters.ar.mercadopago import MercadoPagoProvider
         return MercadoPagoProvider()
     if code == "MX":
-        from src.adapters.mx.mercadopago import MercadoPagoProvider
+        from adapters.mx.mercadopago import MercadoPagoProvider
         return MercadoPagoProvider()
     if code == "PE":
-        from src.adapters.pe.yape_plin import YapePlinProvider
+        from adapters.pe.yape_plin import YapePlinProvider
         return YapePlinProvider()
     if code == "ES":
-        from src.adapters.es.redsys import RedsysProvider
+        from adapters.es.redsys import RedsysProvider
         return RedsysProvider()
     if code == "CL":
-        from src.adapters.cl.webpay import WebpayProvider
+        from adapters.cl.webpay import WebpayProvider
         return WebpayProvider()
     if code == "CO":
-        from src.adapters.co.mercado_pago import MercadoPagoProvider
+        from adapters.co.mercado_pago import MercadoPagoProvider
         return MercadoPagoProvider()
     return MockPaymentProvider()
 '''
@@ -513,8 +513,8 @@ def get_payment_provider(
         return '''"""Selección de ElectronicInvoiceProvider según locale / config."""
 from __future__ import annotations
 
-from src.modules.invoicing.provider import ElectronicInvoiceProvider
-from src.modules.invoicing.service import MockInvoiceProvider
+from modules.invoicing.provider import ElectronicInvoiceProvider
+from modules.invoicing.service import MockInvoiceProvider
 
 
 def get_invoice_provider(
@@ -526,22 +526,22 @@ def get_invoice_provider(
     if use_mock:
         return MockInvoiceProvider()
     if code == "AR":
-        from src.adapters.ar.afip import AfipInvoiceProvider
+        from adapters.ar.afip import AfipInvoiceProvider
         return AfipInvoiceProvider()
     if code == "MX":
-        from src.adapters.mx.cfdi import CfdiInvoiceProvider
+        from adapters.mx.cfdi import CfdiInvoiceProvider
         return CfdiInvoiceProvider()
     if code == "PE":
-        from src.adapters.pe.boleta_local import BoletaLocalProvider
+        from adapters.pe.boleta_local import BoletaLocalProvider
         return BoletaLocalProvider()
     if code == "ES":
-        from src.adapters.es.verifactu import VerifactuInvoiceProvider
+        from adapters.es.verifactu import VerifactuInvoiceProvider
         return VerifactuInvoiceProvider()
     if code == "CL":
-        from src.adapters.cl.sii_dte import SiiDteProvider
+        from adapters.cl.sii_dte import SiiDteProvider
         return SiiDteProvider()
     if code == "CO":
-        from src.adapters.co.dian import DianInvoiceProvider
+        from adapters.co.dian import DianInvoiceProvider
         return DianInvoiceProvider()
     return MockInvoiceProvider()
 '''
@@ -601,7 +601,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.modules.catalog.service import CatalogService
+from modules.catalog.service import CatalogService
 
 
 class PosService:
@@ -931,7 +931,7 @@ class Tooth:
         return '''"""Odontograma en memoria por paciente."""
 from __future__ import annotations
 
-from src.modules.odontogram.models import Finding, FindingType, Surface, Tooth
+from modules.odontogram.models import Finding, FindingType, Surface, Tooth
 
 
 class OdontogramService:
@@ -1016,13 +1016,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.modules.catalog.service import CatalogService, Producto
-from src.modules.pos.service import PosService
-from src.modules.cash.service import CashService
-from src.modules.payments.factory import get_payment_provider
-from src.modules.payments.service import PaymentsService
-from src.modules.invoicing.factory import get_invoice_provider
-from src.modules.invoicing.service import InvoicingService
+from modules.catalog.service import CatalogService, Producto
+from modules.pos.service import PosService
+from modules.cash.service import CashService
+from modules.payments.factory import get_payment_provider
+from modules.payments.service import PaymentsService
+from modules.invoicing.factory import get_invoice_provider
+from modules.invoicing.service import InvoicingService
 
 
 class SaleFacade:
@@ -1099,14 +1099,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.modules.patients.service import Patient, PatientsService
-from src.modules.agenda.service import Appointment, AgendaService
-from src.modules.odontogram.service import OdontogramService
-from src.modules.odontogram.models import FindingType, Surface
+from modules.patients.service import Patient, PatientsService
+from modules.agenda.service import Appointment, AgendaService
+from modules.odontogram.service import OdontogramService
+from modules.odontogram.models import FindingType, Surface
 
 try:
-    from src.modules.payments.factory import get_payment_provider
-    from src.modules.payments.service import PaymentsService
+    from modules.payments.factory import get_payment_provider
+    from modules.payments.service import PaymentsService
 except ImportError:
     PaymentsService = None  # type: ignore
     get_payment_provider = None  # type: ignore

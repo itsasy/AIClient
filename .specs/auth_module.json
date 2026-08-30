@@ -1,0 +1,51 @@
+{
+  "type": "spec",
+  "name": "auth_module",
+  "description": "Crear un módulo de autenticación con registro, login y logout",
+  "objective": "Implementar un sistema de autenticación seguro y escalable",
+  "criteria": [
+    "Los usuarios pueden registrarse con éxito",
+    "Los usuarios pueden iniciar sesión con éxito",
+    "Los usuarios pueden cerrar sesión con éxito"
+  ],
+  "constraints": [
+    "Usar JWT para la autenticación",
+    "No usar librerías externas para la autenticación"
+  ],
+  "steps": [
+    {
+      "description": "Crear modelo User con campos email y password",
+      "skill": "code",
+      "params": {
+        "task": "Genera modelo User con campos email y password",
+        "language": "python"
+      }
+    },
+    {
+      "description": "Crear endpoint de registro",
+      "skill": "code",
+      "params": {
+        "task": "Crea endpoint /register",
+        "language": "python"
+      }
+    },
+    {
+      "description": "Crear endpoint de login",
+      "skill": "code",
+      "params": {
+        "task": "Crea endpoint /login",
+        "language": "python"
+      }
+    },
+    {
+      "description": "Crear endpoint de logout",
+      "skill": "code",
+      "params": {
+        "task": "Crea endpoint /logout",
+        "language": "python"
+      }
+    }
+  ],
+  "created_at": "2026-07-31T11:48:40.668149",
+  "status": "completed"
+}

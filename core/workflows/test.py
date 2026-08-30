@@ -9,30 +9,14 @@ from core.execution_plan import ExecutionPlan
 
 class TestWorkflow(BaseWorkflow):
     """
-    /test [comando | pos-smoke]
+    /test [product]
 
-    Sin argumentos: NO ejecuta pytest del AIClient.
-    Con argumentos: corre ese comando vía skill shell.
-
-    Atajo:
-      /test pos-smoke
-        → smoke SaleFacade en TARGET_PROJECT_ROOT
+    - /test: Ejecuta los tests del orquestador (AIClient).
+    - /test product: Ejecuta los tests del producto destino (TARGET_PROJECT_ROOT).
     """
 
     name = "test"
-    description = "Ejecuta un comando de test/smoke. " "Sin args no lanza pytest del orquestador."
-
-    POS_SMOKE_CMD = (
-        "cd /tmp && "
-        'PYTHONPATH={root} python3 -c "'
-        "from src.modules.pos.sale_facade import SaleFacade; "
-        "s = SaleFacade(locale='AR'); "
-        "s.seed_product('SKU1', 'Café', 15.0); "
-        "r = s.sell([('SKU1', 2)]); "
-        "print(r['ok'], r['total'], r['payment'].get('status'), "
-        "r['invoice'].get('status'), r['cash_balance'], r['estado'])"
-        '"'
-    )
+    description = "Ejecuta los tests del orquestador o del producto."
 
     def execute(
         self,
@@ -41,20 +25,16 @@ class TestWorkflow(BaseWorkflow):
     ) -> ExecutionPlan:
         raw = (arguments or "").strip()
 
-        if not raw:
-            cmd = (
-                'echo "Uso: /test <comando> | /test pos-smoke. '
-                "Default pytest del AIClient desactivado. "
-                'Ej: /test pos-smoke"'
-            )
-            objective = "Mostrar uso de /test (sin pytest por defecto)"
-        elif raw.lower() in {"pos-smoke", "pos_smoke", "smoke-pos"}:
+        if raw.lower() in {"product", "--target"}:
             root = Config.TARGET_PROJECT_ROOT.expanduser().resolve()
-            cmd = self.POS_SMOKE_CMD.format(root=root)
-            objective = f"Smoke SaleFacade en TARGET ({root})"
+            objective = f"Run product tests in TARGET ({root})"
         else:
-            cmd = raw
-            objective = f"Ejecutar tests/comando: {cmd}"
+            root = Config.PROJECT_ROOT.expanduser().resolve()
+            objective = "Run orchestrator (AIClient) tests"
+
+        from core.discovery.engine import DiscoveryEngine
+        discovery = DiscoveryEngine(root)
+        env = discovery.discover()
 
         plan = ExecutionPlan(
             original_task=f"/test {raw}".strip() or "/test",
@@ -63,6 +43,20 @@ class TestWorkflow(BaseWorkflow):
             objective=objective,
             execution_mode="single",
         )
+        plan.metadata["workflow"] = "test"
+
+        test_cmds = env.commands.get("test", [])
+        if not test_cmds:
+            plan.status = "not_available"
+            plan.error = "No test command could be determined from project evidence."
+            return plan
+
+        # For simplicity, pick the first high confidence command, or the first one.
+        # Discovery separates Candidates vs Execution.
+        # In the future, LLM or workflow decides. For now, take the first valid candidate.
+        test_cmd = test_cmds[0].value
+        cmd = f'cd "{root}" && ' + test_cmd
+
         plan.context_requirements["project"] = False
         plan.governance["allow_shell"] = True
         plan.set_execution_unit(
@@ -70,9 +64,6 @@ class TestWorkflow(BaseWorkflow):
             unit_name="shell",
             params={"command": cmd},
         )
-        plan.metadata["workflow"] = "test"
-        if raw.lower() in {"pos-smoke", "pos_smoke", "smoke-pos"}:
-            plan.metadata["smoke"] = "pos_sale_facade"
         return plan
 
     def validate(self, arguments: str) -> tuple[bool, str]:

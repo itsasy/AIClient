@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shell · POS</title>
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/base.css" />
+  <link rel="stylesheet" href="./css/layout.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+  <link rel="stylesheet" href="./css/views.css" />
+</head>
+<body>
+  <div class="app" id="appShell">
+        <aside class="sidebar" id="sidebarMenu" aria-label="Navegación principal">
+      <strong>POS · Plan</strong>
+    </aside>
+    <div class="main">
+      <header class="topbar">
+        <span>Demo multi-vertical · API :8765</span>
+        <div class="status-bar">
+          <span id="userChip" aria-live="polite">—</span>
+          <button class="btn secondary" id="logoutBtn" type="button">Salir</button>
+          <span id="apiBadge" aria-live="polite">API…</span>
+        </div>
+      </header>
+      <main class="content" id="outlet" aria-live="polite"></main>
+    </div>
+  </div>
+  <script type="module" src="./js/app.js"></script>
+</body>
+</html>

@@ -284,7 +284,7 @@ class BuildWorkflow(BaseWorkflow):
             execution_mode="single",
         )
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
         plan.set_execution_unit(
@@ -310,7 +310,7 @@ class BuildWorkflow(BaseWorkflow):
         )
         plan.governance["allow_write"] = True
         plan.execution_policy["stop_on_error"] = False
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
         plan.metadata["aggregate_results"] = True
@@ -344,7 +344,7 @@ class BuildWorkflow(BaseWorkflow):
             execution_mode="single",
         )
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
         plan.set_execution_unit(
@@ -376,17 +376,17 @@ class BuildWorkflow(BaseWorkflow):
         )
         plan.execution_policy["max_retries"] = 1
         plan.governance["allow_write"] = True
-        plan.context_requirements["project"] = False
+        plan.context_requirements["project"] = True
         plan.context_requirements["standards"] = True
         plan.context_requirements["engram"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
 
         base = {
-            "pos": "src/ui/pos_shell",
-            "dental": "src/ui/dental_shell",
-            "restaurant": "src/ui/restaurant_shell",
-        }.get(variant, "src/ui/pos_shell")
+            "pos": "ui/pos_shell",
+            "dental": "ui/dental_shell",
+            "restaurant": "ui/restaurant_shell",
+        }.get(variant, "ui/pos_shell")
 
         task = (
             f"{raw}\n\n"
@@ -450,7 +450,7 @@ class BuildWorkflow(BaseWorkflow):
           Con --llm: coder + constraints estrictas + project context ON.
         - Resto: coder + write_file.
         """
-        target = f"src/modules/{module}/service.py"
+        target = f"modules/{module}/service.py"
         hint = self.ENRICH_DOMAIN_HINTS.get(module, f"Servicio de dominio {module}.")
 
         # --- canónico sin --llm: restaurar stub del skill ---
@@ -463,7 +463,7 @@ class BuildWorkflow(BaseWorkflow):
                 execution_mode="single",
             )
             plan.governance["allow_write"] = True
-            plan.context_requirements["project"] = False
+            plan.context_requirements["project"] = True
             plan.context_requirements["standards"] = False
             if locale_code:
                 plan.metadata["locale"] = locale_code
@@ -583,7 +583,7 @@ class BuildWorkflow(BaseWorkflow):
                 prev_id = step.id
                 continue
 
-            target = f"src/modules/{mod}/service.py"
+            target = f"modules/{mod}/service.py"
             hint = self.ENRICH_DOMAIN_HINTS.get(mod, "")
             gen = plan.add_step(
                 description=f"Enrich generar {mod}",
