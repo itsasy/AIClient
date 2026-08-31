@@ -21,35 +21,35 @@ class ScaffoldModuleSkill(Skill):
     )
 
     ALLOWED_MODULES: dict[str, tuple[str, tuple[str, ...]]] = {
-        "auth": ("modules/auth", ("__init__.py", "service.py", "routes.py")),
-        "pos": ("modules/pos", ("__init__.py", "service.py", "routes.py")),
-        "catalog": ("modules/catalog", ("__init__.py", "service.py", "routes.py")),
-        "cash": ("modules/cash", ("__init__.py", "service.py", "routes.py")),
+        "auth": ("src/modules/auth", ("__init__.py", "service.py", "routes.py")),
+        "pos": ("src/modules/pos", ("__init__.py", "service.py", "routes.py")),
+        "catalog": ("src/modules/catalog", ("__init__.py", "service.py", "routes.py")),
+        "cash": ("src/modules/cash", ("__init__.py", "service.py", "routes.py")),
         "payments": (
-            "modules/payments",
+            "src/modules/payments",
             ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
         "invoicing": (
-            "modules/invoicing",
+            "src/modules/invoicing",
             ("__init__.py", "provider.py", "service.py", "factory.py"),
         ),
-        "delivery": ("modules/delivery", ("__init__.py", "service.py")),
-        "reports": ("modules/reports", ("__init__.py", "service.py")),
+        "delivery": ("src/modules/delivery", ("__init__.py", "service.py")),
+        "reports": ("src/modules/reports", ("__init__.py", "service.py")),
         # dental
-        "patients": ("modules/patients", ("__init__.py", "service.py", "routes.py")),
-        "agenda": ("modules/agenda", ("__init__.py", "service.py", "routes.py")),
+        "patients": ("src/modules/patients", ("__init__.py", "service.py", "routes.py")),
+        "agenda": ("src/modules/agenda", ("__init__.py", "service.py", "routes.py")),
         "odontogram": (
-            "modules/odontogram",
+            "src/modules/odontogram",
             ("__init__.py", "service.py", "models.py"),
         ),
-        "clinical_history": ("modules/clinical_history", ("__init__.py", "service.py")),
-        "prescriptions": ("modules/prescriptions", ("__init__.py", "service.py")),
-        "inventory": ("modules/inventory", ("__init__.py", "service.py")),
+        "clinical_history": ("src/modules/clinical_history", ("__init__.py", "service.py")),
+        "prescriptions": ("src/modules/prescriptions", ("__init__.py", "service.py")),
+        "inventory": ("src/modules/inventory", ("__init__.py", "service.py")),
         # restaurant
-        "reservations": ("modules/reservations", ("__init__.py", "service.py")),
-        "dashboard": ("modules/dashboard", ("__init__.py", "service.py")),
-        "sales": ("modules/sales", ("__init__.py", "service.py")),
-        "tasks": ("modules/tasks", ("__init__.py", "service.py")),
+        "reservations": ("src/modules/reservations", ("__init__.py", "service.py")),
+        "dashboard": ("src/modules/dashboard", ("__init__.py", "service.py")),
+        "sales": ("src/modules/sales", ("__init__.py", "service.py")),
+        "tasks": ("src/modules/tasks", ("__init__.py", "service.py")),
     }
 
     INTERFACE_STUBS = {
@@ -184,13 +184,13 @@ class ElectronicInvoiceProvider(Protocol):
         created: list[str] = []
 
         if module == "pos":
-            facade = root / "modules/pos/sale_facade.py"
+            facade = root / "src/modules/pos/sale_facade.py"
             if not facade.exists():
                 facade.write_text(self._sale_facade_source(), encoding="utf-8")
                 created.append(str(facade.relative_to(root)))
 
         if module in {"odontogram", "patients", "agenda"}:
-            clinical_dir = root / "modules/clinical"
+            clinical_dir = root / "src/modules/clinical"
             clinical_dir.mkdir(parents=True, exist_ok=True)
             init = clinical_dir / "__init__.py"
             if not init.exists():
@@ -202,7 +202,7 @@ class ElectronicInvoiceProvider(Protocol):
                 created.append(str(facade.relative_to(root)))
 
         if module in {"dashboard", "reservations", "sales", "tasks"}:
-            resto_dir = root / "modules/restaurant"
+            resto_dir = root / "src/modules/restaurant"
             resto_dir.mkdir(parents=True, exist_ok=True)
             init = resto_dir / "__init__.py"
             if not init.exists():
