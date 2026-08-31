@@ -62,6 +62,7 @@ class PlanWorkflow(BaseWorkflow):
         plan.context_requirements["engram"] = True
         plan.context_requirements["obsidian"] = True
         plan.context_requirements["project"] = True
+        plan.context_requirements["gentleman"] = True
         if locale_code:
             plan.metadata["locale"] = locale_code
         plan.metadata["workflow"] = "plan"
