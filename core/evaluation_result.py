@@ -144,3 +144,15 @@ class EvaluationResult:
             "reason": self.reason,
             "metadata": dict(self.metadata),
         }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvaluationResult:
+        return cls(
+            status=data.get("status", "unavailable"),
+            passed=data.get("pass", data.get("passed")),
+            score=data.get("score"),
+            issues=data.get("issues", []),
+            corrections=data.get("corrections", []),
+            reason=data.get("reason"),
+            metadata=data.get("metadata", {})
+        )

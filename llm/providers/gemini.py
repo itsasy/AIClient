@@ -215,22 +215,13 @@ class GeminiProvider(LLMProvider):
                 
             if "tool_calls" in msg:
                 for tc in msg["tool_calls"]:
-                    parts.append({
-                        "function_call": {
-                            "name": tc["function"]["name"],
-                            "args": tc["function"]["arguments"]
-                        }
-                    })
+                    name = tc["function"]["name"]
+                    args = tc["function"]["arguments"]
+                    parts.append({"text": f"[Asistente ejecutó herramienta: {name} con argumentos: {args}]"})
                     
             if role == "tool":
-                gemini_role = "user" # Gemini expects tool responses as user role?
-                # Actually in google.genai, tool responses go into function_response
-                parts.append({
-                    "function_response": {
-                        "name": msg["name"],
-                        "response": {"result": content} # simplified
-                    }
-                })
+                gemini_role = "user"
+                parts.append({"text": f"[Resultado de herramienta {msg.get('name')}: {content}]"})
                 
             if not parts:
                 continue

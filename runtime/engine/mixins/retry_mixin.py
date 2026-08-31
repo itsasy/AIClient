@@ -99,6 +99,7 @@ class EngineRetryMixin:
                 # Decisión de retry (única autoridad: RetryPolicy)
                 # -------------------------------------------------
                 decision = self.retry_policy.decide(
+                    plan=plan,
                     execution_result=result,
                     evaluation=evaluation,
                     current_retries=retries,
@@ -107,7 +108,7 @@ class EngineRetryMixin:
 
                 result.metadata["retry_decision"] = decision.to_dict()
 
-                if not decision.retry:
+                if not decision.should_retry:
                     # Política dice que no se reintenta → terminal failure
                     if result.is_retry or result.is_failure:
                         return ExecutionResult.fail(
