@@ -11,3 +11,4 @@ class ToolCall:
 class LLMResponse:
     text: str | None
     tool_calls: list[ToolCall] = field(default_factory=list)
+    provider: str | None = None

@@ -170,12 +170,15 @@ class ProviderManager:
         for provider_name in chain:
             self._ensure_stats(provider_name)
             try:
-                return self._execute_with_tools(
+                resp = self._execute_with_tools(
                     provider_name,
                     messages,
                     tools=tools,
                     **kwargs,
                 )
+                if hasattr(resp, "provider") and resp.provider is None:
+                    resp.provider = provider_name
+                return resp
             except Exception as exc:
                 self._stats[provider_name]["errors"] += 1
                 errors[provider_name] = exc
