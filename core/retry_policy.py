@@ -34,8 +34,6 @@ class RetryPolicy:
     name = "retry_policy"
 
     NON_RETRYABLE_MARKERS = (
-        "allprovidersfailed",
-        "todos los proveedores llm fallaron",
         "path traversal",
         "ruta fuera del proyecto",
         "content vacío",

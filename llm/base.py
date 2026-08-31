@@ -21,6 +21,7 @@ class LLMProvider(ABC):
     """
 
     name: str = "base"
+    supports_tools: bool = False
 
     @abstractmethod
     def generate(

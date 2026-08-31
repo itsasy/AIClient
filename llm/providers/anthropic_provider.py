@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
+    supports_tools = True
 
     def __init__(self) -> None:
         if not Config.ANTHROPIC_API_KEY:

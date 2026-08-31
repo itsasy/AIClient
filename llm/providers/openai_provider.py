@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 class OpenAIProvider(LLMProvider):
     name = "openai"
+    supports_tools = True
 
     def __init__(self) -> None:
         if not Config.OPENAI_API_KEY:

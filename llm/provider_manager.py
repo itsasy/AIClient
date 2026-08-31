@@ -160,31 +160,41 @@ class ProviderManager:
             fallback_chain,
         )
 
+        valid_chain = []
+        for p in chain:
+            if getattr(self._get_provider(p), "supports_tools", False):
+                valid_chain.append(p)
+            else:
+                logger.debug("Provider %s descartado de la cadena con tools (no soporta tools)", p)
+
+        if not valid_chain:
+            raise ProviderError("Ningún provider en la cadena soporta function calling.")
+
         logger.info(
             "Cadena LLM (Tools)=%s",
-            " -> ".join(chain),
+            " -> ".join(valid_chain),
         )
 
         errors: dict[str, Exception] = {}
 
-        for provider_name in chain:
-            self._ensure_stats(provider_name)
+        for current_provider in valid_chain:
+            self._ensure_stats(current_provider)
             try:
                 resp = self._execute_with_tools(
-                    provider_name,
+                    current_provider,
                     messages,
                     tools=tools,
                     **kwargs,
                 )
                 if hasattr(resp, "provider") and resp.provider is None:
-                    resp.provider = provider_name
+                    resp.provider = current_provider
                 return resp
             except Exception as exc:
-                self._stats[provider_name]["errors"] += 1
-                errors[provider_name] = exc
+                self._stats[current_provider]["errors"] += 1
+                errors[current_provider] = exc
                 logger.warning(
                     "Provider falló con tools | provider=%s | error=%s",
-                    provider_name,
+                    current_provider,
                     exc,
                 )
 

@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class GeminiProvider(LLMProvider):
 
     name = "gemini"
+    supports_tools = True
 
     DEFAULT_SYSTEM_PROMPT = (
         "You are a senior software architect "
@@ -283,11 +284,31 @@ class GeminiProvider(LLMProvider):
                             )
                         )
 
+            if not text_response and not tool_calls:
+                raise ProviderError("Gemini devolvió una respuesta vacía con HTTP 200.")
+
             return LLMResponse(
                 text=text_response.strip() if text_response else None,
                 tool_calls=tool_calls
             )
 
+        except errors.ClientError as exc:
+            status_code = getattr(exc, "code", None)
+            if status_code in (401, 403):
+                raise ProviderAuthenticationError(f"Error de autenticación en Gemini: {exc}") from exc
+            if status_code == 429:
+                raise ProviderRateLimitError(f"Gemini alcanzó el límite de uso: {exc}") from exc
+            raise ProviderError(f"Error de cliente en Gemini: {exc}") from exc
+
+        except errors.ServerError as exc:
+            raise ProviderUnavailableError(f"Gemini no está disponible temporalmente: {exc}") from exc
+
+        except (ProviderAuthenticationError, ProviderRateLimitError, ProviderUnavailableError, ProviderError):
+            raise
+
+        except errors.APIError as exc:
+            raise ProviderError(f"Error de API de Gemini: {exc}") from exc
+
         except Exception as exc:
             logger.exception("Error usando Gemini con tools | model=%s", selected_model)
-            raise ProviderError(f"Error en Gemini con tools: {exc}") from exc
+            raise ProviderError(f"Error inesperado en Gemini con tools: {exc}") from exc
