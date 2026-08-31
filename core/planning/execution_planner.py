@@ -215,15 +215,13 @@ class ExecutionPlanner:
 
         plan.execution_mode = "single"
         plan.objective = f"Crear archivo {path}"
-        gen = plan.add_step(
-            description=f"Generar contenido para {path}",
+        plan.set_execution_unit(
             unit_type="agent",
             unit_name="coder",
             params={"task": task, "path": path},
-            expected_output="code_artifact",
-            metadata={"stage": "generation", "produces": "code_artifact"},
-            timeout=180,
         )
+        plan.metadata["stage"] = "generation"
+        plan.metadata["produces"] = "code_artifact"
 
     @classmethod
     def _plan_code_generation(

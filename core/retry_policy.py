@@ -13,6 +13,7 @@ class RetryDecision:
     reason: str = ""
     max_retries: int = 0
     attempt: int = 0
+    delay_seconds: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -20,6 +21,7 @@ class RetryDecision:
             "reason": self.reason,
             "max_retries": self.max_retries,
             "attempt": self.attempt,
+            "delay_seconds": self.delay_seconds,
         }
 
 
