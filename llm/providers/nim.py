@@ -28,8 +28,9 @@ logger = logging.getLogger(__name__)
 class NVIDIAProvider(LLMProvider):
 
     name = "nim"
+    supports_tools = True
 
-    DEFAULT_SYSTEM_PROMPT = "You are a senior software engineer " "and AI coding assistant."
+    DEFAULT_SYSTEM_PROMPT = "You are a senior software engineer and AI coding assistant."
 
     # Fail-fast: no dejar al SDK reintentar 504 durante minutos
     CONNECT_TIMEOUT = 10.0
@@ -55,28 +56,37 @@ class NVIDIAProvider(LLMProvider):
 
         self.model = Config.NVIDIA_MODEL
 
+    def _ensure_string(self, content: Any) -> str:
+        """Asegura que el contenido sea un string plano, desensamblando listas si es necesario."""
+        if not content:
+            return ""
+        if isinstance(content, list):
+            return " ".join([str(c.get("text", c)) if isinstance(c, dict) else str(c) for c in content])
+        return str(content)
+
     def generate(
         self,
-        prompt: str,
+        prompt: Any,
         *,
         model: str | None = None,
-        system_prompt: str | None = None,
+        system_prompt: Any | None = None,
         temperature: float = 0.2,
         max_tokens: int = 4096,
         **kwargs: Any,
     ) -> str:
 
-        if not prompt or not prompt.strip():
+        prompt_str = self._ensure_string(prompt)
+        if not prompt_str.strip():
             raise ProviderError("El prompt no puede estar vacío.")
 
         selected_model = model or self.model
-        selected_system_prompt = system_prompt or self.DEFAULT_SYSTEM_PROMPT
+        selected_system_prompt = self._ensure_string(system_prompt) if system_prompt else self.DEFAULT_SYSTEM_PROMPT
 
         logger.info("NVIDIA NIM request | model=%s", selected_model)
 
         messages = [
             {"role": "system", "content": selected_system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "user", "content": prompt_str},
         ]
 
         completion_kwargs: dict[str, Any] = {
@@ -105,7 +115,7 @@ class NVIDIAProvider(LLMProvider):
             if not content:
                 raise ProviderError("NVIDIA NIM devolvió una respuesta vacía.")
 
-            return content.strip()
+            return self._ensure_string(content).strip()
 
         except AuthenticationError as exc:
             raise ProviderAuthenticationError(
@@ -121,7 +131,6 @@ class NVIDIAProvider(LLMProvider):
             ) from exc
 
         except APIStatusError as exc:
-            # 408, 429 ya cubiertos en parte; 5xx y 504 → fallback
             if exc.status_code >= 500 or exc.status_code in {408, 429}:
                 raise ProviderUnavailableError(
                     f"NVIDIA NIM no está disponible ({exc.status_code}): {exc}"
@@ -139,3 +148,89 @@ class NVIDIAProvider(LLMProvider):
         except Exception as exc:
             logger.exception("Error inesperado en NVIDIA NIM.")
             raise ProviderError(f"Error inesperado en NVIDIA NIM: {exc}") from exc
+
+    def generate_with_tools(
+        self,
+        prompt: Any,
+        tools: list[dict[str, Any]],
+        *,
+        model: str | None = None,
+        system_prompt: Any | None = None,
+        temperature: float = 0.2,
+        max_tokens: int = 4096,
+        **kwargs: Any,
+    ) -> dict[str, Any] | str:
+        
+        prompt_str = self._ensure_string(prompt)
+        if not prompt_str.strip():
+            raise ProviderError("El prompt no puede estar vacío.")
+
+        selected_model = model or self.model
+        selected_system_prompt = self._ensure_string(system_prompt) if system_prompt else self.DEFAULT_SYSTEM_PROMPT
+
+        formatted_tools = []
+        for t in tools:
+            if isinstance(t, dict) and "name" in t:
+                formatted_tools.append({"type": "function", "function": t})
+            else:
+                formatted_tools.append(t)
+
+        logger.info("NVIDIA NIM request (con tools) | model=%s", selected_model)
+
+        messages = [
+            {"role": "system", "content": selected_system_prompt},
+            {"role": "user", "content": prompt_str},
+        ]
+
+        completion_kwargs: dict[str, Any] = {
+            "model": selected_model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": formatted_tools,
+            "tool_choice": "auto",
+        }
+
+        for parameter in ("top_p", "frequency_penalty", "presence_penalty", "stop"):
+            if parameter in kwargs:
+                completion_kwargs[parameter] = kwargs[parameter]
+
+        try:
+            response = self.client.chat.completions.create(**completion_kwargs)
+
+            if not response.choices:
+                raise ProviderError("NVIDIA NIM devolvió una respuesta sin opciones.")
+
+            message = response.choices[0].message
+
+            if message.tool_calls:
+                tool_calls_dict = []
+                for tc in message.tool_calls:
+                    tool_calls_dict.append({
+                        "id": getattr(tc, "id", None) or "call_unknown",
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    })
+                return {
+                    "text": self._ensure_string(message.content),
+                    "tool_calls": tool_calls_dict
+                }
+
+            return self._ensure_string(message.content).strip()
+
+        except AuthenticationError as exc:
+            raise ProviderAuthenticationError(f"Error de autenticación en NVIDIA NIM: {exc}") from exc
+        except RateLimitError as exc:
+            raise ProviderRateLimitError(f"NVIDIA NIM alcanzó el límite de uso: {exc}") from exc
+        except (APIConnectionError, APITimeoutError) as exc:
+            raise ProviderUnavailableError(f"No se pudo conectar / timeout NVIDIA NIM: {exc}") from exc
+        except APIStatusError as exc:
+            if exc.status_code >= 500 or exc.status_code in {408, 429}:
+                raise ProviderUnavailableError(f"NVIDIA NIM no está disponible ({exc.status_code}): {exc}") from exc
+            raise ProviderError(f"Error de NVIDIA NIM: {exc}") from exc
+        except Exception as exc:
+            logger.exception("Error procesando tools en NVIDIA NIM.")
+            raise ProviderError(f"Error procesando tools en NVIDIA NIM: {exc}") from exc
