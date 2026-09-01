@@ -29,6 +29,7 @@ class SkillLoader:
         "skills.migration.project_migrator",
         "skills.migration.refactor",
         "skills.projects.full_generator",
+        "skills.projects.new_project",
         "skills.projects.laravel",
         "skills.proposals.generator",
         "skills.scraping.integrations",
