@@ -1,30 +1,12 @@
 from __future__ import annotations
-import json
 import logging
 import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime
 from typing import Any
 
-from core.analytics.metrics_store import MetricsStore
-from core.analytics.models import ExecutionMetric
-from core.context.manager import ContextManager
-from core.engram_memory import EngramMemory
 from core.evaluation_result import EvaluationResult
-from core.retry_policy import RetryPolicy
 from core.execution_plan import ExecutionPlan
 from core.execution_result import ExecutionResult
-from core.execution_step import ExecutionStep
-from core.intent import IntentAnalyzer
-from core.learner import ContinuousLearner
-from core.planning import PlanBuilder
-from core.self_critic import SelfCritic
-from runtime.dispatcher import UnitDispatcher
-from runtime.registry.agent_registry import AgentRegistry
-from runtime.registry.skill_registry import SkillRegistry
-from core.governance.capability_guard import CapabilityGuard
 
 logger = logging.getLogger(__name__)
 
@@ -108,8 +90,7 @@ class EngineRetryMixin:
 
                 result.metadata["retry_decision"] = decision.to_dict()
 
-                if not decision.should_retry:
-                    # Política dice que no se reintenta → terminal failure
+                if not decision.should_retry or retries >= max_retries:
                     if result.is_retry or result.is_failure:
                         return ExecutionResult.fail(
                             plan_id=plan.id,
@@ -119,12 +100,11 @@ class EngineRetryMixin:
                             metadata={
                                 **dict(result.metadata or {}),
                                 "retry_decision": decision.to_dict(),
-                                "retry_exhausted": retries >= max_retries,
+                                "retry_exhausted": True,
                             },
                             started_at=started_at,
                         )
                     return result
-
                 # -------------------------------------------------
                 # Hay que reintentar
                 # -------------------------------------------------

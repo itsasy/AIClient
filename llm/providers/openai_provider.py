@@ -17,7 +17,7 @@ class OpenAIProvider(LLMProvider):
         if not Config.OPENAI_API_KEY:
             raise ProviderAuthenticationError("OPENAI_API_KEY no está configurada.")
         self.api_key = Config.OPENAI_API_KEY
-        self.model = Config.OPENAI_MODEL
+        self.model = getattr(Config, "OPENAI_MODEL", "gpt-4o-mini")
 
     def generate(self, prompt: str, *, model: str | None = None, system_prompt: str | None = None, temperature: float = 0.2, max_tokens: int = 4096, **kwargs: Any) -> str:
         if not prompt or not prompt.strip():
@@ -48,3 +48,43 @@ class OpenAIProvider(LLMProvider):
             return data["choices"][0]["message"]["content"].strip()
         except requests.exceptions.RequestException as exc:
             raise ProviderError(f"Error en OpenAI API: {exc}")
+
+    def generate_with_tools(self, prompt: str, tools: list[dict[str, Any]], *, model: str | None = None, system_prompt: str | None = None, temperature: float = 0.2, max_tokens: int = 4096, **kwargs: Any) -> dict[str, Any] | str:
+        if not prompt or not prompt.strip():
+            raise ProviderError("El prompt no puede estar vacío.")
+
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        payload = {
+            "model": model or self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": tools,
+            "tool_choice": "auto"
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            message = data["choices"][0]["message"]
+            
+            if "tool_calls" in message and message["tool_calls"]:
+                return {
+                    "text": message.get("content") or "",
+                    "tool_calls": message["tool_calls"]
+                }
+            
+            return message.get("content", "").strip()
+        except requests.exceptions.RequestException as exc:
+            raise ProviderError(f"Error en OpenAI API (tools): {exc}")
