@@ -3,21 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Shell · POS</title>
+  <title>POS · Demo</title>
   <link rel="stylesheet" href="./css/tokens.css" />
   <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/layout.css" />
   <link rel="stylesheet" href="./css/components.css" />
   <link rel="stylesheet" href="./css/views.css" />
+  <link rel="stylesheet" href="./css/pos.css" />
+  <style>
+    #apiBadge.ok  { color: var(--ok); font-weight: 600; }
+    #apiBadge.err { color: var(--err); font-weight: 600; }
+    .status-bar   { display: flex; align-items: center; gap: 10px; }
+    .app.locked .sidebar { opacity: 0.3; pointer-events: none; }
+    #loadingBar   { position:fixed; top:0; left:0; right:0; height:3px; background:var(--primary); animation: slide 1.2s ease-in-out infinite; display:none; }
+    .loading #loadingBar { display:block; }
+    @keyframes slide { 0%{transform:scaleX(0) translateX(0)} 50%{transform:scaleX(0.5) translateX(60%)} 100%{transform:scaleX(0) translateX(200%)} }
+  </style>
 </head>
 <body>
+  <div id="loadingBar"></div>
   <div class="app" id="appShell">
-        <aside class="sidebar" id="sidebarMenu" aria-label="Navegación principal">
+    <aside class="sidebar" id="sidebarMenu" aria-label="Navegación principal">
       <strong>POS · Plan</strong>
     </aside>
     <div class="main">
       <header class="topbar">
-        <span>Demo multi-vertical · API :8765</span>
+        <span id="appTitle">Demo multi-vertical · API :8765</span>
         <div class="status-bar">
           <span id="userChip" aria-live="polite">—</span>
           <button class="btn secondary" id="logoutBtn" type="button">Salir</button>

@@ -1,1 +1,32 @@
-:root { --primary:#e11d48; --primary-hover:#be123c; --surface:#fff; --bg:#f8fafc; --text:#0f172a; --muted:#64748b; --border:#e2e8f0; --ok:#16a34a; --err:#dc2626; --radius:8px; --shadow:0 8px 30px rgba(15,23,42,.06); }
+:root {
+  /* Brand */
+  --primary: #e11d48;
+  --primary-hover: #be123c;
+  --primary-light: #fff1f2;
+  /* Surfaces */
+  --surface: #ffffff;
+  --surface-2: #f8fafc;
+  --bg: #f1f5f9;
+  /* Text */
+  --text: #0f172a;
+  --text-2: #334155;
+  --muted: #64748b;
+  /* Borders */
+  --border: #e2e8f0;
+  --border-focus: #94a3b8;
+  /* Semantic */
+  --ok: #16a34a;
+  --ok-bg: #f0fdf4;
+  --err: #dc2626;
+  --err-bg: #fef2f2;
+  --warn: #d97706;
+  --warn-bg: #fffbeb;
+  /* Shape */
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow: 0 1px 3px rgba(15,23,42,.08), 0 4px 16px rgba(15,23,42,.04);
+  --shadow-lg: 0 8px 30px rgba(15,23,42,.1);
+  /* Sizing */
+  --sidebar-width: 240px;
+  --topbar-height: 48px;
+}

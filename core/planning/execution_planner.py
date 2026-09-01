@@ -374,12 +374,24 @@ class ExecutionPlanner:
         from core.execution_step import ExecutionStep
         entities = getattr(intent, "entities", None) or {}
 
+        step0 = ExecutionStep(
+            description="Clonar repositorio base canónico para One-Shot POS",
+            unit_type="skill",
+            unit_name="new_project",
+            params={
+                "project_name": entities.get("project_name", "nuevo-pos"), 
+                "task": task
+            },
+        )
+        plan.steps.append(step0)
+
         # Paso 1: Backend/DB
         step1 = ExecutionStep(
             description="Generar backend y DB schema",
             unit_type="skill",
             unit_name="scaffold_module",
             params={"module": entities.get("module") or "api", "task": task},
+            depends_on=[step0.id],
         )
         plan.steps.append(step1)
 
@@ -392,7 +404,7 @@ class ExecutionPlanner:
             depends_on=[step1.id],
         )
         plan.steps.append(step2)
-
+        
     @classmethod
     def _plan_architecture_audit(
         cls,

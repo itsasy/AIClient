@@ -1,0 +1,3 @@
+import { api } from "../api.js";
+
+export function renderClinical(outlet) { outlet.innerHTML=`<div class="panel"><h1>Clínica Odontológica</h1><p class="hint">Hub de acceso a las funcionalidades clínicas.</p><div class="row" style="margin-top: 20px;"><a href="#/patients" class="btn">Gestión de Pacientes y Odontogramas</a><a href="#/agenda" class="btn secondary">Agenda de Turnos</a><a href="#/prescriptions" class="btn secondary">Recetas</a></div><p class="msg" style="margin-top:20px;">Nota: El servicio de historia clínica (ClinicalHistory) no expone lógica en el backend y figura como pendiente de implementación por el equipo de backend.</p></div>`; }

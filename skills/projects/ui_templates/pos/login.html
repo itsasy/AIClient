@@ -1,28 +1,35 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Login · POS</title>
-  <link rel="stylesheet" href="./pos.css" />
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/base.css" />
   <link rel="stylesheet" href="./css/login.css" />
 </head>
 <body>
   <div class="login-wrap">
-    <form class="card login-card" id="loginForm">
+    <form class="card login-card" id="loginForm" onsubmit="return false;">
       <div class="brand">
         <div class="logo">P</div>
         <h1>Bienvenido de vuelta</h1>
-        <p>Punto de venta y gestión. La operación puede seguir incluso sin Internet.</p>
+        <p>Punto de venta y gestión.<br>La operación puede seguir incluso sin Internet.</p>
       </div>
-      <label>USUARIO</label>
-      <input id="email" name="email" type="text" placeholder="usuario@negocio.com" required />
-      <label>CONTRASEÑA</label>
-      <input id="password" name="password" type="password" placeholder="••••••••" required />
-      <div class="row"><input type="checkbox" id="r" checked /><label for="r" style="margin:0">Recordarme</label></div>
-      <button class="btn-primary" type="submit">Iniciar sesión</button>
+      <label for="email">USUARIO</label>
+      <input id="email" name="email" type="text" placeholder="usuario@negocio.com" required autocomplete="username" />
+      <label for="password">CONTRASEÑA</label>
+      <input id="password" name="password" type="password" placeholder="••••••••" required autocomplete="current-password" />
+      <div class="row-check">
+        <input type="checkbox" id="remember" checked />
+        <label for="remember" style="margin:0;font-weight:400;letter-spacing:0">Recordarme</label>
+      </div>
+      <button class="btn-primary" type="submit" id="loginBtn">Iniciar sesión</button>
       <p class="msg" id="loginMsg" role="status"></p>
-      <div class="footer"><span class="ok-dot">● Terminal verificado</span><span>v1.0</span></div>
+      <div class="footer">
+        <span class="ok-dot">● Terminal verificado</span>
+        <span>v2.0</span>
+      </div>
     </form>
   </div>
   <script type="module" src="./js/login.js"></script>
